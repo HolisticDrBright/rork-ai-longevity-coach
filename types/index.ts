@@ -494,3 +494,123 @@ export interface PeptideRecommendation {
   hasContraindications: boolean;
   contraindicationNotes?: string;
 }
+
+// Clinical Decision Support Types
+
+export interface ChiefComplaint {
+  id: string;
+  description: string;
+  onset: 'acute' | 'chronic';
+  duration: string;
+  severity: number;
+  betterWith: string[];
+  worseWith: string[];
+  previousDiagnoses: string[];
+  previousTreatments: string[];
+  timestamp: string;
+}
+
+export interface AssociatedSymptom {
+  id: string;
+  name: string;
+  category: 'physical' | 'cognitive' | 'emotional' | 'digestive';
+  timing: 'morning' | 'afternoon' | 'evening' | 'night' | 'post_meal' | 'cyclical' | 'constant';
+  severity: number;
+  notes?: string;
+}
+
+export interface ClinicalIntake {
+  id: string;
+  userId: string;
+  chiefComplaint: ChiefComplaint;
+  associatedSymptoms: AssociatedSymptom[];
+  energyLevel: number;
+  sleepQuality: number;
+  digestiveFunction: number;
+  stressPerception: number;
+  temperatureSensitivity: 'hot' | 'cold' | 'both' | 'normal';
+  painQuality?: 'sharp' | 'dull' | 'throbbing' | 'migrating' | 'fixed' | 'none';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// TCM Pattern Types
+
+export type TCMPattern = 
+  | 'qi_deficiency'
+  | 'qi_stagnation'
+  | 'blood_deficiency'
+  | 'blood_stasis'
+  | 'yin_deficiency'
+  | 'yang_deficiency'
+  | 'dampness'
+  | 'phlegm'
+  | 'heat'
+  | 'cold'
+  | 'wind';
+
+export type TCMOrganSystem = 'liver' | 'heart' | 'spleen' | 'lung' | 'kidney';
+
+export interface TCMPatternAssessment {
+  pattern: TCMPattern;
+  score: number;
+  relatedSymptoms: string[];
+  modernInterpretation: string;
+  affectedOrgans: TCMOrganSystem[];
+  dietaryRecommendations: string[];
+  lifestyleRecommendations: string[];
+}
+
+// Functional Medicine Pattern Types
+
+export type FunctionalSystem = 
+  | 'blood_sugar'
+  | 'inflammation'
+  | 'gut_function'
+  | 'detoxification'
+  | 'hormone_signaling'
+  | 'mitochondrial'
+  | 'nervous_system'
+  | 'immune_activation';
+
+export interface FunctionalPatternAssessment {
+  system: FunctionalSystem;
+  score: number;
+  status: 'optimal' | 'suboptimal' | 'dysregulated';
+  relatedSymptoms: string[];
+  relatedBiomarkers: string[];
+  rootCauseHypotheses: string[];
+  interventionPriority: 'high' | 'medium' | 'low';
+}
+
+export interface ClinicalCorrelation {
+  id: string;
+  labFinding?: string;
+  symptom: string;
+  explanation: string;
+  functionalSystem: FunctionalSystem;
+  tcmPattern?: TCMPattern;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface DifferentiatingQuestion {
+  id: string;
+  question: string;
+  options?: string[];
+  purpose: string;
+  relatedPatterns: (TCMPattern | FunctionalSystem)[];
+}
+
+export interface ClinicalAnalysis {
+  id: string;
+  userId: string;
+  intakeId: string;
+  chiefComplaintSummary: string;
+  functionalPatterns: FunctionalPatternAssessment[];
+  tcmPatterns: TCMPatternAssessment[];
+  correlations: ClinicalCorrelation[];
+  differentiatingQuestions: DifferentiatingQuestion[];
+  recommendations: string[];
+  disclaimer: string;
+  createdAt: string;
+}

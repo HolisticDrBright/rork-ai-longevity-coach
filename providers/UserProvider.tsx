@@ -10,6 +10,9 @@ import {
   QuestionnaireResponse,
   CategoryScore,
   AppUserRole,
+  ChiefComplaint,
+  AssociatedSymptom,
+  ClinicalIntake,
 } from '@/types';
 import { questionnaireCategories } from '@/mocks/questionnaire';
 
@@ -18,6 +21,7 @@ const STORAGE_KEYS = {
   LIFESTYLE_PROFILE: 'longevity_lifestyle_profile',
   CONTRAINDICATIONS: 'longevity_contraindications',
   QUESTIONNAIRE_RESPONSES: 'longevity_questionnaire_responses',
+  CLINICAL_INTAKE: 'longevity_clinical_intake',
 };
 
 const defaultUserProfile: UserProfile = {
@@ -60,6 +64,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
   const [lifestyleProfile, setLifestyleProfile] = useState<LifestyleProfile>(defaultLifestyleProfile);
   const [contraindications, setContraindications] = useState<Contraindication>(defaultContraindications);
   const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([]);
+  const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntake | null>(null);
 
   const userQuery = useQuery({
     queryKey: ['userProfile'],
@@ -93,6 +98,14 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
   });
 
+  const clinicalIntakeQuery = useQuery({
+    queryKey: ['clinicalIntake'],
+    queryFn: async () => {
+      const stored = await AsyncStorage.getItem(STORAGE_KEYS.CLINICAL_INTAKE);
+      return stored ? JSON.parse(stored) : null;
+    },
+  });
+
   useEffect(() => {
     if (userQuery.data) setUserProfile(userQuery.data);
   }, [userQuery.data]);
@@ -108,6 +121,10 @@ export const [UserProvider, useUser] = createContextHook(() => {
   useEffect(() => {
     if (responsesQuery.data) setQuestionnaireResponses(responsesQuery.data);
   }, [responsesQuery.data]);
+
+  useEffect(() => {
+    if (clinicalIntakeQuery.data) setClinicalIntake(clinicalIntakeQuery.data);
+  }, [clinicalIntakeQuery.data]);
 
   const saveUserMutation = useMutation({
     mutationFn: async (profile: UserProfile) => {
@@ -153,6 +170,17 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
   });
 
+  const saveClinicalIntakeMutation = useMutation({
+    mutationFn: async (intake: ClinicalIntake) => {
+      await AsyncStorage.setItem(STORAGE_KEYS.CLINICAL_INTAKE, JSON.stringify(intake));
+      return intake;
+    },
+    onSuccess: (data) => {
+      setClinicalIntake(data);
+      queryClient.invalidateQueries({ queryKey: ['clinicalIntake'] });
+    },
+  });
+
   const updateUserProfile = useCallback((updates: Partial<UserProfile>) => {
     const updated = { ...userProfile, ...updates };
     saveUserMutation.mutate(updated);
@@ -174,6 +202,23 @@ export const [UserProvider, useUser] = createContextHook(() => {
     saveResponsesMutation.mutate(updated);
   }, [questionnaireResponses, saveResponsesMutation]);
 
+  const saveClinicalIntake = useCallback((chiefComplaint: ChiefComplaint, symptoms: AssociatedSymptom[]) => {
+    const intake: ClinicalIntake = {
+      id: clinicalIntake?.id || `intake_${Date.now()}`,
+      userId: userProfile.id || `user_${Date.now()}`,
+      chiefComplaint,
+      associatedSymptoms: symptoms,
+      energyLevel: lifestyleProfile.sleepQuality,
+      sleepQuality: lifestyleProfile.sleepQuality,
+      digestiveFunction: 5,
+      stressPerception: lifestyleProfile.stressLevel,
+      temperatureSensitivity: 'normal',
+      createdAt: clinicalIntake?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    saveClinicalIntakeMutation.mutate(intake);
+  }, [clinicalIntake, userProfile.id, lifestyleProfile, saveClinicalIntakeMutation]);
+
   const completeOnboarding = useCallback(() => {
     const updated = { ...userProfile, onboardingCompleted: true, id: `user_${Date.now()}` };
     saveUserMutation.mutate(updated);
@@ -185,11 +230,13 @@ export const [UserProvider, useUser] = createContextHook(() => {
       STORAGE_KEYS.LIFESTYLE_PROFILE,
       STORAGE_KEYS.CONTRAINDICATIONS,
       STORAGE_KEYS.QUESTIONNAIRE_RESPONSES,
+      STORAGE_KEYS.CLINICAL_INTAKE,
     ]);
     setUserProfile(defaultUserProfile);
     setLifestyleProfile(defaultLifestyleProfile);
     setContraindications(defaultContraindications);
     setQuestionnaireResponses([]);
+    setClinicalIntake(null);
     queryClient.invalidateQueries();
   }, [queryClient]);
 
@@ -220,7 +267,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [userProfile, saveUserMutation]);
 
   const isLoading = userQuery.isLoading || lifestyleQuery.isLoading || 
-    contraindicationsQuery.isLoading || responsesQuery.isLoading;
+    contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading;
 
   return {
     userProfile,
@@ -228,12 +275,14 @@ export const [UserProvider, useUser] = createContextHook(() => {
     contraindications,
     questionnaireResponses,
     categoryScores,
+    clinicalIntake,
     isLoading,
     isClinician,
     updateUserProfile,
     updateLifestyleProfile,
     updateContraindications,
     saveQuestionnaireResponse,
+    saveClinicalIntake,
     completeOnboarding,
     resetOnboarding,
     setUserRole,
