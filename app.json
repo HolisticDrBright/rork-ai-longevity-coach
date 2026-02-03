@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "AI Longevity Coach",
-    "slug": "ai-longevity-coach",
+    "name": "AI Longevity Pro",
+    "slug": "ai-longevity-pro",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,14 +15,14 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.ai-longevity-coach"
+      "bundleIdentifier": "app.rork.ai-longevity-pro"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.ai_longevity_coach"
+      "package": "app.rork.ai_longevity_pro"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
