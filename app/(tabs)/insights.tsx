@@ -48,6 +48,7 @@ import { useUser } from '@/providers/UserProvider';
 import { useLabs } from '@/providers/LabsProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useRorkAgent } from '@rork-ai/toolkit-sdk';
+import PeptideEducation from '@/components/PeptideEducation';
 import { CategoryScore, HealthDisorder, LabRecommendation } from '@/types';
 
 const categoryIcons: Record<string, any> = {
@@ -588,6 +589,8 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
             <MessageCircle color="rgba(255,255,255,0.7)" size={20} />
           </LinearGradient>
         </TouchableOpacity>
+
+        <PeptideEducation />
 
         <TouchableOpacity
           style={styles.labsPromptCard}
