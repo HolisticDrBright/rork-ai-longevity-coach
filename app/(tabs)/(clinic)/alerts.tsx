@@ -191,7 +191,7 @@ export default function AlertsScreen() {
       severity={item.severity}
       status={item.status}
       createdAt={item.createdAt}
-      onPress={() => router.push(`/(tabs)/(clinic)/patient/${item.patientId}`)}
+      onPress={() => router.push(`/(tabs)/(clinic)/patient/${item.patientId}` as any)}
       onAcknowledge={() => handleAcknowledge(item.id)}
     />
   ), [router, handleAcknowledge]);

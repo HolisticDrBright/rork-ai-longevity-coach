@@ -186,14 +186,14 @@ export default function ClinicDashboardScreen() {
           value={stats?.activePatients || 0}
           icon={<Users size={22} color={Colors.primary} />}
           color={Colors.primary}
-          onPress={() => router.push('/(tabs)/(clinic)/patients')}
+          onPress={() => router.push('/(tabs)/(clinic)/patients' as any)}
         />
         <StatCard
           title="Critical Alerts"
           value={stats?.criticalAlerts || 0}
           icon={<AlertTriangle size={22} color={Colors.danger} />}
           color={Colors.danger}
-          onPress={() => router.push('/(tabs)/(clinic)/alerts')}
+          onPress={() => router.push('/(tabs)/(clinic)/alerts' as any)}
         />
         <StatCard
           title="Pending Reviews"
@@ -213,7 +213,7 @@ export default function ClinicDashboardScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Needs Attention</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/(clinic)/alerts')}>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/(clinic)/alerts' as any)}>
               <Text style={styles.seeAll}>See All</Text>
             </TouchableOpacity>
           </View>
@@ -225,7 +225,7 @@ export default function ClinicDashboardScreen() {
                 patientName={review.patientName}
                 title={review.title}
                 priority={review.priority}
-                onPress={() => router.push(`/(tabs)/(clinic)/patient/${review.patientId}`)}
+                onPress={() => router.push(`/(tabs)/(clinic)/patient/${review.patientId}` as any)}
               />
             ))}
           </View>
@@ -252,7 +252,7 @@ export default function ClinicDashboardScreen() {
                 description={activity.description}
                 timestamp={activity.timestamp}
                 severity={activity.severity}
-                onPress={() => router.push(`/(tabs)/(clinic)/patient/${activity.patientId}`)}
+                onPress={() => router.push(`/(tabs)/(clinic)/patient/${activity.patientId}` as any)}
               />
             ))}
           </View>
@@ -262,21 +262,21 @@ export default function ClinicDashboardScreen() {
       <View style={styles.quickActions}>
         <TouchableOpacity 
           style={styles.quickAction}
-          onPress={() => router.push('/(tabs)/(clinic)/patients')}
+          onPress={() => router.push('/(tabs)/(clinic)/patients' as any)}
         >
           <Users size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>View Patients</Text>
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.quickAction}
-          onPress={() => router.push('/(tabs)/(clinic)/alerts')}
+          onPress={() => router.push('/(tabs)/(clinic)/alerts' as any)}
         >
           <Bell size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Alert Inbox</Text>
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.quickAction}
-          onPress={() => router.push('/(tabs)/(clinic)/supplements-admin')}
+          onPress={() => router.push('/(tabs)/(clinic)/supplements-admin' as any)}
         >
           <Package size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Supplements</Text>

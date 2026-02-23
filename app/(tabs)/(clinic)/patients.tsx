@@ -152,7 +152,7 @@ export default function PatientsScreen() {
       alertCount={item.alertCount}
       lastActivity={item.lastActivity}
       tags={item.tags}
-      onPress={() => router.push(`/(tabs)/(clinic)/patient/${item.id}`)}
+      onPress={() => router.push(`/(tabs)/(clinic)/patient/${item.id}` as any)}
     />
   ), [router]);
 

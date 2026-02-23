@@ -369,7 +369,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
           </Text>
           <TouchableOpacity
             style={styles.startButton}
-            onPress={() => router.push('/onboarding')}
+            onPress={() => router.push('/onboarding' as any)}
           >
             <Text style={styles.startButtonText}>Start Assessment</Text>
           </TouchableOpacity>

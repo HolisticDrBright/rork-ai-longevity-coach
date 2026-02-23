@@ -46,7 +46,7 @@ export default function NewMealCapture() {
         mealType: selectedMeal!,
         photoBase64,
       });
-      router.push('/(tabs)/(nutrition)/confirm');
+      router.push('/(tabs)/(nutrition)/confirm' as any);
     },
     onError: (error) => {
       console.error('Analysis failed:', error);
@@ -126,7 +126,7 @@ export default function NewMealCapture() {
       mealType: selectedMeal,
       photoBase64: null,
     });
-    router.push('/(tabs)/(nutrition)/confirm');
+    router.push('/(tabs)/(nutrition)/confirm' as any);
   }, [selectedMeal, setPendingMealAnalysis, router]);
 
   return (

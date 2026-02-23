@@ -67,7 +67,7 @@ export default function TodayScreen() {
 
   useEffect(() => {
     if (!userLoading && !userProfile.onboardingCompleted) {
-      router.replace('/onboarding');
+      router.replace('/onboarding' as any);
     }
   }, [userProfile.onboardingCompleted, userLoading]);
 
@@ -142,7 +142,7 @@ export default function TodayScreen() {
         {questionnaireResponses.length > 0 && (
           <TouchableOpacity
             style={styles.insightsCard}
-            onPress={() => router.push('/(tabs)/insights')}
+            onPress={() => router.push('/(tabs)/insights' as any)}
           >
             <LinearGradient
               colors={['#1E3A5F', '#2D5A87']}
@@ -167,7 +167,7 @@ export default function TodayScreen() {
         {flaggedBiomarkers.length > 0 && (
           <TouchableOpacity
             style={styles.alertCard}
-            onPress={() => router.push('/(tabs)/labs')}
+            onPress={() => router.push('/(tabs)/labs' as any)}
           >
             <View style={styles.alertIconContainer}>
               <AlertTriangle color={Colors.warning} size={20} />
@@ -187,7 +187,7 @@ export default function TodayScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Today's Actions</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/protocol')}>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/protocol' as any)}>
               <Text style={styles.seeAllText}>See Protocol</Text>
             </TouchableOpacity>
           </View>
@@ -282,7 +282,7 @@ export default function TodayScreen() {
 
         <TouchableOpacity
           style={styles.checkInCard}
-          onPress={() => router.push('/(tabs)/tracking')}
+          onPress={() => router.push('/(tabs)/tracking' as any)}
         >
           <LinearGradient
             colors={[Colors.accent, Colors.accentLight]}

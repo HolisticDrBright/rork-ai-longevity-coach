@@ -76,7 +76,7 @@ export default function NutritionDashboard() {
       <TouchableOpacity
         key={diet}
         style={styles.complianceBadge}
-        onPress={() => router.push('/(tabs)/(nutrition)/settings')}
+        onPress={() => router.push('/(tabs)/(nutrition)/settings' as any)}
         activeOpacity={0.7}
       >
         <View style={styles.complianceHeader}>
@@ -112,7 +112,7 @@ export default function NutritionDashboard() {
       <TouchableOpacity
         key={log.id}
         style={styles.logCard}
-        onPress={() => router.push(`/(tabs)/(nutrition)/${log.id}`)}
+        onPress={() => router.push(`/(tabs)/(nutrition)/${log.id}` as any)}
         activeOpacity={0.7}
       >
         <View style={styles.logLeft}>
@@ -147,7 +147,7 @@ export default function NutritionDashboard() {
           </View>
           <TouchableOpacity
             style={styles.settingsButton}
-            onPress={() => router.push('/(tabs)/(nutrition)/settings')}
+            onPress={() => router.push('/(tabs)/(nutrition)/settings' as any)}
           >
             <Settings size={22} color={Colors.primary} />
           </TouchableOpacity>
@@ -205,7 +205,7 @@ export default function NutritionDashboard() {
         {activeDiets.length === 0 && (
           <TouchableOpacity
             style={styles.setupDietCard}
-            onPress={() => router.push('/(tabs)/(nutrition)/settings')}
+            onPress={() => router.push('/(tabs)/(nutrition)/settings' as any)}
             activeOpacity={0.8}
           >
             <Settings size={24} color={Colors.primary} />
@@ -236,7 +236,7 @@ export default function NutritionDashboard() {
 
       <TouchableOpacity
         style={[styles.fab, { bottom: insets.bottom + 90 }]}
-        onPress={() => router.push('/(tabs)/(nutrition)/new')}
+        onPress={() => router.push('/(tabs)/(nutrition)/new' as any)}
         activeOpacity={0.9}
       >
         <Plus size={28} color={Colors.textInverse} />

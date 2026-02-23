@@ -86,7 +86,7 @@ export default function TabLayout() {
         options={{
           title: 'Clinic',
           tabBarIcon: ({ color, size }) => <Stethoscope color={color} size={size} />,
-          href: isClinician ? '/(tabs)/(clinic)' : null,
+          href: isClinician ? '/(tabs)/(clinic)' as any : null,
         }}
       />
       <Tabs.Screen
