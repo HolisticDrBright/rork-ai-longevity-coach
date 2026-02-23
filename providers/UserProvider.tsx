@@ -1,7 +1,9 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
+import { recordAccessPattern } from '@/lib/breachDetection';
 
 import {
   UserProfile,
@@ -69,40 +71,41 @@ export const [UserProvider, useUser] = createContextHook(() => {
   const userQuery = useQuery({
     queryKey: ['userProfile'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE);
-      return stored ? JSON.parse(stored) : defaultUserProfile;
+      const stored = await secureGetJSON<UserProfile>(STORAGE_KEYS.USER_PROFILE);
+      await recordAccessPattern('user_profile', 'read');
+      return stored ?? defaultUserProfile;
     },
   });
 
   const lifestyleQuery = useQuery({
     queryKey: ['lifestyleProfile'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.LIFESTYLE_PROFILE);
-      return stored ? JSON.parse(stored) : defaultLifestyleProfile;
+      const stored = await secureGetJSON<LifestyleProfile>(STORAGE_KEYS.LIFESTYLE_PROFILE);
+      return stored ?? defaultLifestyleProfile;
     },
   });
 
   const contraindicationsQuery = useQuery({
     queryKey: ['contraindications'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.CONTRAINDICATIONS);
-      return stored ? JSON.parse(stored) : defaultContraindications;
+      const stored = await secureGetJSON<Contraindication>(STORAGE_KEYS.CONTRAINDICATIONS);
+      return stored ?? defaultContraindications;
     },
   });
 
   const responsesQuery = useQuery({
     queryKey: ['questionnaireResponses'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<QuestionnaireResponse[]>(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES);
+      return stored ?? [];
     },
   });
 
   const clinicalIntakeQuery = useQuery({
     queryKey: ['clinicalIntake'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.CLINICAL_INTAKE);
-      return stored ? JSON.parse(stored) : null;
+      const stored = await secureGetJSON<ClinicalIntake>(STORAGE_KEYS.CLINICAL_INTAKE);
+      return stored ?? null;
     },
   });
 
@@ -128,7 +131,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const saveUserMutation = useMutation({
     mutationFn: async (profile: UserProfile) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
+      await secureSetJSON(STORAGE_KEYS.USER_PROFILE, profile);
+      await writeAuditLog('PHI_UPDATE', 'user_profile', profile.id || 'unknown');
       return profile;
     },
     onSuccess: (data) => {
@@ -139,7 +143,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const saveLifestyleMutation = useMutation({
     mutationFn: async (profile: LifestyleProfile) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.LIFESTYLE_PROFILE, JSON.stringify(profile));
+      await secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, profile);
+      await writeAuditLog('PHI_UPDATE', 'lifestyle_profile', 'user');
       return profile;
     },
     onSuccess: (data) => {
@@ -150,7 +155,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const saveContraindicationsMutation = useMutation({
     mutationFn: async (data: Contraindication) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.CONTRAINDICATIONS, JSON.stringify(data));
+      await secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, data);
+      await writeAuditLog('PHI_UPDATE', 'contraindications', 'user');
       return data;
     },
     onSuccess: (data) => {
@@ -161,7 +167,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const saveResponsesMutation = useMutation({
     mutationFn: async (responses: QuestionnaireResponse[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, JSON.stringify(responses));
+      await secureSetJSON(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, responses);
+      await writeAuditLog('PHI_UPDATE', 'questionnaire', 'user');
       return responses;
     },
     onSuccess: (data) => {
@@ -172,7 +179,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const saveClinicalIntakeMutation = useMutation({
     mutationFn: async (intake: ClinicalIntake) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.CLINICAL_INTAKE, JSON.stringify(intake));
+      await secureSetJSON(STORAGE_KEYS.CLINICAL_INTAKE, intake);
+      await writeAuditLog('PHI_UPDATE', 'clinical_intake', intake.userId);
       return intake;
     },
     onSuccess: (data) => {
@@ -225,13 +233,14 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [userProfile, saveUserMutation]);
 
   const resetOnboarding = useCallback(async () => {
-    await AsyncStorage.multiRemove([
+    await secureMultiRemove([
       STORAGE_KEYS.USER_PROFILE,
       STORAGE_KEYS.LIFESTYLE_PROFILE,
       STORAGE_KEYS.CONTRAINDICATIONS,
       STORAGE_KEYS.QUESTIONNAIRE_RESPONSES,
       STORAGE_KEYS.CLINICAL_INTAKE,
     ]);
+    await writeAuditLog('PHI_DELETE', 'onboarding_reset', userProfile.id || 'unknown');
     setUserProfile(defaultUserProfile);
     setLifestyleProfile(defaultLifestyleProfile);
     setContraindications(defaultContraindications);

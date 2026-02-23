@@ -2,6 +2,8 @@ import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { secureGetJSON, secureSetJSON, secureRemoveItem } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
 
 import {
   DietProfile,
@@ -54,24 +56,24 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   const dietProfileQuery = useQuery({
     queryKey: ['dietProfile'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.DIET_PROFILE);
-      return stored ? JSON.parse(stored) : defaultDietProfile;
+      const stored = await secureGetJSON<DietProfile>(STORAGE_KEYS.DIET_PROFILE);
+      return stored ?? defaultDietProfile;
     },
   });
 
   const foodLogsQuery = useQuery({
     queryKey: ['foodLogs'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.FOOD_LOGS);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<FoodLog[]>(STORAGE_KEYS.FOOD_LOGS);
+      return stored ?? [];
     },
   });
 
   const pendingAnalysisQuery = useQuery({
     queryKey: ['pendingAnalysis'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_ANALYSIS);
-      return stored ? JSON.parse(stored) : null;
+      const stored = await secureGetJSON<typeof pendingAnalysis>(STORAGE_KEYS.PENDING_ANALYSIS);
+      return stored ?? null;
     },
   });
 
@@ -90,7 +92,8 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   const saveDietProfileMutation = useMutation({
     mutationFn: async (profile: DietProfile) => {
       const updated = { ...profile, updatedAt: new Date().toISOString() };
-      await AsyncStorage.setItem(STORAGE_KEYS.DIET_PROFILE, JSON.stringify(updated));
+      await secureSetJSON(STORAGE_KEYS.DIET_PROFILE, updated);
+      await writeAuditLog('PHI_UPDATE', 'diet_profile', 'user');
       return updated;
     },
     onSuccess: (data) => {
@@ -101,7 +104,8 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
 
   const saveFoodLogsMutation = useMutation({
     mutationFn: async (logs: FoodLog[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.FOOD_LOGS, JSON.stringify(logs));
+      await secureSetJSON(STORAGE_KEYS.FOOD_LOGS, logs);
+      await writeAuditLog('PHI_UPDATE', 'food_logs', 'user');
       return logs;
     },
     onSuccess: (data) => {
@@ -113,9 +117,9 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   const savePendingAnalysisMutation = useMutation({
     mutationFn: async (analysis: typeof pendingAnalysis) => {
       if (analysis) {
-        await AsyncStorage.setItem(STORAGE_KEYS.PENDING_ANALYSIS, JSON.stringify(analysis));
+        await secureSetJSON(STORAGE_KEYS.PENDING_ANALYSIS, analysis);
       } else {
-        await AsyncStorage.removeItem(STORAGE_KEYS.PENDING_ANALYSIS);
+        await secureRemoveItem(STORAGE_KEYS.PENDING_ANALYSIS);
       }
       return analysis;
     },

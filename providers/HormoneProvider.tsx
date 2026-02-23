@@ -1,7 +1,9 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
+import { recordAccessPattern } from '@/lib/breachDetection';
 
 import { HormoneEntry, HormoneSymptom, HormoneGuidance } from '@/types';
 
@@ -53,8 +55,9 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
   const entriesQuery = useQuery({
     queryKey: ['hormoneEntries'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<HormoneEntry[]>(STORAGE_KEY);
+      await recordAccessPattern('hormone_entries', 'read');
+      return stored ?? [];
     },
   });
 
@@ -66,7 +69,8 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
 
   const saveEntriesMutation = useMutation({
     mutationFn: async (newEntries: HormoneEntry[]) => {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newEntries));
+      await secureSetJSON(STORAGE_KEY, newEntries);
+      await writeAuditLog('PHI_UPDATE', 'hormone_entries', 'user');
       return newEntries;
     },
     onSuccess: (data) => {

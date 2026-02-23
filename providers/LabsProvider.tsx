@@ -1,5 +1,4 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useMemo } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
@@ -7,6 +6,9 @@ import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
 import { z } from 'zod';
+import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
+import { recordAccessPattern } from '@/lib/breachDetection';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
@@ -74,8 +76,9 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   const labsQuery = useQuery({
     queryKey: ['labPanels'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [previousLabPanel, sampleLabPanel];
+      const stored = await secureGetJSON<LabPanel[]>(STORAGE_KEY);
+      await recordAccessPattern('lab_panels', 'read');
+      return stored ?? [previousLabPanel, sampleLabPanel];
     },
   });
 
@@ -85,17 +88,16 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
   const saveLabsMutation = useMutation({
     mutationFn: async (panels: LabPanel[]) => {
-      console.log('[Labs] Saving', panels.length, 'panels to storage');
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(panels));
+      await secureSetJSON(STORAGE_KEY, panels);
+      await writeAuditLog('PHI_UPDATE', 'lab_panels', 'user', `Saved ${panels.length} panels`);
       return panels;
     },
     onSuccess: (data) => {
-      console.log('[Labs] Save successful, updating state with', data.length, 'panels');
       setLabPanels(data);
       queryClient.invalidateQueries({ queryKey: ['labPanels'] });
     },
-    onError: (error) => {
-      console.error('[Labs] Save failed:', error);
+    onError: () => {
+      console.log('[Labs] Save failed');
     },
   });
 
@@ -174,9 +176,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   }, [latestPanel]);
 
   const addLabPanel = (panel: LabPanel) => {
-    console.log('[Labs] Adding panel:', panel.id, 'with', panel.biomarkers.length, 'biomarkers');
     const updated = [...labPanels, panel];
-    console.log('[Labs] Total panels after add:', updated.length);
     saveLabsMutation.mutate(updated);
   };
 
@@ -189,7 +189,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        console.log('Document picked:', asset.name, asset.mimeType);
+        console.log('[Labs] Document picked successfully');
         return {
           uri: asset.uri,
           name: asset.name,
@@ -198,7 +198,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
       }
       return null;
     } catch (error) {
-      console.error('Error picking document:', error);
+      console.log('[Labs] Error picking document');
       return null;
     }
   };
@@ -206,7 +206,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   const analyzeLabMutation = useMutation({
     mutationFn: async (params: { fileUri: string; mimeType: string; panelId?: string }): Promise<LabAnalysisResult> => {
       const { fileUri, mimeType, panelId } = params;
-      console.log('Starting lab analysis for:', fileUri, 'mimeType:', mimeType);
+      console.log('[Labs] Starting lab analysis');
       
       let base64Content = '';
       
@@ -215,9 +215,9 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
           base64Content = await FileSystem.readAsStringAsync(fileUri, {
             encoding: 'base64',
           });
-          console.log('File read successfully, base64 length:', base64Content.length);
+          console.log('[Labs] File read successfully');
         } catch (error) {
-          console.error('Error reading file:', error);
+          console.log('[Labs] Error reading file');
           throw new Error('Could not read the uploaded file. Please try again.');
         }
       } else {
@@ -234,9 +234,9 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
             reader.onerror = reject;
             reader.readAsDataURL(blob);
           });
-          console.log('Web file read successfully, base64 length:', base64Content.length);
+          console.log('[Labs] Web file read successfully');
         } catch (error) {
-          console.error('Error reading web file:', error);
+          console.log('[Labs] Error reading web file');
           throw new Error('Could not read the uploaded file. Please try again.');
         }
       }
@@ -267,7 +267,7 @@ Also provide:
 
 Be thorough and extract every biomarker visible in the document.`;
 
-      console.log('Extracting biomarkers from lab document...');
+      console.log('[Labs] Extracting biomarkers...');
       
       let extractedData = { biomarkers: [], supplements: [], herbs: [], priorityActions: [] } as z.infer<typeof labExtractionSchema>;
       let analysisText = '';
@@ -287,12 +287,10 @@ Be thorough and extract every biomarker visible in the document.`;
           ],
           schema: labExtractionSchema,
         });
-        console.log('[Labs] Extracted biomarkers:', extractedData.biomarkers.length);
-        console.log('[Labs] Extracted supplements:', extractedData.supplements.length);
-        console.log('[Labs] Extracted herbs:', extractedData.herbs.length);
+        console.log('[Labs] Extraction complete');
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('[Labs] Error extracting biomarkers:', errorMessage);
+        console.log('[Labs] Extraction error occurred');
         extractionError = errorMessage;
         
         if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
@@ -346,7 +344,7 @@ If You Do Nothing Else, Do These 3 Things
 
 Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
-      console.log('Generating comprehensive analysis...');
+      console.log('[Labs] Generating analysis...');
       
       try {
         analysisText = await generateText({
@@ -362,7 +360,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         });
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('Error generating analysis:', errorMessage);
+        console.log('[Labs] Analysis generation error');
         
         if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
           if (extractedData.biomarkers.length === 0) {

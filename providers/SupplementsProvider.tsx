@@ -1,7 +1,8 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
 
 import {
   CuratedProduct,
@@ -34,16 +35,16 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
   const customProductsQuery = useQuery({
     queryKey: ['customProducts'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.CUSTOM_PRODUCTS);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<CuratedProduct[]>(STORAGE_KEYS.CUSTOM_PRODUCTS);
+      return stored ?? [];
     },
   });
 
   const clickEventsQuery = useQuery({
     queryKey: ['clickEvents'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.CLICK_EVENTS);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<SupplementClickEvent[]>(STORAGE_KEYS.CLICK_EVENTS);
+      return stored ?? [];
     },
   });
 
@@ -62,7 +63,8 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
 
   const { mutate: saveCustomProducts } = useMutation({
     mutationFn: async (products: CuratedProduct[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.CUSTOM_PRODUCTS, JSON.stringify(products));
+      await secureSetJSON(STORAGE_KEYS.CUSTOM_PRODUCTS, products);
+      await writeAuditLog('PHI_UPDATE', 'custom_products', 'user');
       return products;
     },
     onSuccess: (data) => {
@@ -73,7 +75,7 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
 
   const { mutate: saveClickEvents } = useMutation({
     mutationFn: async (events: SupplementClickEvent[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.CLICK_EVENTS, JSON.stringify(events));
+      await secureSetJSON(STORAGE_KEYS.CLICK_EVENTS, events);
       return events;
     },
     onSuccess: (data) => {
@@ -302,14 +304,13 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
   }, []);
 
   const getRecommendations = useCallback((needs: PatientSupplementNeeds): RecommendationBundle => {
-    console.log('[Supplements] Generating recommendations for needs:', needs);
+    console.log('[Supplements] Generating recommendations');
 
     const expandedNeeds = expandNeeds(needs);
     const targetIngredients = getTargetIngredients(expandedNeeds);
     const maxProducts = needs.preferences.maxProducts || DEFAULT_MAX_PRODUCTS;
 
-    console.log('[Supplements] Expanded needs:', expandedNeeds);
-    console.log('[Supplements] Target ingredients:', targetIngredients);
+
 
     const scoredProducts = allProducts
       .filter(p => filterByPreferences(p, needs.preferences))
@@ -322,7 +323,7 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
       .filter(item => !item.safetyFlags.some(f => f.startsWith('CONTRAINDICATED')))
       .sort((a, b) => b.score - a.score);
 
-    console.log('[Supplements] Scored products:', scoredProducts.length);
+
 
     const selectedProducts = selectMinimalSet(scoredProducts, targetIngredients, maxProducts);
 
@@ -355,7 +356,7 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
       }`,
     };
 
-    console.log('[Supplements] Final bundle:', bundle);
+
     return bundle;
   }, [allProducts, expandNeeds, getTargetIngredients, filterByPreferences, calculateMatchScore, checkContraindications, selectMinimalSet, getAffiliateUrl, generateRationale, generateHowToTake]);
 
@@ -378,7 +379,7 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
       source,
     };
 
-    console.log('[Supplements] Tracking click:', event);
+    console.log('[Supplements] Click tracked');
     const updated = [...clickEvents, event];
     saveClickEvents(updated);
   }, [clickEvents, saveClickEvents]);

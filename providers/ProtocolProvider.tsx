@@ -1,7 +1,9 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
 
 import {
   Protocol,
@@ -48,32 +50,32 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
   const protocolsQuery = useQuery({
     queryKey: ['protocols'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.PROTOCOLS);
-      return stored ? JSON.parse(stored) : [sampleProtocol];
+      const stored = await secureGetJSON<Protocol[]>(STORAGE_KEYS.PROTOCOLS);
+      return stored ?? [sampleProtocol];
     },
   });
 
   const adherenceQuery = useQuery({
     queryKey: ['dailyAdherence'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.DAILY_ADHERENCE);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<DailyAdherence[]>(STORAGE_KEYS.DAILY_ADHERENCE);
+      return stored ?? [];
     },
   });
 
   const checkInsQuery = useQuery({
     queryKey: ['weeklyCheckIns'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.WEEKLY_CHECKINS);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<WeeklyCheckIn[]>(STORAGE_KEYS.WEEKLY_CHECKINS);
+      return stored ?? [];
     },
   });
 
   const peptidePlansQuery = useQuery({
     queryKey: ['userPeptidePlans'],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.USER_PEPTIDE_PLANS);
-      return stored ? JSON.parse(stored) : [];
+      const stored = await secureGetJSON<UserPeptidePlan[]>(STORAGE_KEYS.USER_PEPTIDE_PLANS);
+      return stored ?? [];
     },
   });
 
@@ -82,6 +84,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     queryFn: async () => {
       const stored = await AsyncStorage.getItem(STORAGE_KEYS.PEPTIDE_ACKNOWLEDGMENT);
       return stored === 'true';
+    
     },
   });
 
@@ -107,7 +110,8 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
   const saveProtocolsMutation = useMutation({
     mutationFn: async (data: Protocol[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.PROTOCOLS, JSON.stringify(data));
+      await secureSetJSON(STORAGE_KEYS.PROTOCOLS, data);
+      await writeAuditLog('PHI_UPDATE', 'protocols', 'user');
       return data;
     },
     onSuccess: (data) => {
@@ -118,7 +122,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
   const saveAdherenceMutation = useMutation({
     mutationFn: async (data: DailyAdherence[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.DAILY_ADHERENCE, JSON.stringify(data));
+      await secureSetJSON(STORAGE_KEYS.DAILY_ADHERENCE, data);
       return data;
     },
     onSuccess: (data) => {
@@ -129,7 +133,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
   const saveCheckInsMutation = useMutation({
     mutationFn: async (data: WeeklyCheckIn[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.WEEKLY_CHECKINS, JSON.stringify(data));
+      await secureSetJSON(STORAGE_KEYS.WEEKLY_CHECKINS, data);
       return data;
     },
     onSuccess: (data) => {
@@ -140,7 +144,8 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
   const savePeptidePlansMutation = useMutation({
     mutationFn: async (data: UserPeptidePlan[]) => {
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_PEPTIDE_PLANS, JSON.stringify(data));
+      await secureSetJSON(STORAGE_KEYS.USER_PEPTIDE_PLANS, data);
+      await writeAuditLog('PHI_UPDATE', 'peptide_plans', 'user');
       return data;
     },
     onSuccess: (data) => {
