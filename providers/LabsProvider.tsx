@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
+import { sendLabsAnalyzed } from '@/lib/webhooks';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
@@ -94,7 +95,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setLabPanels(data);
-      queryClient.invalidateQueries({ queryKey: ['labPanels'] });
+      void queryClient.invalidateQueries({ queryKey: ['labPanels'] });
     },
     onError: () => {
       console.log('[Labs] Save failed');
@@ -128,7 +129,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return latestPanel.biomarkers.filter(b => b.status === 'optimal');
   }, [latestPanel]);
 
-  const getBiomarkerTrend = (biomarkerId: string): 'up' | 'down' | 'stable' | null => {
+  const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
     if (!latestPanel || !previousPanel) return null;
 
     const currentBio = latestPanel.biomarkers.find(b => b.name === 
@@ -142,7 +143,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
     if (Math.abs(percentChange) < 5) return 'stable';
     return percentChange > 0 ? 'up' : 'down';
-  };
+  }, [latestPanel, previousPanel]);
 
   const biomarkersByCategory = useMemo(() => {
     if (!latestPanel) return {};
@@ -175,12 +176,12 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return categories;
   }, [latestPanel]);
 
-  const addLabPanel = (panel: LabPanel) => {
+  const addLabPanel = useCallback((panel: LabPanel) => {
     const updated = [...labPanels, panel];
     saveLabsMutation.mutate(updated);
-  };
+  }, [labPanels, saveLabsMutation]);
 
-  const pickLabDocument = async (): Promise<{ uri: string; name: string; mimeType: string } | null> => {
+  const pickLabDocument = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string } | null> => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/*'],
@@ -197,11 +198,11 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
         };
       }
       return null;
-    } catch (error) {
+    } catch {
       console.log('[Labs] Error picking document');
       return null;
     }
-  };
+  }, []);
 
   const analyzeLabMutation = useMutation({
     mutationFn: async (params: { fileUri: string; mimeType: string; panelId?: string }): Promise<LabAnalysisResult> => {
@@ -216,7 +217,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
             encoding: 'base64',
           });
           console.log('[Labs] File read successfully');
-        } catch (error) {
+        } catch {
           console.log('[Labs] Error reading file');
           throw new Error('Could not read the uploaded file. Please try again.');
         }
@@ -235,7 +236,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
             reader.readAsDataURL(blob);
           });
           console.log('[Labs] Web file read successfully');
-        } catch (error) {
+        } catch {
           console.log('[Labs] Error reading web file');
           throw new Error('Could not read the uploaded file. Please try again.');
         }
@@ -413,16 +414,16 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     },
   });
 
-  const updateLabPanelBiomarkers = (panelId: string, biomarkers: Biomarker[]) => {
+  const updateLabPanelBiomarkers = useCallback((panelId: string, biomarkers: Biomarker[]) => {
     const updated = labPanels.map(panel => 
       panel.id === panelId 
         ? { ...panel, biomarkers } 
         : panel
     );
     saveLabsMutation.mutate(updated);
-  };
+  }, [labPanels, saveLabsMutation]);
 
-  const createManualLabPanel = (name: string, date: string, biomarkers: Biomarker[]): LabPanel => {
+  const createManualLabPanel = useCallback((name: string, date: string, biomarkers: Biomarker[]): LabPanel => {
     const panel: LabPanel = {
       id: `panel_${Date.now()}`,
       name,
@@ -432,9 +433,22 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     };
     addLabPanel(panel);
     return panel;
-  };
+  }, [addLabPanel]);
 
-  return {
+  const sendLabsWebhook = useCallback((userId: string, email: string, labType: string, supplements: SupplementRecommendation[]) => {
+    sendLabsAnalyzed({
+      userId,
+      email,
+      labType,
+      supplementsRecommended: supplements.map(s => ({
+        name: s.name,
+        affiliateLink: s.affiliateLink?.url || '',
+        reason: s.reason,
+      })),
+    });
+  }, []);
+
+  return useMemo(() => ({
     labPanels,
     latestPanel,
     previousPanel,
@@ -450,5 +464,23 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     isAnalyzing: analyzeLabMutation.isPending,
     analysisError: analyzeLabMutation.error,
     updateLabPanelBiomarkers,
-  };
+    sendLabsWebhook,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [
+    labPanels,
+    latestPanel,
+    previousPanel,
+    flaggedBiomarkers,
+    optimalBiomarkers,
+    biomarkersByCategory,
+    labsQuery.isLoading,
+    getBiomarkerTrend,
+    addLabPanel,
+    pickLabDocument,
+    createManualLabPanel,
+    analyzeLabMutation.mutateAsync,
+    analyzeLabMutation.isPending,
+    analyzeLabMutation.error,
+    updateLabPanelBiomarkers,
+  ]);
 });

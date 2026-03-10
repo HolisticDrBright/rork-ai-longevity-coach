@@ -29,6 +29,7 @@ import {
   ClipboardList,
   AlertTriangle,
   ShieldCheck,
+  Activity,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
@@ -36,6 +37,7 @@ import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useAuth } from '@/providers/AuthProvider';
 import { useHIPAA } from '@/providers/HIPAAProvider';
+import { sendCoachingInterest, CoachingInterest } from '@/lib/webhooks';
 
 export default function ProfileScreen() {
   const { userProfile, lifestyleProfile, categoryScores, resetOnboarding, isLoading, isClinician, setUserRole } = useUser();
@@ -43,6 +45,15 @@ export default function ProfileScreen() {
   const { biometricAvailable, biometricEnabled, toggleBiometric, logout } = useAuth();
   const { requestDataDeletion, isDeleting, fetchAuditLogs, auditLogs, checkAuditIntegrity, auditIntegrity, unacknowledgedBreaches } = useHIPAA();
   const [showAuditLogs, setShowAuditLogs] = useState(false);
+
+  const handleCoachingInterest = (program: CoachingInterest) => {
+    sendCoachingInterest({
+      userId: userProfile.id || 'unknown',
+      email: userProfile.email || '',
+      interestedIn: program,
+    });
+    Alert.alert('Interest Recorded', 'We\'ll be in touch with more information about this program!');
+  };
 
   const handleResetOnboarding = async () => {
     Alert.alert(
@@ -54,7 +65,7 @@ export default function ProfileScreen() {
           text: 'Reset',
           style: 'destructive',
           onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             await resetOnboarding();
             router.replace('/onboarding');
           },
@@ -270,6 +281,22 @@ export default function ProfileScreen() {
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
 
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('longevity_program')}>
+              <View style={[styles.menuIcon, { backgroundColor: `${Colors.accent}15` }]}>
+                <Target color={Colors.accent} size={18} />
+              </View>
+              <Text style={styles.menuText}>Longevity Coaching</Text>
+              <ChevronRight color={Colors.textTertiary} size={20} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('peptide_program')}>
+              <View style={[styles.menuIcon, { backgroundColor: `${Colors.secondary ?? Colors.primary}15` }]}>
+                <Activity color={Colors.secondary ?? Colors.primary} size={18} />
+              </View>
+              <Text style={styles.menuText}>Peptide Program</Text>
+              <ChevronRight color={Colors.textTertiary} size={20} />
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.menuItem}>
               <View style={[styles.menuIcon, { backgroundColor: `${Colors.chartPurple}15` }]}>
                 <HelpCircle color={Colors.chartPurple} size={18} />
@@ -359,7 +386,7 @@ export default function ProfileScreen() {
           <TouchableOpacity 
             style={styles.clinicianToggle}
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               setUserRole(isClinician ? 'patient' : 'clinician');
             }}
           >

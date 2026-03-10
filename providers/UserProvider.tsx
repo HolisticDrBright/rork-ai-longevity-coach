@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
+import { sendAssessmentComplete, AssessmentScore } from '@/lib/webhooks';
 
 import {
   UserProfile,
@@ -137,7 +138,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setUserProfile(data);
-      queryClient.invalidateQueries({ queryKey: ['userProfile'] });
+      void queryClient.invalidateQueries({ queryKey: ['userProfile'] });
     },
   });
 
@@ -149,7 +150,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setLifestyleProfile(data);
-      queryClient.invalidateQueries({ queryKey: ['lifestyleProfile'] });
+      void queryClient.invalidateQueries({ queryKey: ['lifestyleProfile'] });
     },
   });
 
@@ -161,7 +162,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setContraindications(data);
-      queryClient.invalidateQueries({ queryKey: ['contraindications'] });
+      void queryClient.invalidateQueries({ queryKey: ['contraindications'] });
     },
   });
 
@@ -173,7 +174,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setQuestionnaireResponses(data);
-      queryClient.invalidateQueries({ queryKey: ['questionnaireResponses'] });
+      void queryClient.invalidateQueries({ queryKey: ['questionnaireResponses'] });
     },
   });
 
@@ -185,7 +186,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setClinicalIntake(data);
-      queryClient.invalidateQueries({ queryKey: ['clinicalIntake'] });
+      void queryClient.invalidateQueries({ queryKey: ['clinicalIntake'] });
     },
   });
 
@@ -228,9 +229,41 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [clinicalIntake, userProfile.id, lifestyleProfile, saveClinicalIntakeMutation]);
 
   const completeOnboarding = useCallback(() => {
-    const updated = { ...userProfile, onboardingCompleted: true, id: `user_${Date.now()}` };
+    const userId = userProfile.id || `user_${Date.now()}`;
+    const updated = { ...userProfile, onboardingCompleted: true, id: userId };
     saveUserMutation.mutate(updated);
-  }, [userProfile, saveUserMutation]);
+
+    const scores = questionnaireCategories.map(category => {
+      const categoryResponses = questionnaireResponses.filter(r => r.categoryId === category.id);
+      const totalScore = categoryResponses.reduce((sum, r) => sum + r.severity, 0);
+      const maxScore = category.questions.length * 4;
+      return { id: category.id, percentage: maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0 };
+    });
+
+    const findScore = (id: string) => scores.find(s => s.id === id)?.percentage ?? 0;
+
+    const assessmentScore: AssessmentScore = {
+      moldRisk: findScore('mold'),
+      heavyMetalsRisk: findScore('heavy_metals'),
+      parasitesRisk: findScore('parasites'),
+      lymeRisk: findScore('lyme'),
+      ebvRisk: findScore('viral'),
+      gutIssuesRisk: Math.max(findScore('gut_digestive'), findScore('leaky_gut')),
+      thyroidRisk: findScore('thyroid'),
+      hormoneRisk: findScore('hormones'),
+      adrenalRisk: findScore('adrenal'),
+    };
+
+    const highRiskCategories = scores.filter(s => s.percentage >= 25).map(s => s.id);
+    const recommendedLabs = highRiskCategories;
+
+    sendAssessmentComplete({
+      userId,
+      email: userProfile.email,
+      assessmentScore,
+      recommendedLabs,
+    });
+  }, [userProfile, questionnaireResponses, saveUserMutation]);
 
   const resetOnboarding = useCallback(async () => {
     await secureMultiRemove([
@@ -246,8 +279,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
     setContraindications(defaultContraindications);
     setQuestionnaireResponses([]);
     setClinicalIntake(null);
-    queryClient.invalidateQueries();
-  }, [queryClient]);
+    void queryClient.invalidateQueries();
+  }, [queryClient, userProfile.id]);
 
   const categoryScores = useMemo((): CategoryScore[] => {
     return questionnaireCategories.map(category => {

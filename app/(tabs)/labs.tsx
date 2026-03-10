@@ -34,6 +34,7 @@ import * as Haptics from 'expo-haptics';
 
 import Colors from '@/constants/colors';
 import { useLabs, LabAnalysisResult } from '@/providers/LabsProvider';
+import { useUser } from '@/providers/UserProvider';
 import { Biomarker } from '@/types';
 
 const statusColors = {
@@ -62,7 +63,9 @@ export default function LabsScreen() {
     addLabPanel,
     analyzeLab,
     isAnalyzing,
+    sendLabsWebhook,
   } = useLabs();
+  const { userProfile } = useUser();
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>(['Metabolic', 'Inflammation']);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -127,7 +130,7 @@ export default function LabsScreen() {
 
   const saveLabWithoutBiomarkers = () => {
     console.log('[Labs UI] Saving lab without biomarkers');
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     
     const panelId = `panel_${Date.now()}`;
     
@@ -147,7 +150,7 @@ export default function LabsScreen() {
 
   const saveLabWithBiomarkers = (biomarkers: Biomarker[]) => {
     console.log('[Labs UI] Saving lab with', biomarkers.length, 'biomarkers');
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     
     const panelId = `panel_${Date.now()}`;
     
@@ -182,7 +185,7 @@ export default function LabsScreen() {
     }
 
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       console.log('[Labs UI] Starting analysis for:', uploadedDocument.name);
       
       const result = await analyzeLab({
@@ -195,10 +198,10 @@ export default function LabsScreen() {
       setAnalysisResult(result);
       
       if (result.biomarkers.length > 0) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setShowAnalysisModal(true);
       } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         Alert.alert(
           'No Biomarkers Found',
           'AI could not extract biomarkers from this document. The image may be unclear or the format unrecognized. You can still save the document for reference.',
@@ -213,7 +216,7 @@ export default function LabsScreen() {
       console.error('[Labs UI] Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unable to analyze the lab document.';
       
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         'Analysis Failed',
         errorMessage + '\n\nYou can try again or save the document without analysis.',
@@ -237,6 +240,15 @@ export default function LabsScreen() {
     
     console.log('[Labs UI] Saving analysis results with', analysisResult.biomarkers.length, 'biomarkers');
     saveLabWithBiomarkers(analysisResult.biomarkers);
+
+    if (analysisResult.supplements.length > 0 || analysisResult.herbs.length > 0) {
+      sendLabsWebhook(
+        userProfile.id || 'unknown',
+        userProfile.email || '',
+        'comprehensive_panel',
+        [...analysisResult.supplements, ...analysisResult.herbs],
+      );
+    }
   };
 
   if (isLoading) {
