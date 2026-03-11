@@ -12,7 +12,7 @@ export default function ClinicLayout() {
       }}
     >
       <Stack.Screen
-        name="index"
+        name="dashboard"
         options={{
           title: 'Clinic Dashboard',
           headerLargeTitle: true,

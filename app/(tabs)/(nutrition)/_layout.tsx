@@ -12,7 +12,7 @@ export default function NutritionLayout() {
       }}
     >
       <Stack.Screen
-        name="index"
+        name="dashboard"
         options={{
           title: 'Nutrition',
           headerLargeTitle: true,

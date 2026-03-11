@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
-import { sendLabsAnalyzed } from '@/lib/webhooks';
+import { sendLabsAnalyzed, sendLabUploadStarted } from '@/lib/webhooks';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
@@ -435,6 +435,10 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     return panel;
   }, [addLabPanel]);
 
+  const sendLabUploadStartedWebhook = useCallback((userId: string, email: string) => {
+    sendLabUploadStarted({ userId, email });
+  }, []);
+
   const sendLabsWebhook = useCallback((userId: string, email: string, labType: string, supplements: SupplementRecommendation[]) => {
     sendLabsAnalyzed({
       userId,
@@ -465,6 +469,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     analysisError: analyzeLabMutation.error,
     updateLabPanelBiomarkers,
     sendLabsWebhook,
+    sendLabUploadStartedWebhook,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [
     labPanels,
@@ -482,5 +487,6 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     analyzeLabMutation.isPending,
     analyzeLabMutation.error,
     updateLabPanelBiomarkers,
+    sendLabUploadStartedWebhook,
   ]);
 });

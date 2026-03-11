@@ -111,7 +111,7 @@ interface ReviewItemProps {
   onPress: () => void;
 }
 
-function ReviewItem({ type, patientName, title, priority, onPress }: ReviewItemProps) {
+function ReviewItem({ patientName, title, priority, onPress }: ReviewItemProps) {
   const getPriorityColor = () => {
     switch (priority) {
       case 'critical': return Colors.danger;

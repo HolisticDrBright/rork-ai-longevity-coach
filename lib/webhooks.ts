@@ -103,6 +103,22 @@ export function sendLabsAnalyzed(data: LabsAnalyzedPayload): void {
   sendWebhook('labs-analyzed', payload).catch(() => {});
 }
 
+export interface LabUploadStartedPayload {
+  userId: string;
+  email: string;
+}
+
+export function sendLabUploadStarted(data: LabUploadStartedPayload): void {
+  const payload: WebhookPayload = {
+    eventType: 'lab_upload_started',
+    userId: data.userId,
+    email: data.email,
+    timestamp: new Date().toISOString(),
+  };
+
+  sendWebhook('lab-upload-started', payload).catch(() => {});
+}
+
 export type CoachingInterest = 'peptide_program' | 'longevity_program' | 'practitioner_portal';
 
 export interface CoachingInterestPayload {

@@ -30,7 +30,7 @@ export default function NutritionDashboard() {
     todaySummary,
     dietProfile,
     getRecentLogs,
-    isLoading,
+    isLoading: _isLoading,
   } = useNutrition();
 
   const recentLogs = getRecentLogs(5);

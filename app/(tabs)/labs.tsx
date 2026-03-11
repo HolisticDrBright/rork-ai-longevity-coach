@@ -64,6 +64,7 @@ export default function LabsScreen() {
     analyzeLab,
     isAnalyzing,
     sendLabsWebhook,
+    sendLabUploadStartedWebhook,
   } = useLabs();
   const { userProfile } = useUser();
 
@@ -92,6 +93,10 @@ export default function LabsScreen() {
         const nameWithoutExt = doc.name.replace(/\.[^/.]+$/, '');
         setLabName(nameWithoutExt);
       }
+      sendLabUploadStartedWebhook(
+        userProfile?.id || 'anonymous',
+        userProfile?.email || '',
+      );
     }
   };
 
