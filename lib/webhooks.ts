@@ -139,6 +139,32 @@ export function sendCoachingInterest(data: CoachingInterestPayload): void {
   sendWebhook('coaching-interest', payload).catch(() => {});
 }
 
+export interface SupplementPurchasedPayload {
+  userId: string;
+  email: string;
+  affiliateCode: string;
+  productName: string;
+  affiliateLink: string;
+  purchaseAmount: number;
+  commissionRate: number;
+}
+
+export function sendSupplementPurchased(data: SupplementPurchasedPayload): void {
+  const payload: WebhookPayload = {
+    eventType: 'supplement_purchased',
+    userId: data.userId,
+    email: data.email,
+    affiliateCode: data.affiliateCode,
+    productName: data.productName,
+    affiliateLink: data.affiliateLink,
+    purchaseAmount: data.purchaseAmount,
+    commissionRate: data.commissionRate,
+    timestamp: new Date().toISOString(),
+  };
+
+  sendWebhook('supplement-purchased', payload).catch(() => {});
+}
+
 export async function testWebhookConnection(): Promise<boolean> {
   const secret = getWebhookSecret();
   if (!secret) {
