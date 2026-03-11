@@ -165,6 +165,30 @@ export function sendSupplementPurchased(data: SupplementPurchasedPayload): void 
   sendWebhook('supplement-purchased', payload).catch(() => {});
 }
 
+export type CoachingProgramTier = 'peptide_program' | 'longevity_program' | 'practitioner_portal';
+
+export interface CoachingEnrolledPayload {
+  userId: string;
+  email: string;
+  programTier: CoachingProgramTier;
+  programCost: number;
+  enrollmentDate: string;
+}
+
+export function sendCoachingEnrolled(data: CoachingEnrolledPayload): void {
+  const payload: WebhookPayload = {
+    eventType: 'coaching_enrolled',
+    userId: data.userId,
+    email: data.email,
+    programTier: data.programTier,
+    programCost: data.programCost,
+    enrollmentDate: data.enrollmentDate,
+    timestamp: new Date().toISOString(),
+  };
+
+  sendWebhook('coaching-enrolled', payload).catch(() => {});
+}
+
 export async function testWebhookConnection(): Promise<boolean> {
   const secret = getWebhookSecret();
   if (!secret) {
