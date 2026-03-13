@@ -13,12 +13,13 @@ import { LabsProvider } from '@/providers/LabsProvider';
 import { HormoneProvider } from '@/providers/HormoneProvider';
 import { NutritionProvider } from '@/providers/NutritionProvider';
 import { SupplementsProvider } from '@/providers/SupplementsProvider';
+import { WearablesProvider } from '@/providers/WearablesProvider';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { HIPAAConsentBanner, BreachAlertBanner } from '@/components/HIPAABanner';
 import AuthScreen from '@/app/auth';
 import Colors from '@/constants/colors';
 
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
@@ -78,7 +79,7 @@ function ConsentGate({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   useEffect(() => {
-    SplashScreen.hideAsync();
+    void SplashScreen.hideAsync();
   }, []);
 
   return (
@@ -95,8 +96,10 @@ export default function RootLayout() {
                         <HormoneProvider>
                           <NutritionProvider>
                             <SupplementsProvider>
-                              <StatusBar style="light" />
-                              <RootLayoutNav />
+                              <WearablesProvider>
+                                <StatusBar style="light" />
+                                <RootLayoutNav />
+                              </WearablesProvider>
                             </SupplementsProvider>
                           </NutritionProvider>
                         </HormoneProvider>

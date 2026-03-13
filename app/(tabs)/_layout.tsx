@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf } from 'lucide-react-native';
+import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf, Watch } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
@@ -16,8 +16,6 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: Colors.surface,
           borderTopColor: Colors.borderLight,
-          paddingTop: 8,
-          height: 88,
         },
         tabBarLabelStyle: {
           fontSize: 11,
@@ -59,6 +57,13 @@ export default function TabLayout() {
         options={{
           title: 'Nutrition',
           tabBarIcon: ({ color, size }) => <Utensils color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="(wearables)"
+        options={{
+          title: 'Wearables',
+          tabBarIcon: ({ color, size }) => <Watch color={color} size={size} />,
         }}
       />
       <Tabs.Screen
