@@ -24,6 +24,19 @@ export default function OnboardingProfileScreen() {
   const [lastName, setLastName] = useState(userProfile.lastName);
   const [email, setEmail] = useState(userProfile.email);
   const [dateOfBirth, setDateOfBirth] = useState(userProfile.dateOfBirth);
+
+  const handleDateOfBirthChange = (text: string) => {
+    const digits = text.replace(/\D/g, '');
+    let formatted = '';
+    if (digits.length <= 2) {
+      formatted = digits;
+    } else if (digits.length <= 4) {
+      formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    } else {
+      formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+    }
+    setDateOfBirth(formatted);
+  };
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(userProfile.sex);
   const [height, setHeight] = useState(userProfile.height ? String(userProfile.height) : '');
   const [weight, setWeight] = useState(userProfile.weight ? String(userProfile.weight) : '');
@@ -119,9 +132,11 @@ export default function OnboardingProfileScreen() {
             <TextInput
               style={styles.input}
               value={dateOfBirth}
-              onChangeText={setDateOfBirth}
-              placeholder="YYYY-MM-DD"
+              onChangeText={handleDateOfBirthChange}
+              placeholder="MM/DD/YYYY"
               placeholderTextColor={Colors.textTertiary}
+              keyboardType="number-pad"
+              maxLength={10}
             />
 
             <Text style={styles.label}>Sex</Text>
