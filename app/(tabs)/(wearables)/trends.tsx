@@ -20,6 +20,9 @@ import {
   Zap,
   Flame,
   BarChart3,
+  Calendar,
+  ArrowUpRight,
+  ArrowDownRight,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
@@ -50,7 +53,7 @@ const trendIcons: Record<TrendDirection, { icon: typeof TrendingUp; color: strin
 };
 
 export default function TrendsScreen() {
-  const { getTrendSeries, records } = useWearables();
+  const { getTrendSeries, getTrendAnalysis, getWeekdayWeekendEffect, getCycleLinkedTrends, records } = useWearables();
   const [timeRange, setTimeRange] = useState<TimeRange>(14);
   const [selectedMetric, setSelectedMetric] = useState<string>('hrv');
 
@@ -66,6 +69,28 @@ export default function TrendsScreen() {
 
   const trendData = useMemo(() => getTrendSeries(selectedMetric, timeRange), [getTrendSeries, selectedMetric, timeRange]);
   const metricConfig = metricConfigs.find(m => m.key === selectedMetric)!;
+
+  const trendAnalysis = useMemo(() => {
+    return getTrendAnalysis(selectedMetric, timeRange, metricConfig.higherBetter);
+  }, [getTrendAnalysis, selectedMetric, timeRange, metricConfig.higherBetter]);
+
+  const weekdayWeekendEffect = useMemo(() => {
+    const metricKey = selectedMetric === 'sleepDuration' ? 'sleepDurationMinutes' : selectedMetric;
+    if (['hrv', 'restingHr', 'sleepScore', 'steps', 'readinessScore', 'adherenceScore', 'energyScore', 'moodScore', 'sorenessScore'].includes(metricKey)) {
+      return getWeekdayWeekendEffect(metricKey as any);
+    }
+    return null;
+  }, [getWeekdayWeekendEffect, selectedMetric]);
+
+  const cycleLinked = useMemo(() => {
+    const hasCycleData = records.some(r => r.cyclePhase && r.cyclePhase !== 'unknown');
+    if (!hasCycleData) return null;
+    const metricKey = selectedMetric === 'sleepDuration' ? 'sleepDurationMinutes' : selectedMetric;
+    if (['hrv', 'restingHr', 'sleepScore', 'readinessScore', 'energyScore', 'moodScore', 'sorenessScore'].includes(metricKey)) {
+      return getCycleLinkedTrends(metricKey as any);
+    }
+    return null;
+  }, [getCycleLinkedTrends, selectedMetric, records]);
 
   const allTrends = useMemo(() => {
     return metricConfigs.map(mc => {
@@ -222,6 +247,111 @@ export default function TrendsScreen() {
         </View>
       </View>
 
+      {trendAnalysis && (trendAnalysis.mean !== null || trendAnalysis.slope !== null) && (
+        <View style={styles.analysisCard}>
+          <Text style={styles.analysisTitle}>Trend Analysis</Text>
+          <View style={styles.analysisGrid}>
+            {trendAnalysis.mean !== null && (
+              <View style={styles.analysisStat}>
+                <Text style={styles.analysisStatValue}>{trendAnalysis.mean.toFixed(metricConfig.key === 'sleepDuration' ? 1 : 0)}</Text>
+                <Text style={styles.analysisStatLabel}>Mean</Text>
+              </View>
+            )}
+            {trendAnalysis.median !== null && (
+              <View style={styles.analysisStat}>
+                <Text style={styles.analysisStatValue}>{trendAnalysis.median.toFixed(metricConfig.key === 'sleepDuration' ? 1 : 0)}</Text>
+                <Text style={styles.analysisStatLabel}>Median</Text>
+              </View>
+            )}
+            {trendAnalysis.volatility !== null && (
+              <View style={styles.analysisStat}>
+                <Text style={styles.analysisStatValue}>{trendAnalysis.volatility.toFixed(1)}</Text>
+                <Text style={styles.analysisStatLabel}>Volatility</Text>
+              </View>
+            )}
+            {trendAnalysis.slope !== null && (
+              <View style={styles.analysisStat}>
+                <View style={styles.slopeRow}>
+                  {trendAnalysis.slope > 0.01
+                    ? <ArrowUpRight size={14} color={metricConfig.higherBetter ? '#059669' : '#DC2626'} />
+                    : trendAnalysis.slope < -0.01
+                      ? <ArrowDownRight size={14} color={metricConfig.higherBetter ? '#DC2626' : '#059669'} />
+                      : <Minus size={14} color="#6B7280" />
+                  }
+                  <Text style={styles.analysisStatValue}>{Math.abs(trendAnalysis.slope).toFixed(2)}</Text>
+                </View>
+                <Text style={styles.analysisStatLabel}>Slope/day</Text>
+              </View>
+            )}
+          </View>
+          {trendAnalysis.bestDay && trendAnalysis.worstDay && (
+            <View style={styles.bestWorstRow}>
+              <View style={styles.bestWorstItem}>
+                <Text style={styles.bestWorstLabel}>Best</Text>
+                <Text style={styles.bestWorstValue}>{trendAnalysis.bestDay.value.toFixed(metricConfig.key === 'sleepDuration' ? 1 : 0)}</Text>
+                <Text style={styles.bestWorstDate}>{new Date(trendAnalysis.bestDay.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</Text>
+              </View>
+              <View style={styles.bestWorstItem}>
+                <Text style={styles.bestWorstLabel}>Worst</Text>
+                <Text style={styles.bestWorstValue}>{trendAnalysis.worstDay.value.toFixed(metricConfig.key === 'sleepDuration' ? 1 : 0)}</Text>
+                <Text style={styles.bestWorstDate}>{new Date(trendAnalysis.worstDay.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {weekdayWeekendEffect && weekdayWeekendEffect.significant && (
+        <View style={styles.weekdayWeekendCard}>
+          <View style={styles.wwHeader}>
+            <Calendar size={16} color={Colors.primary} />
+            <Text style={styles.wwTitle}>Weekday vs Weekend</Text>
+          </View>
+          <View style={styles.wwRow}>
+            <View style={styles.wwItem}>
+              <Text style={styles.wwLabel}>Weekday</Text>
+              <Text style={styles.wwValue}>{weekdayWeekendEffect.weekdayAvg?.toFixed(1) ?? '--'}</Text>
+            </View>
+            <View style={styles.wwDivider} />
+            <View style={styles.wwItem}>
+              <Text style={styles.wwLabel}>Weekend</Text>
+              <Text style={styles.wwValue}>{weekdayWeekendEffect.weekendAvg?.toFixed(1) ?? '--'}</Text>
+            </View>
+            <View style={styles.wwDivider} />
+            <View style={styles.wwItem}>
+              <Text style={styles.wwLabel}>Diff</Text>
+              <Text style={[styles.wwDiff, {
+                color: weekdayWeekendEffect.difference !== null && weekdayWeekendEffect.difference > 0
+                  ? (metricConfig.higherBetter ? '#059669' : '#DC2626')
+                  : (metricConfig.higherBetter ? '#DC2626' : '#059669')
+              }]}>
+                {weekdayWeekendEffect.difference !== null ? `${weekdayWeekendEffect.difference > 0 ? '+' : ''}${weekdayWeekendEffect.difference.toFixed(1)}` : '--'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {cycleLinked && cycleLinked.some(c => c.metricAvg !== null) && (
+        <View style={styles.cycleCard}>
+          <View style={styles.cycleHeader}>
+            <Text style={styles.cycleTitle}>Cycle-Linked Trends</Text>
+          </View>
+          <View style={styles.cycleGrid}>
+            {cycleLinked.map(phase => (
+              <View key={phase.phase} style={styles.cyclePhaseItem}>
+                <View style={[styles.cyclePhaseDot, {
+                  backgroundColor: phase.phase === 'menstrual' ? '#EF4444' : phase.phase === 'follicular' ? '#3B82F6' : phase.phase === 'ovulatory' ? '#10B981' : '#F59E0B'
+                }]} />
+                <Text style={styles.cyclePhaseName}>{phase.phase.charAt(0).toUpperCase() + phase.phase.slice(1)}</Text>
+                <Text style={styles.cyclePhaseValue}>{phase.metricAvg?.toFixed(1) ?? '--'}</Text>
+                <Text style={styles.cyclePhaseSamples}>n={phase.sampleCount}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
       <Text style={styles.sectionTitle}>Select Metric</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.metricPicker}>
         {metricConfigs.map(mc => {
@@ -303,7 +433,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderRadius: 16,
     padding: 16,
-    marginBottom: 20,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -325,6 +455,66 @@ const styles = StyleSheet.create({
   noDataText: { fontSize: 13, color: Colors.textTertiary },
   chartAxisLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   axisLabel: { fontSize: 11, color: Colors.textTertiary },
+  analysisCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  analysisTitle: { fontSize: 15, fontWeight: '700' as const, color: Colors.text, marginBottom: 12 },
+  analysisGrid: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  analysisStat: { flex: 1, alignItems: 'center', backgroundColor: Colors.surfaceSecondary, borderRadius: 10, padding: 10 },
+  analysisStatValue: { fontSize: 16, fontWeight: '700' as const, color: Colors.text },
+  analysisStatLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '500' as const, marginTop: 2 },
+  slopeRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  bestWorstRow: { flexDirection: 'row', gap: 12 },
+  bestWorstItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.surfaceSecondary, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
+  bestWorstLabel: { fontSize: 11, fontWeight: '600' as const, color: Colors.textTertiary },
+  bestWorstValue: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  bestWorstDate: { fontSize: 10, color: Colors.textTertiary },
+  weekdayWeekendCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  wwHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  wwTitle: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  wwRow: { flexDirection: 'row', alignItems: 'center' },
+  wwItem: { flex: 1, alignItems: 'center' },
+  wwLabel: { fontSize: 11, color: Colors.textTertiary, fontWeight: '500' as const, marginBottom: 4 },
+  wwValue: { fontSize: 18, fontWeight: '700' as const, color: Colors.text },
+  wwDiff: { fontSize: 18, fontWeight: '700' as const },
+  wwDivider: { width: 1, height: 30, backgroundColor: Colors.borderLight },
+  cycleCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  cycleHeader: { marginBottom: 12 },
+  cycleTitle: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  cycleGrid: { flexDirection: 'row', gap: 8 },
+  cyclePhaseItem: { flex: 1, alignItems: 'center', backgroundColor: Colors.surfaceSecondary, borderRadius: 10, padding: 10, gap: 4 },
+  cyclePhaseDot: { width: 8, height: 8, borderRadius: 4 },
+  cyclePhaseName: { fontSize: 10, fontWeight: '600' as const, color: Colors.textSecondary },
+  cyclePhaseValue: { fontSize: 16, fontWeight: '700' as const, color: Colors.text },
+  cyclePhaseSamples: { fontSize: 9, color: Colors.textTertiary },
   sectionTitle: { fontSize: 17, fontWeight: '700' as const, color: Colors.text, marginBottom: 12, marginTop: 4 },
   metricPicker: { marginBottom: 20 },
   metricChip: {

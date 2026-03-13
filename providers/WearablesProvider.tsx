@@ -16,11 +16,12 @@ import {
   WearableSource,
   AllScores,
   TrendSeries,
+  TrendDataPoint,
+  TrendDirection,
 } from '@/types/wearables';
 
 import {
   generateMockRecords,
-  generateMockBaseline,
   generateMockMealLogs,
   generateMockSupplementLogs,
   generateMockSymptomLogs,
@@ -29,14 +30,19 @@ import {
 } from '@/mocks/wearables';
 
 import { generateDailyRecommendation } from '@/utils/wearables/recommendationEngine';
+import { generateBaseline, computeDataCompleteness, computeAllDeviations, DataCompletenessResult, BaselineDeviation } from '@/utils/wearables/baselineEngine';
+import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend } from '@/utils/wearables/trendEngine';
+import { generateNotifications, generatePractitionerFlags, NotificationItem, PractitionerFlag } from '@/utils/wearables/notificationEngine';
+import { composeAIInsight, AIInsightOutput } from '@/utils/wearables/aiInsightComposer';
 
 const STORAGE_KEYS = {
   CONNECTIONS: 'wearables_connections',
   RECORDS: 'wearables_records',
   BASELINE: 'wearables_baseline',
+  AI_INSIGHT: 'wearables_ai_insight',
 };
 
-function computeTrendDirection(data: (number | null)[]): 'improving' | 'stable' | 'declining' | 'insufficient_data' {
+function computeTrendDirection(data: (number | null)[]): TrendDirection {
   const valid = data.filter((v): v is number => v !== null);
   if (valid.length < 3) return 'insufficient_data';
   const firstHalf = valid.slice(0, Math.floor(valid.length / 2));
@@ -65,6 +71,9 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   const [mealLogs, setMealLogs] = useState<MealLogEntry[]>([]);
   const [supplementLogs, setSupplementLogs] = useState<SupplementLogEntry[]>([]);
   const [symptomLogs, setSymptomLogs] = useState<SymptomLogEntry[]>([]);
+  const [aiInsight, setAiInsight] = useState<AIInsightOutput | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [practitionerFlags, setPractitionerFlags] = useState<PractitionerFlag[]>([]);
 
   const recordsQuery = useQuery({
     queryKey: ['wearables_records'],
@@ -88,7 +97,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   useEffect(() => {
     if (recordsQuery.data) {
       setRecords(recordsQuery.data);
-      const bl = generateMockBaseline(recordsQuery.data);
+      const bl = generateBaseline(recordsQuery.data);
       setBaseline(bl);
       setMealLogs(generateMockMealLogs(7));
       setSupplementLogs(generateMockSupplementLogs(7));
@@ -116,6 +125,56 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
 
   const todayRecord = useMemo(() => records.length > 0 ? records[0] : null, [records]);
 
+  const dataCompleteness = useMemo((): DataCompletenessResult | null => {
+    if (!todayRecord) return null;
+    return computeDataCompleteness(todayRecord);
+  }, [todayRecord]);
+
+  const baselineDeviations = useMemo((): BaselineDeviation[] => {
+    if (!todayRecord || !baseline) return [];
+    return computeAllDeviations(todayRecord, baseline);
+  }, [todayRecord, baseline]);
+
+  useEffect(() => {
+    if (todayRecord && scores && recommendation && baseline) {
+      const notifs = generateNotifications(
+        todayRecord, records, scores, recommendation.patterns, baseline
+      );
+      setNotifications(notifs);
+
+      const flags = generatePractitionerFlags(records, recommendation.patterns, baseline);
+      setPractitionerFlags(flags);
+    }
+  }, [todayRecord, scores, recommendation, records, baseline]);
+
+  const generateAIInsightMutation = useMutation({
+    mutationFn: async () => {
+      if (!todayRecord || !scores || !baseline) {
+        throw new Error('Missing data for AI insight');
+      }
+      console.log('[WearablesProvider] Generating AI insight...');
+      const result = await composeAIInsight({
+        record: todayRecord,
+        scores,
+        deviations: baselineDeviations,
+        patterns: recommendation?.patterns ?? [],
+        correlations: recommendation?.correlations ?? [],
+        meals: mealLogs,
+        supplements: supplementLogs,
+        baseline,
+      });
+      await secureSetJSON(STORAGE_KEYS.AI_INSIGHT, result);
+      return result;
+    },
+    onSuccess: (data) => {
+      setAiInsight(data);
+      console.log('[WearablesProvider] AI insight generated successfully');
+    },
+    onError: (error) => {
+      console.error('[WearablesProvider] AI insight generation failed:', error);
+    },
+  });
+
   const toggleConnection = useMutation({
     mutationFn: async (source: WearableSource) => {
       const updated = connections.map(c =>
@@ -142,13 +201,18 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setRecords(data);
-      const bl = generateMockBaseline(data);
+      const bl = generateBaseline(data);
       setBaseline(bl);
       setMealLogs(generateMockMealLogs(7));
       setSupplementLogs(generateMockSupplementLogs(7));
+      setAiInsight(null);
       void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },
   });
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, dismissed: true } : n));
+  }, []);
 
   const getTrendSeries = useCallback((metric: string, days: number = 14): TrendSeries => {
     const slice = records.slice(0, days);
@@ -181,7 +245,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
       }
     };
 
-    const data = slice.map(r => ({ date: r.date, value: getData(r) })).reverse();
+    const data: TrendDataPoint[] = slice.map(r => ({ date: r.date, value: getData(r) })).reverse();
     const values = data.map(d => d.value);
 
     return {
@@ -191,6 +255,33 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
       direction: computeTrendDirection(values),
       changePercent: computeChangePercent(values),
     };
+  }, [records]);
+
+  const getTrendAnalysis = useCallback((metric: string, days: number = 14, higherIsBetter: boolean = true): TrendAnalysis => {
+    const slice = records.slice(0, days);
+    const getData = (r: DailyBiometricRecord): number | null => {
+      switch (metric) {
+        case 'hrv': return r.hrv;
+        case 'restingHr': return r.restingHr;
+        case 'sleepScore': return r.sleepScore;
+        case 'sleepDuration': return r.sleepDurationMinutes ? Math.round(r.sleepDurationMinutes / 60 * 10) / 10 : null;
+        case 'steps': return r.steps;
+        case 'readinessScore': return r.readinessScore;
+        case 'adherenceScore': return r.adherenceScore;
+        case 'energyScore': return r.energyScore;
+        default: return null;
+      }
+    };
+    const data = slice.map(r => ({ date: r.date, value: getData(r) })).reverse();
+    return computeTrendAnalysis(data, higherIsBetter);
+  }, [records]);
+
+  const getWeekdayWeekendEffect = useCallback((metric: keyof DailyBiometricRecord) => {
+    return detectWeekdayWeekendEffect(records.slice(0, 30), metric);
+  }, [records]);
+
+  const getCycleLinkedTrends = useCallback((metric: keyof DailyBiometricRecord): CycleLinkedTrend[] => {
+    return computeCycleLinkedTrends(records.slice(0, 30), metric);
   }, [records]);
 
   const isLoading = recordsQuery.isLoading || connectionsQuery.isLoading;
@@ -211,10 +302,26 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     toggleConnection: toggleConnection.mutate,
     refreshData: refreshData.mutate,
     getTrendSeries,
+    getTrendAnalysis,
+    getWeekdayWeekendEffect,
+    getCycleLinkedTrends,
+    dataCompleteness,
+    baselineDeviations,
+    aiInsight,
+    isGeneratingAI: generateAIInsightMutation.isPending,
+    generateAIInsight: generateAIInsightMutation.mutate,
+    notifications: notifications.filter(n => !n.dismissed),
+    practitionerFlags,
+    dismissNotification,
   }), [
     connections, records, todayRecord, baseline, recommendation,
     insights, scores, mealLogs, supplementLogs, symptomLogs,
     isLoading, refreshData.isPending, toggleConnection.mutate,
-    refreshData.mutate, getTrendSeries,
+    refreshData.mutate, getTrendSeries, getTrendAnalysis,
+    getWeekdayWeekendEffect, getCycleLinkedTrends,
+    dataCompleteness, baselineDeviations,
+    aiInsight, generateAIInsightMutation.isPending,
+    generateAIInsightMutation.mutate,
+    notifications, practitionerFlags, dismissNotification,
   ]);
 });

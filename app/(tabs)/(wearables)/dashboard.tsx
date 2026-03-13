@@ -29,6 +29,11 @@ import {
   Flame,
   Shield,
   Dumbbell,
+  Sparkles,
+  Bell,
+  BarChart3,
+  X,
+  CircleAlert,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
@@ -51,6 +56,14 @@ export default function WearablesTodayScreen() {
     isLoading,
     isRefreshing,
     refreshData,
+    dataCompleteness,
+    baselineDeviations,
+    aiInsight,
+    isGeneratingAI,
+    generateAIInsight,
+    notifications,
+    practitionerFlags,
+    dismissNotification,
   } = useWearables();
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -75,6 +88,11 @@ export default function WearablesTodayScreen() {
     router.push(path as any);
   }, [router]);
 
+  const handleGenerateAI = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    generateAIInsight();
+  }, [generateAIInsight]);
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -88,6 +106,8 @@ export default function WearablesTodayScreen() {
   const status = rec?.recoveryStatus ?? 'yellow';
   const statusConfig = statusColors[status];
   const connectedCount = connections.filter(c => c.connected).length;
+  const activeNotifications = notifications.filter(n => !n.dismissed);
+  const notableDeviations = baselineDeviations.filter(d => d.classification !== 'normal');
 
   return (
     <ScrollView
@@ -99,16 +119,28 @@ export default function WearablesTodayScreen() {
       }
     >
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-        <View style={styles.connectionBar}>
+        <View style={styles.topBar}>
           <View style={styles.connectionLeft}>
             <Wifi size={14} color={connectedCount > 0 ? Colors.success : Colors.textTertiary} />
             <Text style={styles.connectionText}>
-              {connectedCount} device{connectedCount !== 1 ? 's' : ''} connected
+              {connectedCount} device{connectedCount !== 1 ? 's' : ''}
             </Text>
           </View>
-          <TouchableOpacity onPress={() => navigateTo('/(tabs)/(wearables)/connections')} testID="connections-btn">
-            <Text style={styles.connectionLink}>Manage</Text>
-          </TouchableOpacity>
+          <View style={styles.topBarRight}>
+            {dataCompleteness && (
+              <View style={[styles.completenessChip, {
+                backgroundColor: dataCompleteness.confidenceLevel === 'high' ? '#ECFDF5' : dataCompleteness.confidenceLevel === 'moderate' ? '#FFFBEB' : '#FEF2F2'
+              }]}>
+                <BarChart3 size={11} color={dataCompleteness.confidenceLevel === 'high' ? '#059669' : dataCompleteness.confidenceLevel === 'moderate' ? '#D97706' : '#DC2626'} />
+                <Text style={[styles.completenessText, {
+                  color: dataCompleteness.confidenceLevel === 'high' ? '#059669' : dataCompleteness.confidenceLevel === 'moderate' ? '#D97706' : '#DC2626'
+                }]}>{dataCompleteness.score}%</Text>
+              </View>
+            )}
+            <TouchableOpacity onPress={() => navigateTo('/(tabs)/(wearables)/connections')} testID="connections-btn">
+              <Text style={styles.connectionLink}>Manage</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <LinearGradient
@@ -134,15 +166,64 @@ export default function WearablesTodayScreen() {
           </View>
         </LinearGradient>
 
-        {rec && rec.escalationFlags.length > 0 && (
+        {practitionerFlags.length > 0 && (
           <View style={styles.escalationCard}>
             <View style={styles.escalationHeader}>
               <AlertTriangle size={18} color="#DC2626" />
               <Text style={styles.escalationTitle}>Practitioner Review Suggested</Text>
             </View>
-            {rec.escalationFlags.map((flag) => (
-              <Text key={flag.id} style={styles.escalationText}>{flag.message}</Text>
+            {practitionerFlags.slice(0, 2).map((flag) => (
+              <View key={flag.id} style={styles.escalationItem}>
+                <Text style={styles.escalationText}>{flag.summary}</Text>
+                <Text style={styles.escalationMeta}>{flag.daysPersisting} days · {flag.severity}</Text>
+              </View>
             ))}
+          </View>
+        )}
+
+        {activeNotifications.length > 0 && (
+          <View style={styles.notificationsSection}>
+            <View style={styles.notifHeader}>
+              <Bell size={15} color={Colors.primary} />
+              <Text style={styles.notifHeaderText}>Alerts</Text>
+            </View>
+            {activeNotifications.slice(0, 3).map((notif) => (
+              <View key={notif.id} style={[styles.notifCard, {
+                borderLeftColor: notif.priority === 'urgent' ? '#DC2626' : notif.priority === 'high' ? '#D97706' : Colors.primary
+              }]}>
+                <View style={styles.notifContent}>
+                  <Text style={styles.notifTitle}>{notif.title}</Text>
+                  <Text style={styles.notifBody} numberOfLines={2}>{notif.body}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.notifDismiss}
+                  onPress={() => dismissNotification(notif.id)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <X size={14} color={Colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {notableDeviations.length > 0 && (
+          <View style={styles.deviationsSection}>
+            <Text style={styles.sectionTitle}>Baseline Deviations</Text>
+            <View style={styles.deviationsRow}>
+              {notableDeviations.slice(0, 4).map((dev) => {
+                const devColor = dev.classification === 'severe' ? '#DC2626' : dev.classification === 'moderate' ? '#D97706' : '#6B7280';
+                return (
+                  <View key={dev.metric} style={[styles.devChip, { borderColor: devColor + '40' }]}>
+                    <CircleAlert size={12} color={devColor} />
+                    <Text style={[styles.devMetric, { color: devColor }]}>{dev.metric}</Text>
+                    <Text style={[styles.devValue, { color: devColor }]}>
+                      {dev.deviationPercent !== null ? `${dev.deviationPercent > 0 ? '+' : ''}${dev.deviationPercent.toFixed(0)}%` : '--'}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
           </View>
         )}
 
@@ -161,6 +242,64 @@ export default function WearablesTodayScreen() {
             </View>
           </TouchableOpacity>
         ))}
+
+        <View style={styles.aiSection}>
+          <TouchableOpacity
+            style={[styles.aiButton, isGeneratingAI && styles.aiButtonDisabled]}
+            onPress={handleGenerateAI}
+            disabled={isGeneratingAI}
+            activeOpacity={0.8}
+            testID="generate-ai-btn"
+          >
+            <LinearGradient
+              colors={['#0D5C63', '#1A7A82']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.aiButtonGradient}
+            >
+              {isGeneratingAI ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Sparkles size={18} color="#fff" />
+              )}
+              <Text style={styles.aiButtonText}>
+                {isGeneratingAI ? 'Generating AI Insight...' : aiInsight ? 'Refresh AI Insight' : 'Generate AI Health Insight'}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {aiInsight && (
+            <View style={styles.aiInsightCard}>
+              <View style={styles.aiInsightHeader}>
+                <Sparkles size={16} color={Colors.primary} />
+                <Text style={styles.aiInsightLabel}>AI Health Intelligence</Text>
+                <View style={[styles.confidenceBadge, {
+                  backgroundColor: aiInsight.confidence === 'high' ? '#ECFDF5' : aiInsight.confidence === 'moderate' ? '#FFFBEB' : '#F3F4F6'
+                }]}>
+                  <Text style={[styles.confidenceText, {
+                    color: aiInsight.confidence === 'high' ? '#059669' : aiInsight.confidence === 'moderate' ? '#D97706' : '#6B7280'
+                  }]}>{aiInsight.confidence}</Text>
+                </View>
+              </View>
+              <Text style={styles.aiSummary}>{aiInsight.oneLineSummary}</Text>
+              {aiInsight.topActions.slice(0, 3).map((action, i) => (
+                <View key={i} style={styles.aiActionRow}>
+                  <View style={styles.aiActionDot} />
+                  <Text style={styles.aiActionText}>{action}</Text>
+                </View>
+              ))}
+              {aiInsight.whyItMatters ? (
+                <Text style={styles.aiWhyText}>{aiInsight.whyItMatters}</Text>
+              ) : null}
+              {aiInsight.escalationNote ? (
+                <View style={styles.aiEscalation}>
+                  <AlertTriangle size={13} color="#DC2626" />
+                  <Text style={styles.aiEscalationText}>{aiInsight.escalationNote}</Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+        </View>
 
         <Text style={styles.sectionTitle}>Health Scores</Text>
         <View style={styles.scoresGrid}>
@@ -301,7 +440,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
   loadingText: { marginTop: 12, color: Colors.textSecondary, fontSize: 15 },
-  connectionBar: {
+  topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -310,8 +449,11 @@ const styles = StyleSheet.create({
   },
   connectionLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   connectionText: { fontSize: 13, color: Colors.textSecondary },
+  topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  completenessChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  completenessText: { fontSize: 11, fontWeight: '700' as const },
   connectionLink: { fontSize: 13, color: Colors.primary, fontWeight: '600' as const },
-  heroCard: { borderRadius: 20, padding: 20, marginBottom: 20 },
+  heroCard: { borderRadius: 20, padding: 20, marginBottom: 16 },
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
   heroLabel: { fontSize: 11, fontWeight: '700' as const, color: 'rgba(255,255,255,0.7)', letterSpacing: 1.2, marginBottom: 4 },
   heroScore: { fontSize: 52, fontWeight: '800' as const, color: '#fff', lineHeight: 56 },
@@ -323,10 +465,38 @@ const styles = StyleSheet.create({
   metricLabel: { fontSize: 10, fontWeight: '600' as const, color: 'rgba(255,255,255,0.7)', letterSpacing: 0.5 },
   metricValueRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metricValue: { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
-  escalationCard: { backgroundColor: '#FEF2F2', borderRadius: 14, padding: 16, marginBottom: 20, borderLeftWidth: 4, borderLeftColor: '#DC2626' },
+  escalationCard: { backgroundColor: '#FEF2F2', borderRadius: 14, padding: 16, marginBottom: 16, borderLeftWidth: 4, borderLeftColor: '#DC2626' },
   escalationHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   escalationTitle: { fontSize: 14, fontWeight: '700' as const, color: '#DC2626' },
+  escalationItem: { marginBottom: 6 },
   escalationText: { fontSize: 13, color: '#7F1D1D', lineHeight: 19 },
+  escalationMeta: { fontSize: 11, color: '#B91C1C', marginTop: 2 },
+  notificationsSection: { marginBottom: 16 },
+  notifHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  notifHeaderText: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  notifCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  notifContent: { flex: 1 },
+  notifTitle: { fontSize: 13, fontWeight: '600' as const, color: Colors.text, marginBottom: 2 },
+  notifBody: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
+  notifDismiss: { padding: 4 },
+  deviationsSection: { marginBottom: 16 },
+  deviationsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  devChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, backgroundColor: Colors.surface },
+  devMetric: { fontSize: 11, fontWeight: '600' as const },
+  devValue: { fontSize: 12, fontWeight: '700' as const },
   sectionTitle: { fontSize: 18, fontWeight: '700' as const, color: Colors.text, marginBottom: 12, marginTop: 4 },
   actionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 10, gap: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
   actionIconWrap: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
@@ -335,6 +505,34 @@ const styles = StyleSheet.create({
   actionReason: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
   actionPriority: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center' },
   actionPriorityNum: { fontSize: 12, fontWeight: '700' as const, color: Colors.textTertiary },
+  aiSection: { marginBottom: 20 },
+  aiButton: { marginBottom: 12, borderRadius: 14, overflow: 'hidden' },
+  aiButtonDisabled: { opacity: 0.7 },
+  aiButtonGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 20 },
+  aiButtonText: { fontSize: 15, fontWeight: '700' as const, color: '#fff' },
+  aiInsightCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.primary + '25',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  aiInsightHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  aiInsightLabel: { fontSize: 14, fontWeight: '700' as const, color: Colors.primary, flex: 1 },
+  confidenceBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  confidenceText: { fontSize: 10, fontWeight: '600' as const },
+  aiSummary: { fontSize: 14, color: Colors.text, lineHeight: 21, marginBottom: 12, fontWeight: '500' as const },
+  aiActionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  aiActionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary, marginTop: 6 },
+  aiActionText: { flex: 1, fontSize: 13, color: Colors.textSecondary, lineHeight: 19 },
+  aiWhyText: { fontSize: 12, color: Colors.textTertiary, lineHeight: 17, marginTop: 8, fontStyle: 'italic' as const },
+  aiEscalation: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10, backgroundColor: '#FEF2F2', borderRadius: 8, padding: 10 },
+  aiEscalationText: { flex: 1, fontSize: 12, color: '#7F1D1D', lineHeight: 17 },
   scoresGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
   scoreCard: { borderRadius: 14, padding: 14, flexGrow: 1, minWidth: 150, flexBasis: '45%' as any },
   scoreCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },

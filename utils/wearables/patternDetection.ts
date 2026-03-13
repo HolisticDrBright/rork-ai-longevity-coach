@@ -152,6 +152,90 @@ export function detectPatterns(
     });
   }
 
+  const hydrationLowDays = recent7.filter(r => safe(r.hydrationMl, 1500) < 1500).length;
+  if (hydrationLowDays >= 3) {
+    patterns.push({
+      id: 'pat_hydration_deficit',
+      type: 'low_recovery',
+      severity: hydrationLowDays >= 5 ? 'moderate' : 'mild',
+      confidence: 'moderate',
+      description: `Hydration has been below 1.5L for ${hydrationLowDays} of the last 7 days. Chronic dehydration impacts recovery, cognition, and soreness.`,
+      factors: ['low_hydration', 'recovery_impact'],
+      daysPersisting: hydrationLowDays,
+      escalationNeeded: false,
+    });
+  }
+
+  const weekendAlcohol = recent7.filter(r => {
+    const day = new Date(r.date).getDay();
+    return (day === 0 || day === 5 || day === 6) && safe(r.alcoholUnits, 0) >= 2;
+  }).length;
+  const weekendSleepDrop = recent7.filter(r => {
+    const day = new Date(r.date).getDay();
+    return (day === 0 || day === 6) && safe(r.sleepScore, 75) < 65;
+  }).length;
+  if (weekendAlcohol >= 2 && weekendSleepDrop >= 1) {
+    patterns.push({
+      id: 'pat_weekend_derailment',
+      type: 'sleep_disruption',
+      severity: 'moderate',
+      confidence: 'moderate',
+      description: 'Weekend alcohol intake appears to be disrupting your sleep and recovery, undoing weekday progress.',
+      factors: ['weekend_alcohol', 'sleep_disruption', 'recovery_setback'],
+      daysPersisting: 7,
+      escalationNeeded: false,
+    });
+  }
+
+  const rhrElev5 = recent7.filter(r => safe(r.restingHr, bRhr) > bRhr * 1.1).length;
+  const sleepFragHigh = recent7.filter(r => safe(r.awakenings, 3) >= 5).length;
+  const tempElevated = recent7.filter(r => safe(r.tempDeviation, 0) > 0.5).length;
+  if (rhrElev5 >= 3 && (sleepFragHigh >= 2 || tempElevated >= 2)) {
+    patterns.push({
+      id: 'pat_illness_watch',
+      type: 'chronic_inflammation',
+      severity: 'moderate',
+      confidence: 'moderate',
+      description: 'Elevated resting HR, temperature deviation, and sleep fragmentation may indicate illness onset or acute systemic strain.',
+      factors: ['elevated_rhr', 'temp_deviation', 'sleep_fragmentation'],
+      daysPersisting: rhrElev5,
+      escalationNeeded: rhrElev5 >= 5,
+    });
+  }
+
+  const prior7 = records.slice(7, 14);
+  if (prior7.length >= 5) {
+    const priorAvgRecovery = prior7.reduce((s, r) => s + safe(r.readinessScore, 70), 0) / prior7.length;
+    const currentAvgRecovery = recent7.reduce((s, r) => s + safe(r.readinessScore, 70), 0) / recent7.length;
+    if (currentAvgRecovery > priorAvgRecovery + 8) {
+      patterns.push({
+        id: 'pat_recovery_rebound',
+        type: 'positive_reinforcement',
+        severity: 'mild',
+        confidence: 'moderate',
+        description: `Recovery has improved by ${Math.round(currentAvgRecovery - priorAvgRecovery)} points compared to last week. Your recent changes appear to be working.`,
+        factors: ['recovery_improving', 'positive_trajectory'],
+        daysPersisting: 7,
+        escalationNeeded: false,
+      });
+    }
+  }
+
+  const highStressDays = recent7.filter(r => safe(r.stressScoreSubjective, 5) >= 7).length;
+  const lowMovementDays = recent7.filter(r => safe(r.steps, 5000) < 3000).length;
+  if (highStressDays >= 4 && lowMovementDays >= 3) {
+    patterns.push({
+      id: 'pat_chronic_stress',
+      type: 'metabolic_stress',
+      severity: highStressDays >= 6 ? 'severe' : 'moderate',
+      confidence: 'moderate',
+      description: 'Sustained high stress with low movement creates a compounding negative pattern for recovery and metabolic health.',
+      factors: ['chronic_stress', 'sedentary_pattern', 'recovery_suppression'],
+      daysPersisting: highStressDays,
+      escalationNeeded: highStressDays >= 6,
+    });
+  }
+
   return patterns;
 }
 
