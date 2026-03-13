@@ -25,12 +25,16 @@ import {
   AlertCircle,
   ChevronRight,
   AlertTriangle,
+  Pill,
+  Clock,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useHormones, hormoneSymptoms } from '@/providers/HormoneProvider';
-import { DailySymptoms, HormoneEntry } from '@/types';
+import { DailySymptoms, HormoneEntry, TodayAction } from '@/types';
 
 type SymptomCategory = 'high_testosterone_dhea' | 'low_progesterone' | 'low_estrogen' | 'high_estrogen';
 
@@ -50,7 +54,7 @@ const categoryConfig: Record<SymptomCategory, { label: string; color: string; ic
 };
 
 export default function TrackingScreen() {
-  const { todayAdherence, updateDailySymptoms, saveWeeklyCheckIn } = useProtocol();
+  const { todayAdherence, todayActions, toggleActionComplete, updateDailySymptoms, saveWeeklyCheckIn } = useProtocol();
   const {
     todayEntry,
     addEntry,
@@ -169,6 +173,19 @@ export default function TrackingScreen() {
 
     return groups;
   }, []);
+
+  const supplementActions = useMemo(() => {
+    return todayActions.filter(a => a.type === 'supplement');
+  }, [todayActions]);
+
+  const completedSupplementCount = useMemo(() => {
+    return supplementActions.filter(a => a.completed).length;
+  }, [supplementActions]);
+
+  const handleToggleSupplement = useCallback(async (action: TodayAction) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    toggleActionComplete(action);
+  }, [toggleActionComplete]);
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -297,6 +314,83 @@ export default function TrackingScreen() {
                 textAlignVertical="top"
               />
             </View>
+
+            {supplementActions.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.supplementHeader}>
+                  <View style={styles.supplementTitleRow}>
+                    <View style={[styles.symptomIcon, { backgroundColor: `${Colors.chartTeal}15` }]}>
+                      <Pill color={Colors.chartTeal} size={18} />
+                    </View>
+                    <View style={styles.supplementTitleInfo}>
+                      <Text style={styles.sectionTitle}>Today's Supplements</Text>
+                      <Text style={styles.supplementProgress}>
+                        {completedSupplementCount} of {supplementActions.length} taken
+                      </Text>
+                    </View>
+                  </View>
+                  {supplementActions.length > 0 && (
+                    <View style={styles.supplementProgressBar}>
+                      <View
+                        style={[
+                          styles.supplementProgressFill,
+                          {
+                            width: `${supplementActions.length > 0 ? (completedSupplementCount / supplementActions.length) * 100 : 0}%`,
+                            backgroundColor: completedSupplementCount === supplementActions.length ? Colors.success : Colors.chartTeal,
+                          },
+                        ]}
+                      />
+                    </View>
+                  )}
+                </View>
+
+                {supplementActions.map((action) => (
+                  <TouchableOpacity
+                    key={action.id}
+                    style={[
+                      styles.supplementItem,
+                      action.completed && styles.supplementItemCompleted,
+                    ]}
+                    onPress={() => handleToggleSupplement(action)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.supplementCheckbox}>
+                      {action.completed ? (
+                        <View style={styles.checkboxChecked}>
+                          <Check color={Colors.textInverse} size={14} />
+                        </View>
+                      ) : (
+                        <View style={styles.checkboxUnchecked}>
+                          <Circle color={Colors.border} size={22} />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.supplementInfo}>
+                      <Text
+                        style={[
+                          styles.supplementName,
+                          action.completed && styles.supplementNameCompleted,
+                        ]}
+                      >
+                        {action.name}
+                      </Text>
+                      <Text style={styles.supplementDetails}>{action.details}</Text>
+                    </View>
+                    <View style={styles.supplementTimingBadge}>
+                      <Clock color={Colors.textTertiary} size={12} />
+                      <Text style={styles.supplementTimingText}>{action.timing}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+
+                {completedSupplementCount === supplementActions.length && supplementActions.length > 0 && (
+                  <View style={styles.allDoneBanner}>
+                    <CheckCircle2 color={Colors.success} size={18} />
+                    <Text style={styles.allDoneText}>All supplements taken today!</Text>
+                  </View>
+                )}
+              </View>
+            )}
 
             <TouchableOpacity style={styles.saveButton} onPress={handleSaveDaily}>
               <Check color={Colors.textInverse} size={20} />
@@ -836,5 +930,108 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#F57C00',
     lineHeight: 18,
+  },
+  supplementHeader: {
+    marginBottom: 14,
+  },
+  supplementTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  supplementTitleInfo: {
+    flex: 1,
+  },
+  supplementProgress: {
+    fontSize: 13,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  supplementProgressBar: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.borderLight,
+    overflow: 'hidden',
+  },
+  supplementProgressFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  supplementItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  supplementItemCompleted: {
+    backgroundColor: `${Colors.success}08`,
+    borderColor: `${Colors.success}30`,
+  },
+  supplementCheckbox: {
+    marginRight: 12,
+  },
+  checkboxChecked: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxUnchecked: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  supplementInfo: {
+    flex: 1,
+  },
+  supplementName: {
+    fontSize: 15,
+    fontWeight: '500' as const,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  supplementNameCompleted: {
+    color: Colors.textTertiary,
+    textDecorationLine: 'line-through' as const,
+  },
+  supplementDetails: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+  },
+  supplementTimingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.surfaceSecondary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  supplementTimingText: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    fontWeight: '500' as const,
+  },
+  allDoneBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: `${Colors.success}12`,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  allDoneText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.success,
   },
 });
