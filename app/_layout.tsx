@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { HIPAAProvider, useHIPAA } from '@/providers/HIPAAProvider';
+import { SupabaseAuthProvider } from '@/providers/SupabaseAuthProvider';
 import { UserProvider } from '@/providers/UserProvider';
 import { ProtocolProvider } from '@/providers/ProtocolProvider';
 import { LabsProvider } from '@/providers/LabsProvider';
@@ -86,30 +87,32 @@ export default function RootLayout() {
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <AuthProvider>
-            <AuthGate>
-              <HIPAAProvider>
-                <ConsentGate>
-                  <UserProvider>
-                    <ProtocolProvider>
-                      <LabsProvider>
-                        <HormoneProvider>
-                          <NutritionProvider>
-                            <SupplementsProvider>
-                              <WearablesProvider>
-                                <StatusBar style="light" />
-                                <RootLayoutNav />
-                              </WearablesProvider>
-                            </SupplementsProvider>
-                          </NutritionProvider>
-                        </HormoneProvider>
-                      </LabsProvider>
-                    </ProtocolProvider>
-                  </UserProvider>
-                </ConsentGate>
-              </HIPAAProvider>
-            </AuthGate>
-          </AuthProvider>
+          <SupabaseAuthProvider>
+            <AuthProvider>
+              <AuthGate>
+                <HIPAAProvider>
+                  <ConsentGate>
+                    <UserProvider>
+                      <ProtocolProvider>
+                        <LabsProvider>
+                          <HormoneProvider>
+                            <NutritionProvider>
+                              <SupplementsProvider>
+                                <WearablesProvider>
+                                  <StatusBar style="light" />
+                                  <RootLayoutNav />
+                                </WearablesProvider>
+                              </SupplementsProvider>
+                            </NutritionProvider>
+                          </HormoneProvider>
+                        </LabsProvider>
+                      </ProtocolProvider>
+                    </UserProvider>
+                  </ConsentGate>
+                </HIPAAProvider>
+              </AuthGate>
+            </AuthProvider>
+          </SupabaseAuthProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>
     </trpc.Provider>

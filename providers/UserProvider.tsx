@@ -5,6 +5,8 @@ import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureSto
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
 import { sendAssessmentComplete, AssessmentScore } from '@/lib/webhooks';
+import { profileService, lifestyleService, contraindicationService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
 
 import {
   UserProfile,
@@ -134,6 +136,29 @@ export const [UserProvider, useUser] = createContextHook(() => {
     mutationFn: async (profile: UserProfile) => {
       await secureSetJSON(STORAGE_KEYS.USER_PROFILE, profile);
       await writeAuditLog('PHI_UPDATE', 'user_profile', profile.id || 'unknown');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          console.log('[UserProvider] Syncing profile to Supabase...');
+          await profileService.upsert({
+            id: session.user.id,
+            email: profile.email || null,
+            first_name: profile.firstName || null,
+            last_name: profile.lastName || null,
+            full_name: [profile.firstName, profile.lastName].filter(Boolean).join(' ') || null,
+            sex: profile.sex || null,
+            birth_date: profile.dateOfBirth || null,
+            height: profile.height || null,
+            weight: profile.weight || null,
+            goals: profile.goals.length > 0 ? profile.goals : null,
+            onboarding_completed: profile.onboardingCompleted,
+          });
+        }
+      } catch (e) {
+        console.log('[UserProvider] Supabase sync failed (non-blocking):', e);
+      }
+
       return profile;
     },
     onSuccess: (data) => {
@@ -146,6 +171,27 @@ export const [UserProvider, useUser] = createContextHook(() => {
     mutationFn: async (profile: LifestyleProfile) => {
       await secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, profile);
       await writeAuditLog('PHI_UPDATE', 'lifestyle_profile', 'user');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          console.log('[UserProvider] Syncing lifestyle to Supabase...');
+          await lifestyleService.upsert({
+            user_id: session.user.id,
+            sleep_hours: profile.sleepHours,
+            sleep_quality: profile.sleepQuality,
+            stress_level: profile.stressLevel,
+            diet_type: profile.dietType,
+            cooking_skill: profile.cookingSkill,
+            shopping_cadence: profile.shoppingCadence,
+            exercise_frequency: profile.exerciseFrequency,
+            exercise_types: profile.exerciseTypes,
+          });
+        }
+      } catch (e) {
+        console.log('[UserProvider] Supabase lifestyle sync failed (non-blocking):', e);
+      }
+
       return profile;
     },
     onSuccess: (data) => {
@@ -158,6 +204,24 @@ export const [UserProvider, useUser] = createContextHook(() => {
     mutationFn: async (data: Contraindication) => {
       await secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, data);
       await writeAuditLog('PHI_UPDATE', 'contraindications', 'user');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          console.log('[UserProvider] Syncing contraindications to Supabase...');
+          await contraindicationService.upsert({
+            user_id: session.user.id,
+            pregnant: data.pregnant,
+            nursing: data.nursing,
+            medications: data.medications,
+            allergies: data.allergies,
+            conditions: data.conditions,
+          });
+        }
+      } catch (e) {
+        console.log('[UserProvider] Supabase contraindications sync failed (non-blocking):', e);
+      }
+
       return data;
     },
     onSuccess: (data) => {
@@ -311,7 +375,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
   const isLoading = userQuery.isLoading || lifestyleQuery.isLoading || 
     contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading;
 
-  return {
+  return useMemo(() => ({
     userProfile,
     lifestyleProfile,
     contraindications,
@@ -328,5 +392,22 @@ export const [UserProvider, useUser] = createContextHook(() => {
     completeOnboarding,
     resetOnboarding,
     setUserRole,
-  };
+  }), [
+    userProfile,
+    lifestyleProfile,
+    contraindications,
+    questionnaireResponses,
+    categoryScores,
+    clinicalIntake,
+    isLoading,
+    isClinician,
+    updateUserProfile,
+    updateLifestyleProfile,
+    updateContraindications,
+    saveQuestionnaireResponse,
+    saveClinicalIntake,
+    completeOnboarding,
+    resetOnboarding,
+    setUserRole,
+  ]);
 });
