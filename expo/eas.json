@@ -1,0 +1,52 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "APP_VARIANT": "development"
+      },
+      "ios": {
+        "simulator": false
+      },
+      "channel": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "APP_VARIANT": "preview"
+      },
+      "channel": "preview"
+    },
+    "production": {
+      "env": {
+        "APP_VARIANT": "production"
+      },
+      "channel": "production",
+      "autoIncrement": true,
+      "ios": {
+        "autoSubmit": false
+      },
+      "android": {
+        "autoSubmit": false
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "APPLE_ID_HERE",
+        "ascAppId": "ASC_APP_ID_HERE",
+        "appleTeamId": "APPLE_TEAM_ID_HERE"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-services.json",
+        "track": "internal"
+      }
+    }
+  }
+}

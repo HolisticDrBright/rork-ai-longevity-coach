@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { publicProcedure, createTRPCRouter } from "../../create-context";
+import { TRPCError } from "@trpc/server";
+import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   LabDocument,
   LabTest,
@@ -7,14 +9,6 @@ import type {
   LabResultStatus,
   PaginatedResponse,
 } from "@/types/clinic";
-
-const labDocumentStore: Map<string, LabDocument> = new Map();
-const labTestStore: Map<string, LabTest> = new Map();
-const labResultStore: Map<string, LabResult> = new Map();
-
-function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
 
 function calculateLabStatus(
   value: number,
@@ -30,42 +24,67 @@ function calculateLabStatus(
   return 'normal';
 }
 
-initializeLabTests();
+function mapDbToLabDocument(row: Record<string, unknown>): LabDocument {
+  return {
+    id: row.id as string,
+    patientId: row.patient_id as string,
+    fileName: row.file_name as string,
+    fileType: row.file_type as LabDocument['fileType'],
+    fileSizeBytes: row.file_size_bytes as number,
+    storagePath: row.storage_path as string,
+    thumbnailPath: row.thumbnail_path as string | undefined,
+    labDate: row.lab_date as string | undefined,
+    labCompany: row.lab_company as string | undefined,
+    orderingProvider: row.ordering_provider as string | undefined,
+    panelName: row.panel_name as string | undefined,
+    processingStatus: row.processing_status as LabDocument['processingStatus'],
+    parsedAt: row.parsed_at as string | undefined,
+    uploadedBy: row.uploaded_by as string,
+    uploadedAt: row.uploaded_at as string,
+    createdAt: row.created_at as string,
+  };
+}
 
-function initializeLabTests() {
-  const defaultTests: Omit<LabTest, 'id'>[] = [
-    { code: 'GLUCOSE', name: 'Glucose (Fasting)', category: 'metabolic', unit: 'mg/dL', refRangeLow: 70, refRangeHigh: 100, functionalRangeLow: 75, functionalRangeHigh: 90, criticalLow: 50, criticalHigh: 400, isActive: true },
-    { code: 'HBA1C', name: 'Hemoglobin A1c', category: 'metabolic', unit: '%', refRangeLow: 4.0, refRangeHigh: 5.6, functionalRangeLow: 4.5, functionalRangeHigh: 5.3, criticalHigh: 10, isActive: true },
-    { code: 'INSULIN', name: 'Insulin (Fasting)', category: 'metabolic', unit: 'uIU/mL', refRangeLow: 2.6, refRangeHigh: 24.9, functionalRangeLow: 3, functionalRangeHigh: 8, isActive: true },
-    { code: 'CHOL_TOTAL', name: 'Total Cholesterol', category: 'lipid', unit: 'mg/dL', refRangeHigh: 200, functionalRangeHigh: 180, criticalHigh: 300, isActive: true },
-    { code: 'LDL', name: 'LDL Cholesterol', category: 'lipid', unit: 'mg/dL', refRangeHigh: 100, functionalRangeHigh: 80, criticalHigh: 190, isActive: true },
-    { code: 'HDL', name: 'HDL Cholesterol', category: 'lipid', unit: 'mg/dL', refRangeLow: 40, functionalRangeLow: 60, isActive: true },
-    { code: 'TRIG', name: 'Triglycerides', category: 'lipid', unit: 'mg/dL', refRangeHigh: 150, functionalRangeHigh: 100, criticalHigh: 500, isActive: true },
-    { code: 'TSH', name: 'TSH', category: 'thyroid', unit: 'mIU/L', refRangeLow: 0.45, refRangeHigh: 4.5, functionalRangeLow: 1.0, functionalRangeHigh: 2.5, isActive: true },
-    { code: 'FREE_T4', name: 'Free T4', category: 'thyroid', unit: 'ng/dL', refRangeLow: 0.82, refRangeHigh: 1.77, functionalRangeLow: 1.0, functionalRangeHigh: 1.5, isActive: true },
-    { code: 'FREE_T3', name: 'Free T3', category: 'thyroid', unit: 'pg/mL', refRangeLow: 2.0, refRangeHigh: 4.4, functionalRangeLow: 3.0, functionalRangeHigh: 4.0, isActive: true },
-    { code: 'VITD', name: 'Vitamin D, 25-Hydroxy', category: 'vitamin', unit: 'ng/mL', refRangeLow: 30, refRangeHigh: 100, functionalRangeLow: 50, functionalRangeHigh: 80, criticalLow: 10, isActive: true },
-    { code: 'B12', name: 'Vitamin B12', category: 'vitamin', unit: 'pg/mL', refRangeLow: 211, refRangeHigh: 946, functionalRangeLow: 500, functionalRangeHigh: 800, criticalLow: 150, isActive: true },
-    { code: 'FERRITIN', name: 'Ferritin', category: 'iron', unit: 'ng/mL', refRangeLow: 12, refRangeHigh: 150, functionalRangeLow: 50, functionalRangeHigh: 100, isActive: true },
-    { code: 'IRON', name: 'Serum Iron', category: 'iron', unit: 'mcg/dL', refRangeLow: 60, refRangeHigh: 170, functionalRangeLow: 85, functionalRangeHigh: 130, isActive: true },
-    { code: 'CREATININE', name: 'Creatinine', category: 'kidney', unit: 'mg/dL', refRangeLow: 0.7, refRangeHigh: 1.3, functionalRangeLow: 0.8, functionalRangeHigh: 1.1, criticalHigh: 4.0, isActive: true },
-    { code: 'BUN', name: 'Blood Urea Nitrogen', category: 'kidney', unit: 'mg/dL', refRangeLow: 6, refRangeHigh: 20, functionalRangeLow: 10, functionalRangeHigh: 16, criticalHigh: 100, isActive: true },
-    { code: 'EGFR', name: 'eGFR', category: 'kidney', unit: 'mL/min/1.73m2', refRangeLow: 90, criticalLow: 15, isActive: true },
-    { code: 'ALT', name: 'ALT (SGPT)', category: 'liver', unit: 'U/L', refRangeHigh: 33, functionalRangeHigh: 25, criticalHigh: 200, isActive: true },
-    { code: 'AST', name: 'AST (SGOT)', category: 'liver', unit: 'U/L', refRangeHigh: 32, functionalRangeHigh: 25, criticalHigh: 200, isActive: true },
-    { code: 'CRP', name: 'C-Reactive Protein (hs)', category: 'inflammation', unit: 'mg/L', refRangeHigh: 3.0, functionalRangeHigh: 1.0, criticalHigh: 10, isActive: true },
-    { code: 'HOMOCYSTEINE', name: 'Homocysteine', category: 'cardiovascular', unit: 'umol/L', refRangeHigh: 15, functionalRangeHigh: 8, criticalHigh: 50, isActive: true },
-  ];
+function mapDbToLabTest(row: Record<string, unknown>): LabTest {
+  return {
+    id: row.id as string,
+    code: row.code as string,
+    name: row.name as string,
+    category: row.category as string | undefined,
+    unit: row.unit as string,
+    refRangeLow: row.ref_range_low as number | undefined,
+    refRangeHigh: row.ref_range_high as number | undefined,
+    functionalRangeLow: row.functional_range_low as number | undefined,
+    functionalRangeHigh: row.functional_range_high as number | undefined,
+    criticalLow: row.critical_low as number | undefined,
+    criticalHigh: row.critical_high as number | undefined,
+    description: row.description as string | undefined,
+    isActive: row.is_active as boolean,
+  };
+}
 
-  defaultTests.forEach((test) => {
-    const id = generateId();
-    labTestStore.set(id, { id, ...test });
-  });
-  console.log('[Labs] Initialized', labTestStore.size, 'lab test definitions');
+function mapDbToLabResult(row: Record<string, unknown>, labTest?: LabTest): LabResult {
+  return {
+    id: row.id as string,
+    patientId: row.patient_id as string,
+    labDocumentId: row.lab_document_id as string | undefined,
+    labTestId: row.lab_test_id as string,
+    labTest,
+    value: row.value as number,
+    valueText: row.value_text as string | undefined,
+    unit: row.unit as string,
+    refRangeLow: row.ref_range_low as number | undefined,
+    refRangeHigh: row.ref_range_high as number | undefined,
+    status: row.status as LabResultStatus,
+    resultDate: row.result_date as string,
+    enteredBy: row.entered_by as string,
+    entryMethod: row.entry_method as LabResult['entryMethod'],
+    createdAt: row.created_at as string,
+  };
 }
 
 export const labsRouter = createTRPCRouter({
-  listDocuments: publicProcedure
+  listDocuments: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -74,36 +93,39 @@ export const labsRouter = createTRPCRouter({
         status: z.enum(['pending', 'processing', 'parsed', 'manual_entry', 'error']).optional(),
       })
     )
-    .query(async ({ input }): Promise<PaginatedResponse<LabDocument>> => {
-      console.log('[Labs] Listing documents for patient:', input.patientId);
-      
-      let documents = Array.from(labDocumentStore.values()).filter(
-        (doc) => doc.patientId === input.patientId
-      );
+    .query(async ({ ctx, input }): Promise<PaginatedResponse<LabDocument>> => {
+      console.log('[Labs] Listing documents for patient');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      let query = sb
+        .from('clinic_lab_documents')
+        .select('*', { count: 'exact' })
+        .eq('patient_id', input.patientId);
 
       if (input.status) {
-        documents = documents.filter((doc) => doc.processingStatus === input.status);
+        query = query.eq('processing_status', input.status);
       }
 
-      documents.sort(
-        (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
-      );
+      const offset = (input.page - 1) * input.limit;
+      query = query.order('uploaded_at', { ascending: false }).range(offset, offset + input.limit - 1);
 
-      const total = documents.length;
-      const totalPages = Math.ceil(total / input.limit);
-      const startIndex = (input.page - 1) * input.limit;
-      const paginatedDocs = documents.slice(startIndex, startIndex + input.limit);
+      const { data, error, count } = await query;
 
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list lab documents' });
+      }
+
+      const total = count ?? 0;
       return {
-        data: paginatedDocs,
+        data: (data ?? []).map(mapDbToLabDocument),
         total,
         page: input.page,
         limit: input.limit,
-        totalPages,
+        totalPages: Math.ceil(total / input.limit),
       };
     }),
 
-  uploadDocument: publicProcedure
+  uploadDocument: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -118,61 +140,82 @@ export const labsRouter = createTRPCRouter({
         uploadedBy: z.string(),
       })
     )
-    .mutation(async ({ input }): Promise<LabDocument> => {
-      console.log('[Labs] Uploading document for patient:', input.patientId);
-      
-      const now = new Date().toISOString();
-      const document: LabDocument = {
-        id: generateId(),
-        ...input,
-        processingStatus: 'pending',
-        uploadedAt: now,
-        createdAt: now,
-      };
+    .mutation(async ({ ctx, input }): Promise<LabDocument> => {
+      console.log('[Labs] Uploading document');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      labDocumentStore.set(document.id, document);
-      console.log('[Labs] Document uploaded successfully:', document.id);
-      
-      return document;
+      const { data, error } = await sb
+        .from('clinic_lab_documents')
+        .insert({
+          clinician_id: ctx.user.id,
+          patient_id: input.patientId,
+          file_name: input.fileName,
+          file_type: input.fileType,
+          file_size_bytes: input.fileSizeBytes,
+          storage_path: input.storagePath,
+          lab_date: input.labDate,
+          lab_company: input.labCompany,
+          ordering_provider: input.orderingProvider,
+          panel_name: input.panelName,
+          uploaded_by: input.uploadedBy,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to upload document' });
+      }
+
+      console.log('[Labs] Document uploaded successfully');
+      return mapDbToLabDocument(data);
     }),
 
-  getDocumentDownloadUrl: publicProcedure
+  getDocumentDownloadUrl: protectedProcedure
     .input(z.object({ documentId: z.string() }))
-    .query(async ({ input }): Promise<{ url: string; expiresAt: string }> => {
-      console.log('[Labs] Getting download URL for document:', input.documentId);
-      
-      const document = labDocumentStore.get(input.documentId);
-      if (!document) {
-        throw new Error('Document not found');
+    .query(async ({ ctx, input }): Promise<{ url: string; expiresAt: string }> => {
+      console.log('[Labs] Getting download URL for document');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_lab_documents')
+        .select('storage_path')
+        .eq('id', input.documentId)
+        .single();
+
+      if (error || !data) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
       }
 
       return {
-        url: `https://example.com/signed/${document.storagePath}?token=xxx`,
+        url: `https://example.com/signed/${data.storage_path}?token=xxx`,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       };
     }),
 
-  deleteDocument: publicProcedure
+  deleteDocument: protectedProcedure
     .input(z.object({ documentId: z.string() }))
-    .mutation(async ({ input }): Promise<{ success: boolean }> => {
-      console.log('[Labs] Deleting document:', input.documentId);
-      
-      if (!labDocumentStore.has(input.documentId)) {
-        throw new Error('Document not found');
-      }
+    .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
+      console.log('[Labs] Deleting document');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      labDocumentStore.delete(input.documentId);
-      
-      labResultStore.forEach((result, id) => {
-        if (result.labDocumentId === input.documentId) {
-          labResultStore.delete(id);
-        }
-      });
+      await sb
+        .from('clinic_lab_results')
+        .delete()
+        .eq('lab_document_id', input.documentId);
+
+      const { error } = await sb
+        .from('clinic_lab_documents')
+        .delete()
+        .eq('id', input.documentId);
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+      }
 
       return { success: true };
     }),
 
-  listTests: publicProcedure
+  listTests: protectedProcedure
     .input(
       z.object({
         category: z.string().optional(),
@@ -180,38 +223,53 @@ export const labsRouter = createTRPCRouter({
         activeOnly: z.boolean().default(true),
       })
     )
-    .query(async ({ input }): Promise<LabTest[]> => {
+    .query(async ({ ctx, input }): Promise<LabTest[]> => {
       console.log('[Labs] Listing lab tests');
-      
-      let tests = Array.from(labTestStore.values());
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      let query = sb.from('clinic_lab_tests').select('*');
 
       if (input.activeOnly) {
-        tests = tests.filter((t) => t.isActive);
+        query = query.eq('is_active', true);
       }
 
       if (input.category) {
-        tests = tests.filter((t) => t.category === input.category);
+        query = query.eq('category', input.category);
       }
 
       if (input.search) {
-        const searchLower = input.search.toLowerCase();
-        tests = tests.filter(
-          (t) =>
-            t.name.toLowerCase().includes(searchLower) ||
-            t.code.toLowerCase().includes(searchLower)
+        query = query.or(
+          `name.ilike.%${input.search}%,code.ilike.%${input.search}%`
         );
       }
 
-      return tests.sort((a, b) => a.name.localeCompare(b.name));
+      query = query.order('name');
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list lab tests' });
+      }
+
+      return (data ?? []).map(mapDbToLabTest);
     }),
 
-  getTestByCode: publicProcedure
+  getTestByCode: protectedProcedure
     .input(z.object({ code: z.string() }))
-    .query(async ({ input }): Promise<LabTest | null> => {
-      return Array.from(labTestStore.values()).find((t) => t.code === input.code) || null;
+    .query(async ({ ctx, input }): Promise<LabTest | null> => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_lab_tests')
+        .select('*')
+        .eq('code', input.code)
+        .single();
+
+      if (error) return null;
+      return mapDbToLabTest(data);
     }),
 
-  listResults: publicProcedure
+  listResults: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -224,60 +282,66 @@ export const labsRouter = createTRPCRouter({
         limit: z.number().min(1).max(100).default(50),
       })
     )
-    .query(async ({ input }): Promise<PaginatedResponse<LabResult>> => {
-      console.log('[Labs] Listing results for patient:', input.patientId);
-      
-      let results = Array.from(labResultStore.values()).filter(
-        (r) => r.patientId === input.patientId
-      );
+    .query(async ({ ctx, input }): Promise<PaginatedResponse<LabResult>> => {
+      console.log('[Labs] Listing results for patient');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      if (input.labTestId) {
-        results = results.filter((r) => r.labTestId === input.labTestId);
+      let labTestId = input.labTestId;
+
+      if (!labTestId && input.labCode) {
+        const { data: testData } = await sb
+          .from('clinic_lab_tests')
+          .select('id')
+          .eq('code', input.labCode)
+          .single();
+        if (testData) labTestId = testData.id;
       }
 
-      if (input.labCode) {
-        const test = Array.from(labTestStore.values()).find((t) => t.code === input.labCode);
-        if (test) {
-          results = results.filter((r) => r.labTestId === test.id);
-        }
+      let query = sb
+        .from('clinic_lab_results')
+        .select('*', { count: 'exact' })
+        .eq('patient_id', input.patientId);
+
+      if (labTestId) query = query.eq('lab_test_id', labTestId);
+      if (input.startDate) query = query.gte('result_date', input.startDate);
+      if (input.endDate) query = query.lte('result_date', input.endDate);
+      if (input.status) query = query.eq('status', input.status);
+
+      const offset = (input.page - 1) * input.limit;
+      query = query.order('result_date', { ascending: false }).range(offset, offset + input.limit - 1);
+
+      const { data, error, count } = await query;
+
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list lab results' });
       }
 
-      if (input.startDate) {
-        results = results.filter((r) => r.resultDate >= input.startDate!);
+      const testIds = [...new Set((data ?? []).map((r: Record<string, unknown>) => r.lab_test_id as string))];
+      const testsMap = new Map<string, LabTest>();
+
+      if (testIds.length > 0) {
+        const { data: tests } = await sb
+          .from('clinic_lab_tests')
+          .select('*')
+          .in('id', testIds);
+        (tests ?? []).forEach((t: Record<string, unknown>) => {
+          testsMap.set(t.id as string, mapDbToLabTest(t));
+        });
       }
 
-      if (input.endDate) {
-        results = results.filter((r) => r.resultDate <= input.endDate!);
-      }
-
-      if (input.status) {
-        results = results.filter((r) => r.status === input.status);
-      }
-
-      results = results.map((r) => ({
-        ...r,
-        labTest: labTestStore.get(r.labTestId),
-      }));
-
-      results.sort(
-        (a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime()
-      );
-
-      const total = results.length;
-      const totalPages = Math.ceil(total / input.limit);
-      const startIndex = (input.page - 1) * input.limit;
-      const paginatedResults = results.slice(startIndex, startIndex + input.limit);
-
+      const total = count ?? 0;
       return {
-        data: paginatedResults,
+        data: (data ?? []).map((r: Record<string, unknown>) =>
+          mapDbToLabResult(r, testsMap.get(r.lab_test_id as string))
+        ),
         total,
         page: input.page,
         limit: input.limit,
-        totalPages,
+        totalPages: Math.ceil(total / input.limit),
       };
     }),
 
-  addResult: publicProcedure
+  addResult: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -293,37 +357,55 @@ export const labsRouter = createTRPCRouter({
         entryMethod: z.enum(['manual', 'parsed', 'api']).default('manual'),
       })
     )
-    .mutation(async ({ input }): Promise<LabResult> => {
-      console.log('[Labs] Adding result for patient:', input.patientId);
-      
-      const labTest = labTestStore.get(input.labTestId);
-      if (!labTest) {
-        throw new Error('Lab test not found');
+    .mutation(async ({ ctx, input }): Promise<LabResult> => {
+      console.log('[Labs] Adding result');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data: labTest, error: testError } = await sb
+        .from('clinic_lab_tests')
+        .select('*')
+        .eq('id', input.labTestId)
+        .single();
+
+      if (testError || !labTest) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Lab test not found' });
       }
 
-      const refLow = input.refRangeLow ?? labTest.refRangeLow;
-      const refHigh = input.refRangeHigh ?? labTest.refRangeHigh;
-      const critLow = labTest.criticalLow;
-      const critHigh = labTest.criticalHigh;
-
+      const refLow = input.refRangeLow ?? (labTest.ref_range_low as number | undefined);
+      const refHigh = input.refRangeHigh ?? (labTest.ref_range_high as number | undefined);
+      const critLow = labTest.critical_low as number | undefined;
+      const critHigh = labTest.critical_high as number | undefined;
       const status = calculateLabStatus(input.value, refLow, refHigh, critLow, critHigh);
 
-      const result: LabResult = {
-        id: generateId(),
-        ...input,
-        refRangeLow: refLow,
-        refRangeHigh: refHigh,
-        status,
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await sb
+        .from('clinic_lab_results')
+        .insert({
+          clinician_id: ctx.user.id,
+          patient_id: input.patientId,
+          lab_document_id: input.labDocumentId,
+          lab_test_id: input.labTestId,
+          value: input.value,
+          value_text: input.valueText,
+          unit: input.unit,
+          ref_range_low: refLow,
+          ref_range_high: refHigh,
+          status,
+          result_date: input.resultDate,
+          entered_by: input.enteredBy,
+          entry_method: input.entryMethod,
+        })
+        .select()
+        .single();
 
-      labResultStore.set(result.id, result);
-      console.log('[Labs] Result added successfully:', result.id, 'Status:', status);
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to add lab result' });
+      }
 
-      return { ...result, labTest };
+      console.log('[Labs] Result added, status:', status);
+      return mapDbToLabResult(data, mapDbToLabTest(labTest));
     }),
 
-  updateResult: publicProcedure
+  updateResult: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -335,66 +417,93 @@ export const labsRouter = createTRPCRouter({
         resultDate: z.string().optional(),
       })
     )
-    .mutation(async ({ input }): Promise<LabResult> => {
-      console.log('[Labs] Updating result:', input.id);
-      
-      const existing = labResultStore.get(input.id);
-      if (!existing) {
-        throw new Error('Lab result not found');
+    .mutation(async ({ ctx, input }): Promise<LabResult> => {
+      console.log('[Labs] Updating result');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data: existing, error: fetchError } = await sb
+        .from('clinic_lab_results')
+        .select('*')
+        .eq('id', input.id)
+        .single();
+
+      if (fetchError || !existing) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Lab result not found' });
       }
 
-      const labTest = labTestStore.get(existing.labTestId);
-      
-      const { id, ...updates } = input;
-      const cleanedUpdates = Object.fromEntries(
-        Object.entries(updates).filter(([_, v]) => v !== undefined)
-      );
+      const { data: labTest } = await sb
+        .from('clinic_lab_tests')
+        .select('*')
+        .eq('id', existing.lab_test_id)
+        .single();
 
-      const newValue = (cleanedUpdates.value as number | undefined) ?? existing.value;
-      const newRefLow = (cleanedUpdates.refRangeLow as number | undefined) ?? existing.refRangeLow;
-      const newRefHigh = (cleanedUpdates.refRangeHigh as number | undefined) ?? existing.refRangeHigh;
-      const critLow = labTest?.criticalLow;
-      const critHigh = labTest?.criticalHigh;
-
+      const newValue = input.value ?? (existing.value as number);
+      const newRefLow = input.refRangeLow ?? (existing.ref_range_low as number | undefined);
+      const newRefHigh = input.refRangeHigh ?? (existing.ref_range_high as number | undefined);
+      const critLow = labTest?.critical_low as number | undefined;
+      const critHigh = labTest?.critical_high as number | undefined;
       const status = calculateLabStatus(newValue, newRefLow, newRefHigh, critLow, critHigh);
 
-      const updated: LabResult = {
-        ...existing,
-        ...cleanedUpdates,
-        status,
-      };
+      const updateData: Record<string, unknown> = { status };
+      if (input.value !== undefined) updateData.value = input.value;
+      if (input.valueText !== undefined) updateData.value_text = input.valueText;
+      if (input.unit !== undefined) updateData.unit = input.unit;
+      if (input.refRangeLow !== undefined) updateData.ref_range_low = input.refRangeLow;
+      if (input.refRangeHigh !== undefined) updateData.ref_range_high = input.refRangeHigh;
+      if (input.resultDate !== undefined) updateData.result_date = input.resultDate;
 
-      labResultStore.set(id, updated);
-      return { ...updated, labTest };
-    }),
+      const { data, error } = await sb
+        .from('clinic_lab_results')
+        .update(updateData)
+        .eq('id', input.id)
+        .select()
+        .single();
 
-  deleteResult: publicProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }): Promise<{ success: boolean }> => {
-      console.log('[Labs] Deleting result:', input.id);
-      
-      if (!labResultStore.has(input.id)) {
-        throw new Error('Lab result not found');
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to update lab result' });
       }
 
-      labResultStore.delete(input.id);
+      return mapDbToLabResult(data, labTest ? mapDbToLabTest(labTest) : undefined);
+    }),
+
+  deleteResult: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
+      console.log('[Labs] Deleting result');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { error } = await sb
+        .from('clinic_lab_results')
+        .delete()
+        .eq('id', input.id);
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Lab result not found' });
+      }
+
       return { success: true };
     }),
 
-  getTestCategories: publicProcedure.query(async (): Promise<string[]> => {
+  getTestCategories: protectedProcedure.query(async ({ ctx }): Promise<string[]> => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+
+    const { data } = await sb
+      .from('clinic_lab_tests')
+      .select('category')
+      .not('category', 'is', null);
+
     const categories = new Set<string>();
-    labTestStore.forEach((test) => {
-      if (test.category) {
-        categories.add(test.category);
-      }
+    (data ?? []).forEach((row: Record<string, unknown>) => {
+      if (row.category) categories.add(row.category as string);
     });
     return Array.from(categories).sort();
   }),
 
-  getPatientLabSummary: publicProcedure
+  getPatientLabSummary: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(
       async ({
+        ctx,
         input,
       }): Promise<{
         totalResults: number;
@@ -403,32 +512,29 @@ export const labsRouter = createTRPCRouter({
         lastLabDate?: string;
         pendingDocuments: number;
       }> => {
-        console.log('[Labs] Getting lab summary for patient:', input.patientId);
-        
-        const results = Array.from(labResultStore.values()).filter(
-          (r) => r.patientId === input.patientId
-        );
+        console.log('[Labs] Getting lab summary');
+        const sb = createServerSupabaseClient(ctx.sessionToken);
 
-        const documents = Array.from(labDocumentStore.values()).filter(
-          (d) => d.patientId === input.patientId
-        );
+        const [resultsRes, docsRes] = await Promise.all([
+          sb.from('clinic_lab_results').select('status,result_date').eq('patient_id', input.patientId),
+          sb.from('clinic_lab_documents').select('processing_status').eq('patient_id', input.patientId).eq('processing_status', 'pending'),
+        ]);
 
-        const abnormalStatuses: LabResultStatus[] = ['low', 'high', 'critical_low', 'critical_high'];
-        const criticalStatuses: LabResultStatus[] = ['critical_low', 'critical_high'];
+        const results = resultsRes.data ?? [];
+        const abnormalStatuses = ['low', 'high', 'critical_low', 'critical_high'];
+        const criticalStatuses = ['critical_low', 'critical_high'];
 
-        const sortedResults = [...results].sort(
-          (a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime()
+        const sorted = [...results].sort(
+          (a, b) => new Date(b.result_date as string).getTime() - new Date(a.result_date as string).getTime()
         );
 
         return {
           totalResults: results.length,
-          abnormalResults: results.filter((r) => abnormalStatuses.includes(r.status)).length,
-          criticalResults: results.filter((r) => criticalStatuses.includes(r.status)).length,
-          lastLabDate: sortedResults[0]?.resultDate,
-          pendingDocuments: documents.filter((d) => d.processingStatus === 'pending').length,
+          abnormalResults: results.filter((r) => abnormalStatuses.includes(r.status as string)).length,
+          criticalResults: results.filter((r) => criticalStatuses.includes(r.status as string)).length,
+          lastLabDate: sorted[0]?.result_date as string | undefined,
+          pendingDocuments: (docsRes.data ?? []).length,
         };
       }
     ),
 });
-
-export { labDocumentStore, labTestStore, labResultStore };

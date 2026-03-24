@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { publicProcedure, createTRPCRouter } from "../../create-context";
+import { TRPCError } from "@trpc/server";
+import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   AlertRule,
   AlertEvent,
@@ -10,129 +12,50 @@ import type {
   PaginatedResponse,
 } from "@/types/clinic";
 
-const alertRuleStore: Map<string, AlertRule> = new Map();
-const alertEventStore: Map<string, AlertEvent> = new Map();
-
-function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+function mapDbToAlertRule(row: Record<string, unknown>): AlertRule {
+  return {
+    id: row.id as string,
+    scope: row.scope as AlertRule['scope'],
+    patientId: row.patient_id as string | undefined,
+    name: row.name as string,
+    description: row.description as string | undefined,
+    category: row.category as AlertRule['category'],
+    triggerType: row.trigger_type as AlertRule['triggerType'],
+    condition: (row.condition as AlertRule['condition']) ?? {},
+    severity: row.severity as AlertRule['severity'],
+    notifyChannels: (row.notify_channels as AlertRule['notifyChannels']) ?? ['in_app'],
+    notifyRoles: (row.notify_roles as AlertRule['notifyRoles']) ?? ['clinician'],
+    dedupeWindowMinutes: (row.dedupe_window_minutes as number) ?? 60,
+    quietHoursStart: row.quiet_hours_start as string | undefined,
+    quietHoursEnd: row.quiet_hours_end as string | undefined,
+    isEnabled: row.is_enabled as boolean,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    createdBy: row.created_by as string | undefined,
+  };
 }
 
-initializeDefaultRules();
-
-function initializeDefaultRules() {
-  const defaultRules: Omit<AlertRule, 'id' | 'createdAt' | 'updatedAt'>[] = [
-    {
-      scope: 'global',
-      name: 'New Lab Upload',
-      description: 'Alert when a patient uploads new lab documents',
-      category: 'upload',
-      triggerType: 'event',
-      condition: { event: 'lab_document_uploaded' },
-      severity: 'medium',
-      notifyChannels: ['in_app', 'email'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 60,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'Critical Glucose High',
-      description: 'Alert when glucose exceeds critical threshold (250 mg/dL)',
-      category: 'biometric',
-      triggerType: 'threshold',
-      condition: { metric: 'glucose', operator: '>', value: 250 },
-      severity: 'critical',
-      notifyChannels: ['in_app', 'email', 'sms'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 30,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'Critical Glucose Low',
-      description: 'Alert when glucose drops below critical threshold (54 mg/dL)',
-      category: 'biometric',
-      triggerType: 'threshold',
-      condition: { metric: 'glucose', operator: '<', value: 54 },
-      severity: 'critical',
-      notifyChannels: ['in_app', 'email', 'sms'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 30,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'High Glucose Pattern',
-      description: 'Alert when 3+ readings above 180 mg/dL within 24 hours',
-      category: 'biometric',
-      triggerType: 'pattern',
-      condition: { metric: 'glucose', operator: '>', value: 180, count: 3, windowHours: 24 },
-      severity: 'high',
-      notifyChannels: ['in_app', 'email'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 240,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'Critical Lab Value - A1C',
-      description: 'Alert when A1C exceeds 9%',
-      category: 'lab',
-      triggerType: 'threshold',
-      condition: { labCode: 'HBA1C', operator: '>', value: 9 },
-      severity: 'critical',
-      notifyChannels: ['in_app', 'email'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 1440,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'Critical Lab Value - Creatinine',
-      description: 'Alert when creatinine exceeds 2.0 mg/dL',
-      category: 'lab',
-      triggerType: 'threshold',
-      condition: { labCode: 'CREATININE', operator: '>', value: 2.0 },
-      severity: 'critical',
-      notifyChannels: ['in_app', 'email'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 1440,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'High Blood Pressure',
-      description: 'Alert when systolic BP exceeds 180 mmHg',
-      category: 'biometric',
-      triggerType: 'threshold',
-      condition: { metric: 'bp_systolic', operator: '>', value: 180 },
-      severity: 'high',
-      notifyChannels: ['in_app', 'email'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 60,
-      isEnabled: true,
-    },
-    {
-      scope: 'global',
-      name: 'New Lab Results Added',
-      description: 'Alert when new structured lab results are entered',
-      category: 'lab',
-      triggerType: 'event',
-      condition: { event: 'lab_result_added' },
-      severity: 'low',
-      notifyChannels: ['in_app'],
-      notifyRoles: ['clinician'],
-      dedupeWindowMinutes: 60,
-      isEnabled: true,
-    },
-  ];
-
-  const now = new Date().toISOString();
-  defaultRules.forEach((rule) => {
-    const id = generateId();
-    alertRuleStore.set(id, { id, ...rule, createdAt: now, updatedAt: now });
-  });
-  console.log('[Alerts] Initialized', alertRuleStore.size, 'default alert rules');
+function mapDbToAlertEvent(row: Record<string, unknown>, rule?: AlertRule): AlertEvent {
+  return {
+    id: row.id as string,
+    ruleId: row.rule_id as string | undefined,
+    rule,
+    patientId: row.patient_id as string,
+    triggerType: row.trigger_type as AlertEvent['triggerType'],
+    triggerData: (row.trigger_data as Record<string, unknown>) ?? {},
+    title: row.title as string,
+    message: row.message as string,
+    severity: row.severity as AlertEvent['severity'],
+    status: row.status as AlertEvent['status'],
+    acknowledgedAt: row.acknowledged_at as string | undefined,
+    acknowledgedBy: row.acknowledged_by as string | undefined,
+    acknowledgmentNotes: row.acknowledgment_notes as string | undefined,
+    snoozedUntil: row.snoozed_until as string | undefined,
+    resolvedAt: row.resolved_at as string | undefined,
+    resolvedBy: row.resolved_by as string | undefined,
+    resolutionNotes: row.resolution_notes as string | undefined,
+    createdAt: row.created_at as string,
+  };
 }
 
 const conditionSchema = z.object({
@@ -147,7 +70,7 @@ const conditionSchema = z.object({
 });
 
 export const alertsRouter = createTRPCRouter({
-  listRules: publicProcedure
+  listRules: protectedProcedure
     .input(
       z.object({
         scope: z.enum(['global', 'patient']).optional(),
@@ -156,36 +79,30 @@ export const alertsRouter = createTRPCRouter({
         enabledOnly: z.boolean().default(false),
       })
     )
-    .query(async ({ input }): Promise<AlertRule[]> => {
+    .query(async ({ ctx, input }): Promise<AlertRule[]> => {
       console.log('[Alerts] Listing alert rules');
-      
-      let rules = Array.from(alertRuleStore.values());
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      if (input.scope) {
-        rules = rules.filter((r) => r.scope === input.scope);
-      }
+      let query = sb.from('clinic_alert_rules').select('*');
 
+      if (input.scope) query = query.eq('scope', input.scope);
       if (input.patientId) {
-        rules = rules.filter(
-          (r) => r.scope === 'global' || r.patientId === input.patientId
-        );
+        query = query.or(`scope.eq.global,patient_id.eq.${input.patientId}`);
+      }
+      if (input.category) query = query.eq('category', input.category);
+      if (input.enabledOnly) query = query.eq('is_enabled', true);
+
+      query = query.order('severity');
+
+      const { data, error } = await query;
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list alert rules' });
       }
 
-      if (input.category) {
-        rules = rules.filter((r) => r.category === input.category);
-      }
-
-      if (input.enabledOnly) {
-        rules = rules.filter((r) => r.isEnabled);
-      }
-
-      return rules.sort((a, b) => {
-        const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-        return severityOrder[a.severity] - severityOrder[b.severity];
-      });
+      return (data ?? []).map((r: Record<string, unknown>) => mapDbToAlertRule(r));
     }),
 
-  createRule: publicProcedure
+  createRule: protectedProcedure
     .input(
       z.object({
         scope: z.enum(['global', 'patient']),
@@ -204,28 +121,45 @@ export const alertsRouter = createTRPCRouter({
         createdBy: z.string().optional(),
       })
     )
-    .mutation(async ({ input }): Promise<AlertRule> => {
-      console.log('[Alerts] Creating alert rule:', input.name);
-      
+    .mutation(async ({ ctx, input }): Promise<AlertRule> => {
+      console.log('[Alerts] Creating alert rule');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
       if (input.scope === 'patient' && !input.patientId) {
-        throw new Error('Patient ID required for patient-scoped rules');
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Patient ID required for patient-scoped rules' });
       }
 
-      const now = new Date().toISOString();
-      const rule: AlertRule = {
-        id: generateId(),
-        ...input,
-        isEnabled: true,
-        createdAt: now,
-        updatedAt: now,
-      };
+      const { data, error } = await sb
+        .from('clinic_alert_rules')
+        .insert({
+          clinician_id: ctx.user.id,
+          scope: input.scope,
+          patient_id: input.patientId,
+          name: input.name,
+          description: input.description,
+          category: input.category,
+          trigger_type: input.triggerType,
+          condition: input.condition,
+          severity: input.severity,
+          notify_channels: input.notifyChannels,
+          notify_roles: input.notifyRoles,
+          dedupe_window_minutes: input.dedupeWindowMinutes,
+          quiet_hours_start: input.quietHoursStart,
+          quiet_hours_end: input.quietHoursEnd,
+          created_by: input.createdBy ?? ctx.user.id,
+        })
+        .select()
+        .single();
 
-      alertRuleStore.set(rule.id, rule);
-      console.log('[Alerts] Rule created:', rule.id);
-      return rule;
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create alert rule' });
+      }
+
+      console.log('[Alerts] Rule created');
+      return mapDbToAlertRule(data);
     }),
 
-  updateRule: publicProcedure
+  updateRule: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -241,59 +175,71 @@ export const alertsRouter = createTRPCRouter({
         isEnabled: z.boolean().optional(),
       })
     )
-    .mutation(async ({ input }): Promise<AlertRule> => {
-      console.log('[Alerts] Updating alert rule:', input.id);
-      
-      const existing = alertRuleStore.get(input.id);
-      if (!existing) {
-        throw new Error('Alert rule not found');
+    .mutation(async ({ ctx, input }): Promise<AlertRule> => {
+      console.log('[Alerts] Updating alert rule');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { id, ...rest } = input;
+      const updateData: Record<string, unknown> = {};
+      if (rest.name !== undefined) updateData.name = rest.name;
+      if (rest.description !== undefined) updateData.description = rest.description;
+      if (rest.condition !== undefined) updateData.condition = rest.condition;
+      if (rest.severity !== undefined) updateData.severity = rest.severity;
+      if (rest.notifyChannels !== undefined) updateData.notify_channels = rest.notifyChannels;
+      if (rest.notifyRoles !== undefined) updateData.notify_roles = rest.notifyRoles;
+      if (rest.dedupeWindowMinutes !== undefined) updateData.dedupe_window_minutes = rest.dedupeWindowMinutes;
+      if (rest.quietHoursStart !== undefined) updateData.quiet_hours_start = rest.quietHoursStart;
+      if (rest.quietHoursEnd !== undefined) updateData.quiet_hours_end = rest.quietHoursEnd;
+      if (rest.isEnabled !== undefined) updateData.is_enabled = rest.isEnabled;
+
+      const { data, error } = await sb
+        .from('clinic_alert_rules')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert rule not found' });
       }
 
-      const { id, ...updates } = input;
-      const cleanedUpdates = Object.fromEntries(
-        Object.entries(updates).filter(([_, v]) => v !== undefined)
-      );
-
-      const updated: AlertRule = {
-        ...existing,
-        ...cleanedUpdates,
-        updatedAt: new Date().toISOString(),
-      };
-
-      alertRuleStore.set(id, updated);
-      return updated;
+      return mapDbToAlertRule(data);
     }),
 
-  deleteRule: publicProcedure
+  deleteRule: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }): Promise<{ success: boolean }> => {
-      console.log('[Alerts] Deleting alert rule:', input.id);
-      
-      if (!alertRuleStore.has(input.id)) {
-        throw new Error('Alert rule not found');
-      }
+    .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
+      console.log('[Alerts] Deleting alert rule');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      alertRuleStore.delete(input.id);
+      const { error } = await sb.from('clinic_alert_rules').delete().eq('id', input.id);
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert rule not found' });
+      }
       return { success: true };
     }),
 
-  toggleRule: publicProcedure
+  toggleRule: protectedProcedure
     .input(z.object({ id: z.string(), enabled: z.boolean() }))
-    .mutation(async ({ input }): Promise<AlertRule> => {
-      console.log('[Alerts] Toggling alert rule:', input.id, 'to', input.enabled);
-      
-      const existing = alertRuleStore.get(input.id);
-      if (!existing) {
-        throw new Error('Alert rule not found');
+    .mutation(async ({ ctx, input }): Promise<AlertRule> => {
+      console.log('[Alerts] Toggling alert rule');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_alert_rules')
+        .update({ is_enabled: input.enabled })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert rule not found' });
       }
 
-      existing.isEnabled = input.enabled;
-      existing.updatedAt = new Date().toISOString();
-      alertRuleStore.set(input.id, existing);
-      return existing;
+      return mapDbToAlertRule(data);
     }),
 
-  listEvents: publicProcedure
+  listEvents: protectedProcedure
     .input(
       z.object({
         patientId: z.string().optional(),
@@ -306,85 +252,69 @@ export const alertsRouter = createTRPCRouter({
         limit: z.number().min(1).max(100).default(20),
       })
     )
-    .query(async ({ input }): Promise<PaginatedResponse<AlertEvent>> => {
+    .query(async ({ ctx, input }): Promise<PaginatedResponse<AlertEvent>> => {
       console.log('[Alerts] Listing alert events');
-      
-      let events = Array.from(alertEventStore.values());
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      if (input.patientId) {
-        events = events.filter((e) => e.patientId === input.patientId);
+      let query = sb.from('clinic_alert_events').select('*', { count: 'exact' });
+
+      if (input.patientId) query = query.eq('patient_id', input.patientId);
+      if (input.severity) query = query.eq('severity', input.severity);
+      if (input.status) query = query.eq('status', input.status);
+      if (input.startDate) query = query.gte('created_at', input.startDate);
+      if (input.endDate) query = query.lte('created_at', input.endDate);
+
+      const offset = (input.page - 1) * input.limit;
+      query = query.order('severity').order('created_at', { ascending: false }).range(offset, offset + input.limit - 1);
+
+      const { data, error, count } = await query;
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list alert events' });
       }
 
-      if (input.severity) {
-        events = events.filter((e) => e.severity === input.severity);
+      const ruleIds = [...new Set((data ?? []).filter((e: Record<string, unknown>) => e.rule_id).map((e: Record<string, unknown>) => e.rule_id as string))];
+      const rulesMap = new Map<string, AlertRule>();
+      if (ruleIds.length > 0) {
+        const { data: rules } = await sb.from('clinic_alert_rules').select('*').in('id', ruleIds);
+        (rules ?? []).forEach((r: Record<string, unknown>) => rulesMap.set(r.id as string, mapDbToAlertRule(r)));
       }
 
-      if (input.status) {
-        events = events.filter((e) => e.status === input.status);
-      }
-
-      if (input.category) {
-        events = events.filter((e) => {
-          const rule = e.ruleId ? alertRuleStore.get(e.ruleId) : null;
-          return rule?.category === input.category;
-        });
-      }
-
-      if (input.startDate) {
-        events = events.filter((e) => e.createdAt >= input.startDate!);
-      }
-
-      if (input.endDate) {
-        events = events.filter((e) => e.createdAt <= input.endDate!);
-      }
-
-      events = events.map((e) => ({
-        ...e,
-        rule: e.ruleId ? alertRuleStore.get(e.ruleId) : undefined,
-      }));
-
-      events.sort((a, b) => {
-        const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-        if (severityOrder[a.severity] !== severityOrder[b.severity]) {
-          return severityOrder[a.severity] - severityOrder[b.severity];
-        }
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      });
-
-      const total = events.length;
-      const totalPages = Math.ceil(total / input.limit);
-      const startIndex = (input.page - 1) * input.limit;
-      const paginatedEvents = events.slice(startIndex, startIndex + input.limit);
-
+      const total = count ?? 0;
       return {
-        data: paginatedEvents,
+        data: (data ?? []).map((e: Record<string, unknown>) =>
+          mapDbToAlertEvent(e, e.rule_id ? rulesMap.get(e.rule_id as string) : undefined)
+        ),
         total,
         page: input.page,
         limit: input.limit,
-        totalPages,
+        totalPages: Math.ceil(total / input.limit),
       };
     }),
 
-  getEvent: publicProcedure
+  getEvent: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .query(async ({ input }): Promise<AlertEvent | null> => {
-      console.log('[Alerts] Getting alert event:', input.id);
-      
-      const event = alertEventStore.get(input.id);
-      if (!event) return null;
+    .query(async ({ ctx, input }): Promise<AlertEvent | null> => {
+      console.log('[Alerts] Getting alert event');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      if (event.status === 'new') {
-        event.status = 'viewed';
-        alertEventStore.set(input.id, event);
+      const { data, error } = await sb.from('clinic_alert_events').select('*').eq('id', input.id).single();
+      if (error || !data) return null;
+
+      if ((data.status as string) === 'new') {
+        await sb.from('clinic_alert_events').update({ status: 'viewed' }).eq('id', input.id);
+        data.status = 'viewed';
       }
 
-      return {
-        ...event,
-        rule: event.ruleId ? alertRuleStore.get(event.ruleId) : undefined,
-      };
+      let rule: AlertRule | undefined;
+      if (data.rule_id) {
+        const { data: ruleData } = await sb.from('clinic_alert_rules').select('*').eq('id', data.rule_id).single();
+        if (ruleData) rule = mapDbToAlertRule(ruleData);
+      }
+
+      return mapDbToAlertEvent(data, rule);
     }),
 
-  acknowledgeEvent: publicProcedure
+  acknowledgeEvent: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -392,48 +322,58 @@ export const alertsRouter = createTRPCRouter({
         notes: z.string().optional(),
       })
     )
-    .mutation(async ({ input }): Promise<AlertEvent> => {
-      console.log('[Alerts] Acknowledging alert event:', input.id);
-      
-      const event = alertEventStore.get(input.id);
-      if (!event) {
-        throw new Error('Alert event not found');
+    .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
+      console.log('[Alerts] Acknowledging alert event');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .update({
+          status: 'acknowledged',
+          acknowledged_at: new Date().toISOString(),
+          acknowledged_by: input.acknowledgedBy,
+          acknowledgment_notes: input.notes,
+        })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert event not found' });
       }
 
-      event.status = 'acknowledged';
-      event.acknowledgedAt = new Date().toISOString();
-      event.acknowledgedBy = input.acknowledgedBy;
-      event.acknowledgmentNotes = input.notes;
-
-      alertEventStore.set(input.id, event);
-      return event;
+      return mapDbToAlertEvent(data);
     }),
 
-  snoozeEvent: publicProcedure
+  snoozeEvent: protectedProcedure
     .input(
       z.object({
         id: z.string(),
         snoozeDurationMinutes: z.number().min(15).max(1440),
       })
     )
-    .mutation(async ({ input }): Promise<AlertEvent> => {
-      console.log('[Alerts] Snoozing alert event:', input.id);
-      
-      const event = alertEventStore.get(input.id);
-      if (!event) {
-        throw new Error('Alert event not found');
+    .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
+      console.log('[Alerts] Snoozing alert event');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .update({
+          status: 'snoozed',
+          snoozed_until: new Date(Date.now() + input.snoozeDurationMinutes * 60 * 1000).toISOString(),
+        })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert event not found' });
       }
 
-      event.status = 'snoozed';
-      event.snoozedUntil = new Date(
-        Date.now() + input.snoozeDurationMinutes * 60 * 1000
-      ).toISOString();
-
-      alertEventStore.set(input.id, event);
-      return event;
+      return mapDbToAlertEvent(data);
     }),
 
-  resolveEvent: publicProcedure
+  resolveEvent: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -441,122 +381,121 @@ export const alertsRouter = createTRPCRouter({
         notes: z.string().optional(),
       })
     )
-    .mutation(async ({ input }): Promise<AlertEvent> => {
-      console.log('[Alerts] Resolving alert event:', input.id);
-      
-      const event = alertEventStore.get(input.id);
-      if (!event) {
-        throw new Error('Alert event not found');
+    .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
+      console.log('[Alerts] Resolving alert event');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .update({
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          resolved_by: input.resolvedBy,
+          resolution_notes: input.notes,
+        })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert event not found' });
       }
 
-      event.status = 'resolved';
-      event.resolvedAt = new Date().toISOString();
-      event.resolvedBy = input.resolvedBy;
-      event.resolutionNotes = input.notes;
-
-      alertEventStore.set(input.id, event);
-      return event;
+      return mapDbToAlertEvent(data);
     }),
 
-  dismissEvent: publicProcedure
+  dismissEvent: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }): Promise<AlertEvent> => {
-      console.log('[Alerts] Dismissing alert event:', input.id);
-      
-      const event = alertEventStore.get(input.id);
-      if (!event) {
-        throw new Error('Alert event not found');
+    .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
+      console.log('[Alerts] Dismissing alert event');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .update({ status: 'dismissed' })
+        .eq('id', input.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Alert event not found' });
       }
 
-      event.status = 'dismissed';
-      alertEventStore.set(input.id, event);
-      return event;
+      return mapDbToAlertEvent(data);
     }),
 
-  bulkAcknowledge: publicProcedure
+  bulkAcknowledge: protectedProcedure
     .input(
       z.object({
         ids: z.array(z.string()),
         acknowledgedBy: z.string(),
       })
     )
-    .mutation(async ({ input }): Promise<{ success: boolean; count: number }> => {
-      console.log('[Alerts] Bulk acknowledging', input.ids.length, 'events');
-      
-      let count = 0;
+    .mutation(async ({ ctx, input }): Promise<{ success: boolean; count: number }> => {
+      console.log('[Alerts] Bulk acknowledging events');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
       const now = new Date().toISOString();
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .update({
+          status: 'acknowledged',
+          acknowledged_at: now,
+          acknowledged_by: input.acknowledgedBy,
+        })
+        .in('id', input.ids)
+        .in('status', ['new', 'viewed'])
+        .select('id');
 
-      input.ids.forEach((id) => {
-        const event = alertEventStore.get(id);
-        if (event && (event.status === 'new' || event.status === 'viewed')) {
-          event.status = 'acknowledged';
-          event.acknowledgedAt = now;
-          event.acknowledgedBy = input.acknowledgedBy;
-          alertEventStore.set(id, event);
-          count++;
-        }
-      });
-
-      return { success: true, count };
-    }),
-
-  getSummary: publicProcedure
-    .input(z.object({ patientId: z.string().optional() }))
-    .query(async ({ input }): Promise<AlertSummary> => {
-      console.log('[Alerts] Getting alert summary');
-      
-      let events = Array.from(alertEventStore.values());
-
-      if (input.patientId) {
-        events = events.filter((e) => e.patientId === input.patientId);
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to bulk acknowledge' });
       }
 
-      const bySeverity: Record<AlertSeverity, number> = {
-        critical: 0,
-        high: 0,
-        medium: 0,
-        low: 0,
-        info: 0,
-      };
+      return { success: true, count: (data ?? []).length };
+    }),
 
-      const byStatus: Record<AlertEventStatus, number> = {
-        new: 0,
-        viewed: 0,
-        acknowledged: 0,
-        snoozed: 0,
-        resolved: 0,
-        dismissed: 0,
-      };
+  getSummary: protectedProcedure
+    .input(z.object({ patientId: z.string().optional() }))
+    .query(async ({ ctx, input }): Promise<AlertSummary> => {
+      console.log('[Alerts] Getting alert summary');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      const byCategory: Record<AlertRuleCategory, number> = {
-        lab: 0,
-        biometric: 0,
-        upload: 0,
-        adherence: 0,
-        symptom: 0,
-      };
+      let query = sb.from('clinic_alert_events').select('severity,status,rule_id');
+      if (input.patientId) query = query.eq('patient_id', input.patientId);
 
-      events.forEach((event) => {
-        bySeverity[event.severity]++;
-        byStatus[event.status]++;
-        
-        if (event.ruleId) {
-          const rule = alertRuleStore.get(event.ruleId);
-          if (rule) {
-            byCategory[rule.category]++;
-          }
+      const { data: events } = await query;
+
+      const bySeverity: Record<AlertSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      const byStatus: Record<AlertEventStatus, number> = { new: 0, viewed: 0, acknowledged: 0, snoozed: 0, resolved: 0, dismissed: 0 };
+      const byCategory: Record<AlertRuleCategory, number> = { lab: 0, biometric: 0, upload: 0, adherence: 0, symptom: 0 };
+
+      const ruleIds = [...new Set((events ?? []).filter((e: Record<string, unknown>) => e.rule_id).map((e: Record<string, unknown>) => e.rule_id as string))];
+      const rulesMap = new Map<string, string>();
+      if (ruleIds.length > 0) {
+        const { data: rules } = await sb.from('clinic_alert_rules').select('id,category').in('id', ruleIds);
+        (rules ?? []).forEach((r: Record<string, unknown>) => rulesMap.set(r.id as string, r.category as string));
+      }
+
+      (events ?? []).forEach((event: Record<string, unknown>) => {
+        const sev = event.severity as AlertSeverity;
+        const stat = event.status as AlertEventStatus;
+        if (sev in bySeverity) bySeverity[sev]++;
+        if (stat in byStatus) byStatus[stat]++;
+        if (event.rule_id) {
+          const cat = rulesMap.get(event.rule_id as string) as AlertRuleCategory | undefined;
+          if (cat && cat in byCategory) byCategory[cat]++;
         }
       });
 
       return {
-        total: events.length,
+        total: (events ?? []).length,
         bySeverity,
         byStatus,
         byCategory,
       };
     }),
 
-  triggerAlert: publicProcedure
+  triggerAlert: protectedProcedure
     .input(
       z.object({
         ruleId: z.string().optional(),
@@ -568,48 +507,50 @@ export const alertsRouter = createTRPCRouter({
         severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
       })
     )
-    .mutation(async ({ input }): Promise<AlertEvent> => {
-      console.log('[Alerts] Triggering alert for patient:', input.patientId);
-      
-      if (input.ruleId) {
-        const rule = alertRuleStore.get(input.ruleId);
-        if (rule && rule.dedupeWindowMinutes > 0) {
-          const cutoff = new Date(
-            Date.now() - rule.dedupeWindowMinutes * 60 * 1000
-          ).toISOString();
-          
-          const recentDuplicate = Array.from(alertEventStore.values()).find(
-            (e) =>
-              e.ruleId === input.ruleId &&
-              e.patientId === input.patientId &&
-              e.createdAt >= cutoff
-          );
+    .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
+      console.log('[Alerts] Triggering alert');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
 
-          if (recentDuplicate) {
+      if (input.ruleId) {
+        const { data: rule } = await sb.from('clinic_alert_rules').select('dedupe_window_minutes').eq('id', input.ruleId).single();
+        if (rule && (rule.dedupe_window_minutes as number) > 0) {
+          const cutoff = new Date(Date.now() - (rule.dedupe_window_minutes as number) * 60 * 1000).toISOString();
+          const { data: dup } = await sb
+            .from('clinic_alert_events')
+            .select('*')
+            .eq('rule_id', input.ruleId)
+            .eq('patient_id', input.patientId)
+            .gte('created_at', cutoff)
+            .limit(1)
+            .single();
+
+          if (dup) {
             console.log('[Alerts] Duplicate alert suppressed');
-            return recentDuplicate;
+            return mapDbToAlertEvent(dup);
           }
         }
       }
 
-      const event: AlertEvent = {
-        id: generateId(),
-        ruleId: input.ruleId,
-        patientId: input.patientId,
-        triggerType: input.triggerType,
-        triggerData: input.triggerData,
-        title: input.title,
-        message: input.message,
-        severity: input.severity,
-        status: 'new',
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await sb
+        .from('clinic_alert_events')
+        .insert({
+          clinician_id: ctx.user.id,
+          rule_id: input.ruleId,
+          patient_id: input.patientId,
+          trigger_type: input.triggerType,
+          trigger_data: input.triggerData,
+          title: input.title,
+          message: input.message,
+          severity: input.severity,
+        })
+        .select()
+        .single();
 
-      alertEventStore.set(event.id, event);
-      console.log('[Alerts] Alert triggered:', event.id);
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to trigger alert' });
+      }
 
-      return event;
+      console.log('[Alerts] Alert triggered');
+      return mapDbToAlertEvent(data);
     }),
 });
-
-export { alertRuleStore, alertEventStore };

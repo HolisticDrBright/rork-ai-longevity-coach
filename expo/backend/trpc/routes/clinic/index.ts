@@ -12,9 +12,3 @@ export const clinicRouter = createTRPCRouter({
   alerts: alertsRouter,
   dashboard: dashboardRouter,
 });
-
-export * from "./patients";
-export * from "./labs";
-export * from "./biometrics";
-export * from "./alerts";
-export * from "./dashboard";

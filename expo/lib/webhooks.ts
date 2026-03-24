@@ -20,7 +20,7 @@ async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<b
   }
 
   const url = `${WEBHOOK_BASE_URL}/${endpoint}`;
-  console.log('[Webhooks] Sending webhook to:', url, 'event:', payload.eventType);
+  console.log('[Webhooks] Sending webhook, event:', payload.eventType);
 
   try {
     const response = await fetch(url, {
@@ -208,7 +208,7 @@ export async function testWebhookConnection(): Promise<boolean> {
 
     if (response.ok) {
       const result = await response.json();
-      console.log('[Webhooks] Test successful:', result);
+      console.log('[Webhooks] Test successful');
       return result.success === true;
     }
 

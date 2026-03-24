@@ -67,7 +67,7 @@ export const profileService = {
         .single();
 
       if (error) {
-        console.log('[profileService.get] Error:', error.message);
+        console.log('[profileService.get] Failed to fetch profile');
         return { data: null, error: error.message };
       }
       return { data, error: null };
@@ -88,7 +88,7 @@ export const profileService = {
         .single();
 
       if (error) {
-        console.log('[profileService.upsert] Error:', error.message);
+        console.log('[profileService.upsert] Failed to upsert profile');
         return { data: null, error: error.message };
       }
       console.log('[profileService.upsert] Success');
@@ -857,10 +857,10 @@ export const appSettingsService = {
 
 export const authService = {
   async signUp(email: string, password: string) {
-    console.log('[authService.signUp] Attempting signup for:', email);
+    console.log('[authService.signUp] Attempting signup');
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) {
-      console.log('[authService.signUp] Error:', error.message);
+      console.log('[authService.signUp] Failed');
       return { data: null, error: error.message };
     }
     console.log('[authService.signUp] Success');
@@ -868,10 +868,10 @@ export const authService = {
   },
 
   async signIn(email: string, password: string) {
-    console.log('[authService.signIn] Attempting login for:', email);
+    console.log('[authService.signIn] Attempting login');
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      console.log('[authService.signIn] Error:', error.message);
+      console.log('[authService.signIn] Failed');
       return { data: null, error: error.message };
     }
     console.log('[authService.signIn] Success');
@@ -879,10 +879,10 @@ export const authService = {
   },
 
   async signInWithMagicLink(email: string) {
-    console.log('[authService.signInWithMagicLink] Sending magic link to:', email);
+    console.log('[authService.signInWithMagicLink] Sending magic link');
     const { data, error } = await supabase.auth.signInWithOtp({ email });
     if (error) {
-      console.log('[authService.signInWithMagicLink] Error:', error.message);
+      console.log('[authService.signInWithMagicLink] Failed');
       return { data: null, error: error.message };
     }
     return { data, error: null };
@@ -892,7 +892,7 @@ export const authService = {
     console.log('[authService.signOut] Signing out');
     const { error } = await supabase.auth.signOut();
     if (error) {
-      console.log('[authService.signOut] Error:', error.message);
+      console.log('[authService.signOut] Failed');
       return { error: error.message };
     }
     return { error: null };
