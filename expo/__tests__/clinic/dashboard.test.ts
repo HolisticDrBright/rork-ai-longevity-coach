@@ -1,41 +1,9 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { makePatientRow, makeAlertEventRow, makeLabDocumentRow, makeLabResultRow, makeBiometricReadingRow } from './test-helpers';
-
-const mockFrom = vi.fn();
-
-vi.mock('../../backend/supabase-server', () => ({
-  createServerSupabaseClient: () => ({ from: mockFrom }),
-  createAnonSupabaseClient: () => ({}),
-}));
+import { mockFrom, createChainableMock, mockCtx } from '../setup';
 
 import { dashboardRouter } from '../../backend/trpc/routes/clinic/dashboard';
 import { createTRPCRouter } from '../../backend/trpc/create-context';
-
-function createChainableMock(resolvedValue: { data?: unknown; error?: unknown; count?: number | null }) {
-  const chain: Record<string, unknown> = {};
-  const methods = ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'or', 'not', 'gte', 'lte', 'gt', 'lt', 'order', 'limit', 'range', 'single', 'is', 'ilike', 'upsert'];
-  for (const m of methods) {
-    chain[m] = vi.fn(() => chain);
-  }
-  chain.single = vi.fn(() => Promise.resolve({
-    data: Array.isArray(resolvedValue.data) ? resolvedValue.data[0] : resolvedValue.data,
-    error: resolvedValue.error ?? null,
-  }));
-  chain.then = (_resolve: (v: unknown) => void, _reject?: (e: unknown) => void) => {
-    return Promise.resolve({
-      data: Array.isArray(resolvedValue.data) ? resolvedValue.data : resolvedValue.data ? [resolvedValue.data] : [],
-      error: resolvedValue.error ?? null,
-      count: resolvedValue.count ?? null,
-    }).then(_resolve, _reject);
-  };
-  return chain;
-}
-
-const mockCtx = {
-  user: { id: 'clinician-001', email: 'doc@clinic.test', role: 'authenticated' },
-  sessionToken: 'mock-token',
-  req: new Request('http://localhost'),
-};
 
 function createTestCaller() {
   const router = createTRPCRouter({ dashboard: dashboardRouter });
