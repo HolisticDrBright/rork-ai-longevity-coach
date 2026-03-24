@@ -10,6 +10,8 @@ import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
 import { sendLabsAnalyzed, sendLabUploadStarted } from '@/lib/webhooks';
+import { labPanelService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
@@ -91,6 +93,24 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     mutationFn: async (panels: LabPanel[]) => {
       await secureSetJSON(STORAGE_KEY, panels);
       await writeAuditLog('PHI_UPDATE', 'lab_panels', 'user', `Saved ${panels.length} panels`);
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && panels.length > 0) {
+          console.log('[Labs] Syncing lab panels to Supabase...');
+          const latest = panels[panels.length - 1];
+          await labPanelService.upsert({
+            name: latest.name,
+            date: latest.date,
+            source: latest.source ?? null,
+            biomarkers_json: latest.biomarkers as unknown as Record<string, unknown>[],
+            notes: null,
+          });
+        }
+      } catch (e) {
+        console.log('[Labs] Supabase sync failed (non-blocking):', e);
+      }
+
       return panels;
     },
     onSuccess: (data) => {

@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
+import { hormoneEntryService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
 
 import { HormoneEntry, HormoneSymptom, HormoneGuidance } from '@/types';
 
@@ -71,11 +73,29 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
     mutationFn: async (newEntries: HormoneEntry[]) => {
       await secureSetJSON(STORAGE_KEY, newEntries);
       await writeAuditLog('PHI_UPDATE', 'hormone_entries', 'user');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && newEntries.length > 0) {
+          const latest = newEntries[0];
+          console.log('[HormoneProvider] Syncing hormone entry to Supabase...');
+          await hormoneEntryService.upsert({
+            date: latest.date,
+            cycle_day: latest.cycleDay ?? null,
+            symptoms_json: latest.symptoms as unknown as Record<string, unknown>[],
+            notes: latest.notes ?? null,
+            current_supplements_json: latest.currentSupplements as unknown as Record<string, unknown>[] ?? null,
+          });
+        }
+      } catch (e) {
+        console.log('[HormoneProvider] Supabase sync failed (non-blocking):', e);
+      }
+
       return newEntries;
     },
     onSuccess: (data) => {
       setEntries(data);
-      queryClient.invalidateQueries({ queryKey: ['hormoneEntries'] });
+      void queryClient.invalidateQueries({ queryKey: ['hormoneEntries'] });
     },
   });
 
@@ -124,7 +144,7 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
     const guidance: HormoneGuidance[] = [];
 
     if (categoryScores.high_testosterone_dhea > 0) {
-      const avgScore = categoryScores.high_testosterone_dhea / Math.max(categoryCounts.high_testosterone_dhea, 1);
+      const _avgScore = categoryScores.high_testosterone_dhea / Math.max(categoryCounts.high_testosterone_dhea, 1);
       const maxPossible = categoryCounts.high_testosterone_dhea * 4;
       const normalizedScore = maxPossible > 0 ? (categoryScores.high_testosterone_dhea / maxPossible) * 100 : 0;
       
@@ -269,7 +289,7 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
     return getGuidance(todayEntry);
   }, [todayEntry, getGuidance]);
 
-  return {
+  return useMemo(() => ({
     entries,
     todayEntry,
     recentEntries,
@@ -281,5 +301,10 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
     updateEntry,
     deleteEntry,
     getGuidance,
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [
+    entries, todayEntry, recentEntries, currentGuidance,
+    entriesQuery.isLoading,
+    addEntry, updateEntry, deleteEntry, getGuidance,
+  ]);
 });

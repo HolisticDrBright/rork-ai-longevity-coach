@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
+import { protocolService, adherenceService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
 
 import {
   Protocol,
@@ -11,7 +13,6 @@ import {
   WeeklyCheckIn,
   TodayAction,
   DailySymptoms,
-  ConditionProtocol,
   PeptideData,
   DosingGuidance,
   PeptideEvidence,
@@ -108,26 +109,70 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     if (peptideAckQuery.data !== undefined) setPeptideAcknowledged(peptideAckQuery.data);
   }, [peptideAckQuery.data]);
 
-  const saveProtocolsMutation = useMutation({
+  const _saveProtocolsMutation = useMutation({
     mutationFn: async (data: Protocol[]) => {
       await secureSetJSON(STORAGE_KEYS.PROTOCOLS, data);
       await writeAuditLog('PHI_UPDATE', 'protocols', 'user');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          console.log('[ProtocolProvider] Syncing protocols to Supabase...');
+          for (const protocol of data) {
+            await protocolService.upsert({
+              name: protocol.name,
+              description: protocol.description || null,
+              start_date: protocol.startDate,
+              end_date: protocol.endDate || null,
+              status: protocol.status,
+              version: protocol.version || 1,
+              supplements_json: protocol.supplements as unknown as Record<string, unknown>[],
+              peptides_json: protocol.peptides as unknown as Record<string, unknown>[],
+              fasting_plan_json: protocol.fastingPlan as unknown as Record<string, unknown> | null,
+              lifestyle_tasks_json: protocol.lifestyleTasks as unknown as Record<string, unknown>[],
+            });
+          }
+        }
+      } catch (e) {
+        console.log('[ProtocolProvider] Supabase sync failed (non-blocking):', e);
+      }
+
       return data;
     },
     onSuccess: (data) => {
       setProtocols(data);
-      queryClient.invalidateQueries({ queryKey: ['protocols'] });
+      void queryClient.invalidateQueries({ queryKey: ['protocols'] });
     },
   });
 
   const saveAdherenceMutation = useMutation({
     mutationFn: async (data: DailyAdherence[]) => {
       await secureSetJSON(STORAGE_KEYS.DAILY_ADHERENCE, data);
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && data.length > 0) {
+          const latest = data[data.length - 1];
+          console.log('[ProtocolProvider] Syncing adherence to Supabase...');
+          await adherenceService.upsert({
+            date: latest.date,
+            protocol_id: latest.protocolId,
+            completed_supplements: latest.completedSupplements,
+            completed_peptides: latest.completedPeptides,
+            completed_tasks: latest.completedTasks,
+            fasting_completed: latest.fastingCompleted,
+            symptoms_json: latest.symptoms as unknown as Record<string, unknown>,
+          });
+        }
+      } catch (e) {
+        console.log('[ProtocolProvider] Supabase adherence sync failed (non-blocking):', e);
+      }
+
       return data;
     },
     onSuccess: (data) => {
       setDailyAdherence(data);
-      queryClient.invalidateQueries({ queryKey: ['dailyAdherence'] });
+      void queryClient.invalidateQueries({ queryKey: ['dailyAdherence'] });
     },
   });
 
@@ -138,7 +183,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setWeeklyCheckIns(data);
-      queryClient.invalidateQueries({ queryKey: ['weeklyCheckIns'] });
+      void queryClient.invalidateQueries({ queryKey: ['weeklyCheckIns'] });
     },
   });
 
@@ -150,7 +195,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setUserPeptidePlans(data);
-      queryClient.invalidateQueries({ queryKey: ['userPeptidePlans'] });
+      void queryClient.invalidateQueries({ queryKey: ['userPeptidePlans'] });
     },
   });
 
@@ -161,7 +206,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setPeptideAcknowledged(data);
-      queryClient.invalidateQueries({ queryKey: ['peptideAcknowledgment'] });
+      void queryClient.invalidateQueries({ queryKey: ['peptideAcknowledgment'] });
     },
   });
 
@@ -434,7 +479,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     savePeptideAckMutation.mutate(true);
   }, [savePeptideAckMutation]);
 
-  return {
+  return useMemo(() => ({
     protocols,
     activeProtocol,
     todayActions,
@@ -462,5 +507,14 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     addPeptideToPlan,
     removePeptideFromPlan,
     acknowledgePeptideDisclaimer,
-  };
+  }), [
+    protocols, activeProtocol, todayActions, todayAdherence, dailyAdherence,
+    weeklyCheckIns, adherencePercentage, weeklyAdherenceStats, conditionProtocols,
+    isLoading, toggleActionComplete, updateDailySymptoms, saveWeeklyCheckIn,
+    peptideDatabase, dosingGuidance, peptideEvidence, peptideProtocols,
+    userPeptidePlans, peptideAcknowledged, getPeptideRecommendations,
+    getPeptideById, getDosingForPeptide, getEvidenceForPeptide,
+    getProtocolsForPeptide, addPeptideToPlan, removePeptideFromPlan,
+    acknowledgePeptideDisclaimer,
+  ]);
 });

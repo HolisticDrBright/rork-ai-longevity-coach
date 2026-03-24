@@ -1,9 +1,10 @@
 import createContextHook from '@nkzw/create-context-hook';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { secureGetJSON, secureSetJSON, secureRemoveItem } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
+import { mealLogService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
 
 import {
   DietProfile,
@@ -32,7 +33,7 @@ const defaultDietProfile: DietProfile = {
   updatedAt: new Date().toISOString(),
 };
 
-const defaultTotals: NutritionTotals = {
+const _defaultTotals: NutritionTotals = {
   calories: 0,
   protein_g: 0,
   carbs_g: 0,
@@ -98,7 +99,7 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setDietProfile(data);
-      queryClient.invalidateQueries({ queryKey: ['dietProfile'] });
+      void queryClient.invalidateQueries({ queryKey: ['dietProfile'] });
     },
   });
 
@@ -106,11 +107,36 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
     mutationFn: async (logs: FoodLog[]) => {
       await secureSetJSON(STORAGE_KEYS.FOOD_LOGS, logs);
       await writeAuditLog('PHI_UPDATE', 'food_logs', 'user');
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && logs.length > 0) {
+          const latest = logs[0];
+          console.log('[NutritionProvider] Syncing meal log to Supabase...');
+          await mealLogService.insert({
+            meal_time: latest.createdAt,
+            meal_type: latest.mealType || 'other',
+            calories: latest.totals?.calories ?? null,
+            protein_g: latest.totals?.protein_g ?? null,
+            carbs_g: latest.totals?.carbs_g ?? null,
+            fat_g: latest.totals?.fat_g ?? null,
+            fiber_g: latest.totals?.fiber_g ?? null,
+            glycemic_load_estimate: null,
+            inflammatory_load_estimate: null,
+            food_quality_score: null,
+            tags_json: null,
+            notes: latest.notes ?? null,
+          });
+        }
+      } catch (e) {
+        console.log('[NutritionProvider] Supabase sync failed (non-blocking):', e);
+      }
+
       return logs;
     },
     onSuccess: (data) => {
       setFoodLogs(data);
-      queryClient.invalidateQueries({ queryKey: ['foodLogs'] });
+      void queryClient.invalidateQueries({ queryKey: ['foodLogs'] });
     },
   });
 
@@ -125,7 +151,7 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
     },
     onSuccess: (data) => {
       setPendingAnalysis(data);
-      queryClient.invalidateQueries({ queryKey: ['pendingAnalysis'] });
+      void queryClient.invalidateQueries({ queryKey: ['pendingAnalysis'] });
     },
   });
 
@@ -249,7 +275,7 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
 
   const isLoading = dietProfileQuery.isLoading || foodLogsQuery.isLoading;
 
-  return {
+  return useMemo(() => ({
     dietProfile,
     foodLogs,
     pendingAnalysis,
@@ -264,5 +290,10 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
     getTodayLogs,
     getLogById,
     getRecentLogs,
-  };
+  }), [
+    dietProfile, foodLogs, pendingAnalysis, todaySummary, isLoading,
+    updateDietProfile, toggleDiet, setPendingMealAnalysis,
+    addFoodLog, updateFoodLog, deleteFoodLog, getTodayLogs,
+    getLogById, getRecentLogs,
+  ]);
 });
