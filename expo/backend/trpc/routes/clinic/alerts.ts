@@ -11,52 +11,7 @@ import type {
   AlertRuleCategory,
   PaginatedResponse,
 } from "@/types/clinic";
-
-function mapDbToAlertRule(row: Record<string, unknown>): AlertRule {
-  return {
-    id: row.id as string,
-    scope: row.scope as AlertRule['scope'],
-    patientId: row.patient_id as string | undefined,
-    name: row.name as string,
-    description: row.description as string | undefined,
-    category: row.category as AlertRule['category'],
-    triggerType: row.trigger_type as AlertRule['triggerType'],
-    condition: (row.condition as AlertRule['condition']) ?? {},
-    severity: row.severity as AlertRule['severity'],
-    notifyChannels: (row.notify_channels as AlertRule['notifyChannels']) ?? ['in_app'],
-    notifyRoles: (row.notify_roles as AlertRule['notifyRoles']) ?? ['clinician'],
-    dedupeWindowMinutes: (row.dedupe_window_minutes as number) ?? 60,
-    quietHoursStart: row.quiet_hours_start as string | undefined,
-    quietHoursEnd: row.quiet_hours_end as string | undefined,
-    isEnabled: row.is_enabled as boolean,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-    createdBy: row.created_by as string | undefined,
-  };
-}
-
-function mapDbToAlertEvent(row: Record<string, unknown>, rule?: AlertRule): AlertEvent {
-  return {
-    id: row.id as string,
-    ruleId: row.rule_id as string | undefined,
-    rule,
-    patientId: row.patient_id as string,
-    triggerType: row.trigger_type as AlertEvent['triggerType'],
-    triggerData: (row.trigger_data as Record<string, unknown>) ?? {},
-    title: row.title as string,
-    message: row.message as string,
-    severity: row.severity as AlertEvent['severity'],
-    status: row.status as AlertEvent['status'],
-    acknowledgedAt: row.acknowledged_at as string | undefined,
-    acknowledgedBy: row.acknowledged_by as string | undefined,
-    acknowledgmentNotes: row.acknowledgment_notes as string | undefined,
-    snoozedUntil: row.snoozed_until as string | undefined,
-    resolvedAt: row.resolved_at as string | undefined,
-    resolvedBy: row.resolved_by as string | undefined,
-    resolutionNotes: row.resolution_notes as string | undefined,
-    createdAt: row.created_at as string,
-  };
-}
+import { mapDbToAlertRule, mapDbToAlertEvent } from "./utils";
 
 const conditionSchema = z.object({
   event: z.string().optional(),

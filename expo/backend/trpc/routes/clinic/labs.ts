@@ -6,82 +6,9 @@ import type {
   LabDocument,
   LabTest,
   LabResult,
-  LabResultStatus,
   PaginatedResponse,
 } from "@/types/clinic";
-
-function calculateLabStatus(
-  value: number,
-  refLow?: number,
-  refHigh?: number,
-  critLow?: number,
-  critHigh?: number
-): LabResultStatus {
-  if (critLow !== undefined && value < critLow) return 'critical_low';
-  if (critHigh !== undefined && value > critHigh) return 'critical_high';
-  if (refLow !== undefined && value < refLow) return 'low';
-  if (refHigh !== undefined && value > refHigh) return 'high';
-  return 'normal';
-}
-
-function mapDbToLabDocument(row: Record<string, unknown>): LabDocument {
-  return {
-    id: row.id as string,
-    patientId: row.patient_id as string,
-    fileName: row.file_name as string,
-    fileType: row.file_type as LabDocument['fileType'],
-    fileSizeBytes: row.file_size_bytes as number,
-    storagePath: row.storage_path as string,
-    thumbnailPath: row.thumbnail_path as string | undefined,
-    labDate: row.lab_date as string | undefined,
-    labCompany: row.lab_company as string | undefined,
-    orderingProvider: row.ordering_provider as string | undefined,
-    panelName: row.panel_name as string | undefined,
-    processingStatus: row.processing_status as LabDocument['processingStatus'],
-    parsedAt: row.parsed_at as string | undefined,
-    uploadedBy: row.uploaded_by as string,
-    uploadedAt: row.uploaded_at as string,
-    createdAt: row.created_at as string,
-  };
-}
-
-function mapDbToLabTest(row: Record<string, unknown>): LabTest {
-  return {
-    id: row.id as string,
-    code: row.code as string,
-    name: row.name as string,
-    category: row.category as string | undefined,
-    unit: row.unit as string,
-    refRangeLow: row.ref_range_low as number | undefined,
-    refRangeHigh: row.ref_range_high as number | undefined,
-    functionalRangeLow: row.functional_range_low as number | undefined,
-    functionalRangeHigh: row.functional_range_high as number | undefined,
-    criticalLow: row.critical_low as number | undefined,
-    criticalHigh: row.critical_high as number | undefined,
-    description: row.description as string | undefined,
-    isActive: row.is_active as boolean,
-  };
-}
-
-function mapDbToLabResult(row: Record<string, unknown>, labTest?: LabTest): LabResult {
-  return {
-    id: row.id as string,
-    patientId: row.patient_id as string,
-    labDocumentId: row.lab_document_id as string | undefined,
-    labTestId: row.lab_test_id as string,
-    labTest,
-    value: row.value as number,
-    valueText: row.value_text as string | undefined,
-    unit: row.unit as string,
-    refRangeLow: row.ref_range_low as number | undefined,
-    refRangeHigh: row.ref_range_high as number | undefined,
-    status: row.status as LabResultStatus,
-    resultDate: row.result_date as string,
-    enteredBy: row.entered_by as string,
-    entryMethod: row.entry_method as LabResult['entryMethod'],
-    createdAt: row.created_at as string,
-  };
-}
+import { calculateLabStatus, mapDbToLabDocument, mapDbToLabTest, mapDbToLabResult } from "./utils";
 
 export const labsRouter = createTRPCRouter({
   listDocuments: protectedProcedure

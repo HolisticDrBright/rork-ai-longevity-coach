@@ -5,75 +5,12 @@ import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   BiometricType,
   BiometricReading,
-  BiometricStatus,
   BiometricSummary,
   GlucoseStats,
   PaginatedResponse,
   PatientThresholds,
 } from "@/types/clinic";
-
-function calculateBiometricStatus(
-  value: number,
-  type: BiometricType
-): BiometricStatus {
-  if (type.criticalLow !== undefined && value < type.criticalLow) return 'critical_low';
-  if (type.criticalHigh !== undefined && value > type.criticalHigh) return 'critical_high';
-  if (type.warningLow !== undefined && value < type.warningLow) return 'warning_low';
-  if (type.warningHigh !== undefined && value > type.warningHigh) return 'warning_high';
-  return 'normal';
-}
-
-function mapDbToBiometricType(row: Record<string, unknown>): BiometricType {
-  return {
-    id: row.id as string,
-    code: row.code as string,
-    name: row.name as string,
-    unit: row.unit as string,
-    category: row.category as BiometricType['category'],
-    normalLow: row.normal_low as number | undefined,
-    normalHigh: row.normal_high as number | undefined,
-    warningLow: row.warning_low as number | undefined,
-    warningHigh: row.warning_high as number | undefined,
-    criticalLow: row.critical_low as number | undefined,
-    criticalHigh: row.critical_high as number | undefined,
-    isActive: row.is_active as boolean,
-  };
-}
-
-function mapDbToReading(row: Record<string, unknown>, bioType?: BiometricType): BiometricReading {
-  return {
-    id: row.id as string,
-    patientId: row.patient_id as string,
-    biometricTypeId: row.biometric_type_id as string,
-    biometricType: bioType,
-    value: row.value as number,
-    unit: row.unit as string,
-    readingTime: row.reading_time as string,
-    context: row.context as BiometricReading['context'],
-    notes: row.notes as string | undefined,
-    source: row.source as BiometricReading['source'],
-    deviceName: row.device_name as string | undefined,
-    status: row.status as BiometricStatus,
-    createdAt: row.created_at as string,
-  };
-}
-
-function mapDbToThresholds(row: Record<string, unknown>): PatientThresholds {
-  return {
-    id: row.id as string,
-    patientId: row.patient_id as string,
-    glucoseHigh: row.glucose_high as number,
-    glucoseLow: row.glucose_low as number,
-    glucoseCriticalHigh: row.glucose_critical_high as number,
-    glucoseCriticalLow: row.glucose_critical_low as number,
-    bpSystolicHigh: row.bp_systolic_high as number,
-    bpSystolicLow: row.bp_systolic_low as number,
-    bpDiastolicHigh: row.bp_diastolic_high as number,
-    bpDiastolicLow: row.bp_diastolic_low as number,
-    updatedAt: row.updated_at as string,
-    updatedBy: row.updated_by as string | undefined,
-  };
-}
+import { calculateBiometricStatus, mapDbToBiometricType, mapDbToReading, mapDbToThresholds } from "./utils";
 
 export const biometricsRouter = createTRPCRouter({
   listTypes: protectedProcedure

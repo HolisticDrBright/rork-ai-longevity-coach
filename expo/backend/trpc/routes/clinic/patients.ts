@@ -9,6 +9,7 @@ import type {
   PatientTimeline,
   TimelineEvent,
 } from "@/types/clinic";
+import { mapDbToPatient, mapDbToHealthHistory } from "./utils";
 
 const medicationSchema = z.object({
   name: z.string(),
@@ -24,57 +25,6 @@ const allergySchema = z.object({
   reaction: z.string(),
   severity: z.enum(['mild', 'moderate', 'severe', 'life_threatening']),
 });
-
-function mapDbToPatient(row: Record<string, unknown>): Patient {
-  return {
-    id: row.id as string,
-    firstName: row.first_name as string,
-    lastName: row.last_name as string,
-    dateOfBirth: row.date_of_birth as string,
-    sex: row.sex as Patient['sex'],
-    email: row.email as string | undefined,
-    phone: row.phone as string | undefined,
-    addressLine1: row.address_line1 as string | undefined,
-    addressLine2: row.address_line2 as string | undefined,
-    city: row.city as string | undefined,
-    state: row.state as string | undefined,
-    zipCode: row.zip_code as string | undefined,
-    country: row.country as string,
-    emergencyContactName: row.emergency_contact_name as string | undefined,
-    emergencyContactPhone: row.emergency_contact_phone as string | undefined,
-    emergencyContactRelationship: row.emergency_contact_relationship as string | undefined,
-    status: row.status as Patient['status'],
-    tags: (row.tags as string[]) ?? [],
-    assignedClinicianId: row.assigned_clinician_id as string | undefined,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-    createdBy: row.created_by as string | undefined,
-  };
-}
-
-function mapDbToHealthHistory(row: Record<string, unknown>): PatientHealthHistory {
-  return {
-    id: row.id as string,
-    patientId: row.patient_id as string,
-    conditions: (row.conditions as string[]) ?? [],
-    pastConditions: (row.past_conditions as string[]) ?? [],
-    familyHistory: (row.family_history as string[]) ?? [],
-    currentMedications: (row.current_medications as PatientHealthHistory['currentMedications']) ?? [],
-    pastMedications: (row.past_medications as PatientHealthHistory['pastMedications']) ?? [],
-    allergies: (row.allergies as PatientHealthHistory['allergies']) ?? [],
-    smokingStatus: row.smoking_status as string | undefined,
-    alcoholUse: row.alcohol_use as string | undefined,
-    exerciseFrequency: row.exercise_frequency as string | undefined,
-    dietType: row.diet_type as string | undefined,
-    sleepHoursAvg: row.sleep_hours_avg as number | undefined,
-    stressLevel: row.stress_level as number | undefined,
-    pregnant: (row.pregnant as boolean) ?? false,
-    nursing: (row.nursing as boolean) ?? false,
-    menstrualStatus: row.menstrual_status as string | undefined,
-    updatedAt: row.updated_at as string,
-    updatedBy: row.updated_by as string | undefined,
-  };
-}
 
 export const patientsRouter = createTRPCRouter({
   list: protectedProcedure
