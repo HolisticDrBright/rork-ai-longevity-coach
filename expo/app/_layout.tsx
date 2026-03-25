@@ -4,6 +4,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { initSentry, Sentry } from '@/lib/sentry';
+
+initSentry();
 
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { HIPAAProvider, useHIPAA } from '@/providers/HIPAAProvider';
@@ -78,7 +81,7 @@ function ConsentGate({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function RootLayout() {
+function RootLayoutInner() {
   useEffect(() => {
     void SplashScreen.hideAsync();
   }, []);
@@ -118,3 +121,5 @@ export default function RootLayout() {
     </trpc.Provider>
   );
 }
+
+export default Sentry.wrap(RootLayoutInner);

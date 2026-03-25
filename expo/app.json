@@ -36,7 +36,14 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "YOUR_SENTRY_ORG",
+          "project": "ai-longevity-pro"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

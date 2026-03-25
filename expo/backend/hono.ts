@@ -5,11 +5,13 @@ import { secureHeaders } from "hono/secure-headers";
 
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
+import { sentryMiddleware } from "./sentry-middleware";
 
 const app = new Hono();
 
 app.use("*", cors());
 app.use("*", secureHeaders());
+app.use("*", sentryMiddleware());
 
 app.use("*", async (c, next) => {
   await next();
@@ -21,7 +23,9 @@ app.use("*", async (c, next) => {
 });
 
 app.onError((err, c) => {
-  console.log("[API] Error occurred:", err.message?.substring(0, 100));
+  const { captureError } = require('../lib/sentry');
+  captureError(err, { source: 'hono_onError', path: c.req.path, method: c.req.method });
+  console.log("[API] Error occurred at", new Date().toISOString());
   return c.json({ error: "Internal server error" }, 500);
 });
 

@@ -8,7 +8,8 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "APP_VARIANT": "development"
+        "APP_VARIANT": "development",
+        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
       },
       "ios": {
         "simulator": false
@@ -18,13 +19,15 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "APP_VARIANT": "preview"
+        "APP_VARIANT": "preview",
+        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
       },
       "channel": "preview"
     },
     "production": {
       "env": {
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
       },
       "channel": "production",
       "autoIncrement": true,
