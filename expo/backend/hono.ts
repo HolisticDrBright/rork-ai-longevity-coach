@@ -42,4 +42,15 @@ app.get("/", (c) => {
   return c.json({ status: "ok" });
 });
 
+app.get("/health", (c) => {
+  const uptime = process.uptime();
+  return c.json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(uptime),
+    version: process.env.APP_VERSION || "1.0.0",
+    environment: process.env.NODE_ENV || "production",
+  });
+});
+
 export default app;

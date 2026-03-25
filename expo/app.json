@@ -15,14 +15,20 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.ai-longevity-pro"
+      "bundleIdentifier": "app.rork.ai-longevity-pro",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "AI Longevity Pro reads your health data to provide personalized longevity insights and recommendations.",
+        "NSHealthUpdateUsageDescription": "AI Longevity Pro writes workout and nutrition summaries back to Apple Health."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.ai_longevity_pro"
+      "package": "app.rork.ai_longevity_pro",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/images/favicon.png"

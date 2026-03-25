@@ -304,6 +304,14 @@ export default function ProfileScreen() {
               <Text style={styles.menuText}>Help & Support</Text>
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/privacy-policy' as any)}>
+              <View style={[styles.menuIcon, { backgroundColor: `${Colors.primary}15` }]}>
+                <Shield color={Colors.primary} size={18} />
+              </View>
+              <Text style={styles.menuText}>Privacy Policy</Text>
+              <ChevronRight color={Colors.textTertiary} size={20} />
+            </TouchableOpacity>
           </View>
         </View>
 

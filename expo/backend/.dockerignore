@@ -1,0 +1,9 @@
+node_modules
+.expo
+.git
+*.md
+__tests__
+*.test.ts
+*.test.tsx
+.env.local
+.env.development
