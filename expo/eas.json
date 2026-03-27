@@ -10,7 +10,7 @@
       "env": {
         "APP_VARIANT": "development",
         "EXPO_PUBLIC_SENTRY_DSN": "https://c8eb4baa37746384ed9a41ea0df7b58c@o4511102408458240.ingest.us.sentry.io/4511102475632640",
-        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
+        "SENTRY_AUTH_TOKEN": "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"
       },
       "ios": {
         "simulator": false
@@ -22,7 +22,7 @@
       "env": {
         "APP_VARIANT": "preview",
         "EXPO_PUBLIC_SENTRY_DSN": "https://c8eb4baa37746384ed9a41ea0df7b58c@o4511102408458240.ingest.us.sentry.io/4511102475632640",
-        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
+        "SENTRY_AUTH_TOKEN": "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"
       },
       "channel": "preview"
     },
@@ -30,7 +30,7 @@
       "env": {
         "APP_VARIANT": "production",
         "EXPO_PUBLIC_SENTRY_DSN": "https://c8eb4baa37746384ed9a41ea0df7b58c@o4511102408458240.ingest.us.sentry.io/4511102475632640",
-        "SENTRY_AUTH_TOKEN": "SENTRY_AUTH_TOKEN_HERE"
+        "SENTRY_AUTH_TOKEN": "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"
       },
       "channel": "production",
       "autoIncrement": true,
