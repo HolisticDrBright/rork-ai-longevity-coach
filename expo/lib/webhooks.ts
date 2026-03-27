@@ -1,4 +1,4 @@
-const WEBHOOK_BASE_URL = 'https://137.184.84.143:3001/api/webhooks';
+const WEBHOOK_BASE_URL = process.env.EXPO_PUBLIC_WEBHOOK_BASE_URL || 'https://webhooks.ailongevitypro.com/api/webhooks';
 
 const getWebhookSecret = (): string => {
   return process.env.EXPO_PUBLIC_WEBHOOK_SECRET || '';

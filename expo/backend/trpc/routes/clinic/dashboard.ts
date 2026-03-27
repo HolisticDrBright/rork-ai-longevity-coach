@@ -8,6 +8,7 @@ import type {
   AlertEvent,
   TimelineEvent,
 } from "@/types/clinic";
+import { sanitizeSearchInput } from "../../sanitize";
 
 interface RecentActivity {
   id: string;
@@ -239,7 +240,8 @@ export const dashboardRouter = createTRPCRouter({
 
       let query = sb.from('clinic_patients').select('*');
       if (input.search) {
-        query = query.or(`first_name.ilike.%${input.search}%,last_name.ilike.%${input.search}%,email.ilike.%${input.search}%`);
+        const search = sanitizeSearchInput(input.search);
+        query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
       }
       if (input.status) query = query.eq('status', input.status);
       query = query.order('updated_at', { ascending: false }).limit(input.limit);

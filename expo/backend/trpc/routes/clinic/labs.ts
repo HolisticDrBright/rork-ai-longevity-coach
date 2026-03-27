@@ -9,6 +9,7 @@ import type {
   PaginatedResponse,
 } from "@/types/clinic";
 import { calculateLabStatus, mapDbToLabDocument, mapDbToLabTest, mapDbToLabResult } from "./utils";
+import { sanitizeSearchInput } from "../../sanitize";
 
 export const labsRouter = createTRPCRouter({
   listDocuments: protectedProcedure
@@ -165,8 +166,9 @@ export const labsRouter = createTRPCRouter({
       }
 
       if (input.search) {
+        const search = sanitizeSearchInput(input.search);
         query = query.or(
-          `name.ilike.%${input.search}%,code.ilike.%${input.search}%`
+          `name.ilike.%${search}%,code.ilike.%${search}%`
         );
       }
 

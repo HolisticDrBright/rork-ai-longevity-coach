@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
+import { sanitizeSearchInput } from "../../sanitize";
 import type {
   Patient,
   PatientHealthHistory,
@@ -46,8 +47,9 @@ export const patientsRouter = createTRPCRouter({
       let query = sb.from('clinic_patients').select('*', { count: 'exact' });
 
       if (input.search) {
+        const search = sanitizeSearchInput(input.search);
         query = query.or(
-          `first_name.ilike.%${input.search}%,last_name.ilike.%${input.search}%,email.ilike.%${input.search}%`
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`
         );
       }
 

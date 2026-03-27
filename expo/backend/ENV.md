@@ -19,6 +19,10 @@ All environment variables required by the Hono/tRPC backend server.
 | `SENTRY_AUTH_TOKEN` | Sentry auth token used at **build time** to upload source maps via `@sentry/react-native/expo` plugin. Not needed at runtime. |
 | `APP_VERSION` | Semantic version string returned by `GET /health`. Defaults to `1.0.0`. |
 | `EXPO_PUBLIC_WEBHOOK_SECRET` | Shared HMAC secret for verifying inbound webhook payloads. Only needed if the webhook routes in `lib/webhooks.ts` are active. |
+| `EXPO_PUBLIC_WEBHOOK_BASE_URL` | Base URL for outbound webhooks. Defaults to `https://webhooks.ailongevitypro.com/api/webhooks`. |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (e.g. `https://app.ailongevitypro.com,https://staging.ailongevitypro.com`). If not set, defaults to wildcard `*` (suitable for development only). |
+| `PASSIO_API_KEY` | API key for the Passio nutrition/food recognition API. Required for the nutrition router. |
+| `PASSIO_BASE_URL` | Base URL for Passio API. Defaults to `https://api.passiolife.com/v2`. |
 
 ## Fly.io Secrets
 
@@ -29,7 +33,10 @@ fly secrets set \
   EXPO_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co" \
   EXPO_PUBLIC_SUPABASE_ANON_KEY="eyJ..." \
   EXPO_PUBLIC_SENTRY_DSN="https://xxx@sentry.io/xxx" \
-  EXPO_PUBLIC_WEBHOOK_SECRET="your-webhook-secret"
+  EXPO_PUBLIC_WEBHOOK_SECRET="your-webhook-secret" \
+  EXPO_PUBLIC_WEBHOOK_BASE_URL="https://your-webhook-host/api/webhooks" \
+  CORS_ALLOWED_ORIGINS="https://app.ailongevitypro.com" \
+  PASSIO_API_KEY="your-passio-key"
 ```
 
 `PORT` and `NODE_ENV` are set in `fly.toml` under `[env]` and do not need to be secrets.
