@@ -70,7 +70,7 @@
       [
         "@sentry/react-native/expo",
         {
-          "organization": "o4511102408458240",
+          "organization": "the-holistic-approach",
           "project": "ai-longevity-pro"
         }
       ]
