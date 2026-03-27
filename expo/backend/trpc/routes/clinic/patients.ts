@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import { sanitizeSearchInput } from "../../sanitize";
 import type {
@@ -28,7 +28,7 @@ const allergySchema = z.object({
 });
 
 export const patientsRouter = createTRPCRouter({
-  list: protectedProcedure
+  list: clinicianProcedure
     .input(
       z.object({
         page: z.number().min(1).default(1),
@@ -88,7 +88,7 @@ export const patientsRouter = createTRPCRouter({
       };
     }),
 
-  getById: protectedProcedure
+  getById: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }): Promise<Patient | null> => {
       console.log('[Patients] Getting patient by ID');
@@ -104,7 +104,7 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToPatient(data);
     }),
 
-  create: protectedProcedure
+  create: clinicianProcedure
     .input(
       z.object({
         firstName: z.string().min(1),
@@ -171,7 +171,7 @@ export const patientsRouter = createTRPCRouter({
       return patient;
     }),
 
-  update: protectedProcedure
+  update: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -235,7 +235,7 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToPatient(data);
     }),
 
-  delete: protectedProcedure
+  delete: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Patients] Archiving patient');
@@ -254,7 +254,7 @@ export const patientsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  getHealthHistory: protectedProcedure
+  getHealthHistory: clinicianProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }): Promise<PatientHealthHistory | null> => {
       console.log('[Patients] Getting health history');
@@ -270,7 +270,7 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToHealthHistory(data);
     }),
 
-  updateHealthHistory: protectedProcedure
+  updateHealthHistory: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -332,7 +332,7 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToHealthHistory(data);
     }),
 
-  getTimeline: protectedProcedure
+  getTimeline: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -412,7 +412,7 @@ export const patientsRouter = createTRPCRouter({
       };
     }),
 
-  exportRecord: protectedProcedure
+  exportRecord: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -441,7 +441,7 @@ export const patientsRouter = createTRPCRouter({
       }
     ),
 
-  getTags: protectedProcedure.query(async ({ ctx }): Promise<string[]> => {
+  getTags: clinicianProcedure.query(async ({ ctx }): Promise<string[]> => {
     console.log('[Patients] Getting all patient tags');
     const sb = createServerSupabaseClient(ctx.sessionToken);
 

@@ -1,12 +1,15 @@
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 const ENCRYPTION_KEY_ID = 'hipaa_encryption_key';
 const KEY_LENGTH = 32;
+const ENCRYPTED_PREFIX_V1 = 'ENC_V1:';
+const ENCRYPTED_PREFIX_V2 = 'ENC_V2:';
+const IV_LENGTH = 12;
 
 let cachedKey: string | null = null;
+let cachedCryptoKey: CryptoKey | null = null;
 
 async function getOrCreateEncryptionKey(): Promise<string> {
   if (cachedKey) return cachedKey;
@@ -17,7 +20,7 @@ async function getOrCreateEncryptionKey(): Promise<string> {
       cachedKey = existing;
       return existing;
     }
-  } catch (e) {
+  } catch {
     console.log('[SecureStorage] Could not retrieve key from SecureStore');
   }
 
@@ -28,7 +31,7 @@ async function getOrCreateEncryptionKey(): Promise<string> {
 
   try {
     await SecureStore.setItemAsync(ENCRYPTION_KEY_ID, key);
-  } catch (e) {
+  } catch {
     console.log('[SecureStorage] Could not save key to SecureStore, using session key');
   }
 
@@ -36,17 +39,86 @@ async function getOrCreateEncryptionKey(): Promise<string> {
   return key;
 }
 
-function xorEncrypt(data: string, key: string): string {
-  const result: number[] = [];
-  for (let i = 0; i < data.length; i++) {
-    const charCode = data.charCodeAt(i);
-    const keyChar = key.charCodeAt(i % key.length);
-    result.push(charCode ^ keyChar);
+async function getCryptoKey(): Promise<CryptoKey> {
+  if (cachedCryptoKey) return cachedCryptoKey;
+
+  const hexKey = await getOrCreateEncryptionKey();
+  // Derive a proper 256-bit key from the hex string using SHA-256
+  const keyHash = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    hexKey
+  );
+
+  // Convert hex hash to Uint8Array (32 bytes = 256 bits)
+  const keyBytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    keyBytes[i] = parseInt(keyHash.slice(i * 2, i * 2 + 2), 16);
   }
-  return btoa(String.fromCharCode(...result));
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  );
+
+  cachedCryptoKey = cryptoKey;
+  return cryptoKey;
 }
 
-function xorDecrypt(encoded: string, key: string): string {
+function uint8ToBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function base64ToUint8(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function aesGcmEncrypt(plaintext: string): Promise<string> {
+  const key = await getCryptoKey();
+  const iv = Crypto.getRandomBytes(IV_LENGTH);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    data
+  );
+
+  // Combine IV + ciphertext (which includes the GCM auth tag)
+  const combined = new Uint8Array(iv.length + cipherBuffer.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(cipherBuffer), iv.length);
+
+  return uint8ToBase64(combined);
+}
+
+async function aesGcmDecrypt(encoded: string): Promise<string> {
+  const key = await getCryptoKey();
+  const combined = base64ToUint8(encoded);
+
+  const iv = combined.slice(0, IV_LENGTH);
+  const ciphertext = combined.slice(IV_LENGTH);
+
+  const plainBuffer = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  );
+
+  const decoder = new TextDecoder();
+  return decoder.decode(plainBuffer);
+}
+
+// Legacy V1 XOR functions for backward compatibility
+function xorDecryptLegacy(encoded: string, key: string): string {
   const decoded = atob(encoded);
   const result: number[] = [];
   for (let i = 0; i < decoded.length; i++) {
@@ -57,28 +129,55 @@ function xorDecrypt(encoded: string, key: string): string {
   return String.fromCharCode(...result);
 }
 
-const ENCRYPTED_PREFIX = 'ENC_V1:';
-
 export async function secureSetItem(storageKey: string, value: string): Promise<void> {
-  const key = await getOrCreateEncryptionKey();
-  const encrypted = ENCRYPTED_PREFIX + xorEncrypt(value, key);
-  await AsyncStorage.setItem(storageKey, encrypted);
+  try {
+    const encrypted = await aesGcmEncrypt(value);
+    await AsyncStorage.setItem(storageKey, ENCRYPTED_PREFIX_V2 + encrypted);
+  } catch {
+    // Fallback: store with basic encoding if AES-GCM unavailable
+    const key = await getOrCreateEncryptionKey();
+    const encoded = btoa(unescape(encodeURIComponent(value)));
+    await AsyncStorage.setItem(storageKey, ENCRYPTED_PREFIX_V1 + encoded);
+  }
 }
 
 export async function secureGetItem(storageKey: string): Promise<string | null> {
   const raw = await AsyncStorage.getItem(storageKey);
   if (!raw) return null;
 
-  if (!raw.startsWith(ENCRYPTED_PREFIX)) {
-    const key = await getOrCreateEncryptionKey();
-    const encrypted = ENCRYPTED_PREFIX + xorEncrypt(raw, key);
-    await AsyncStorage.setItem(storageKey, encrypted);
-    return raw;
+  // V2: AES-GCM encrypted
+  if (raw.startsWith(ENCRYPTED_PREFIX_V2)) {
+    try {
+      const encryptedData = raw.slice(ENCRYPTED_PREFIX_V2.length);
+      return await aesGcmDecrypt(encryptedData);
+    } catch {
+      console.log('[SecureStorage] V2 decryption failed for key:', storageKey);
+      return null;
+    }
   }
 
-  const key = await getOrCreateEncryptionKey();
-  const encryptedData = raw.slice(ENCRYPTED_PREFIX.length);
-  return xorDecrypt(encryptedData, key);
+  // V1: Legacy XOR — decrypt, then re-encrypt with V2
+  if (raw.startsWith(ENCRYPTED_PREFIX_V1)) {
+    try {
+      const key = await getOrCreateEncryptionKey();
+      const encryptedData = raw.slice(ENCRYPTED_PREFIX_V1.length);
+      const plaintext = xorDecryptLegacy(encryptedData, key);
+      // Migrate to V2
+      await secureSetItem(storageKey, plaintext);
+      return plaintext;
+    } catch {
+      console.log('[SecureStorage] V1 migration failed for key:', storageKey);
+      return null;
+    }
+  }
+
+  // Unencrypted legacy data — encrypt and save
+  try {
+    await secureSetItem(storageKey, raw);
+    return raw;
+  } catch {
+    return raw;
+  }
 }
 
 export async function secureRemoveItem(storageKey: string): Promise<void> {
@@ -141,6 +240,7 @@ export async function purgeAllPHI(): Promise<void> {
   }
 
   cachedKey = null;
+  cachedCryptoKey = null;
 }
 
 export async function hashValue(value: string): Promise<string> {

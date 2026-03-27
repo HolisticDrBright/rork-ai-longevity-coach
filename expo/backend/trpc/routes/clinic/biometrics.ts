@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   BiometricType,
@@ -13,7 +13,7 @@ import type {
 import { calculateBiometricStatus, mapDbToBiometricType, mapDbToReading, mapDbToThresholds } from "./utils";
 
 export const biometricsRouter = createTRPCRouter({
-  listTypes: protectedProcedure
+  listTypes: clinicianProcedure
     .input(
       z.object({
         category: z.string().optional(),
@@ -36,7 +36,7 @@ export const biometricsRouter = createTRPCRouter({
       return (data ?? []).map(mapDbToBiometricType);
     }),
 
-  getTypeByCode: protectedProcedure
+  getTypeByCode: clinicianProcedure
     .input(z.object({ code: z.string() }))
     .query(async ({ ctx, input }): Promise<BiometricType | null> => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
@@ -45,7 +45,7 @@ export const biometricsRouter = createTRPCRouter({
       return mapDbToBiometricType(data);
     }),
 
-  listReadings: protectedProcedure
+  listReadings: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -101,7 +101,7 @@ export const biometricsRouter = createTRPCRouter({
       };
     }),
 
-  addReading: protectedProcedure
+  addReading: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -162,7 +162,7 @@ export const biometricsRouter = createTRPCRouter({
       return mapDbToReading(data, biometricType);
     }),
 
-  deleteReading: protectedProcedure
+  deleteReading: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Biometrics] Deleting reading');
@@ -175,7 +175,7 @@ export const biometricsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  getSummary: protectedProcedure
+  getSummary: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -253,7 +253,7 @@ export const biometricsRouter = createTRPCRouter({
       return summaries;
     }),
 
-  getGlucoseStats: protectedProcedure
+  getGlucoseStats: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -313,7 +313,7 @@ export const biometricsRouter = createTRPCRouter({
       };
     }),
 
-  getPatientThresholds: protectedProcedure
+  getPatientThresholds: clinicianProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }): Promise<PatientThresholds> => {
       console.log('[Biometrics] Getting thresholds');
@@ -338,7 +338,7 @@ export const biometricsRouter = createTRPCRouter({
       };
     }),
 
-  updatePatientThresholds: protectedProcedure
+  updatePatientThresholds: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -384,7 +384,7 @@ export const biometricsRouter = createTRPCRouter({
       return mapDbToThresholds(data);
     }),
 
-  getCategories: protectedProcedure.query(async ({ ctx }): Promise<string[]> => {
+  getCategories: clinicianProcedure.query(async ({ ctx }): Promise<string[]> => {
     const sb = createServerSupabaseClient(ctx.sessionToken);
     const { data } = await sb.from('clinic_biometric_types').select('category').not('category', 'is', null);
     const categories = new Set<string>();

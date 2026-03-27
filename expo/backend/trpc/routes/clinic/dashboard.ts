@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   DashboardStats,
@@ -60,7 +60,7 @@ interface PatientWithAlerts {
 }
 
 export const dashboardRouter = createTRPCRouter({
-  getStats: protectedProcedure
+  getStats: clinicianProcedure
     .input(z.object({ clinicianId: z.string().optional() }))
     .query(async ({ ctx, input: _input }): Promise<DashboardStats> => {
       console.log('[Dashboard] Getting stats');
@@ -94,7 +94,7 @@ export const dashboardRouter = createTRPCRouter({
       };
     }),
 
-  getRecentActivity: protectedProcedure
+  getRecentActivity: clinicianProcedure
     .input(
       z.object({
         clinicianId: z.string().optional(),
@@ -160,7 +160,7 @@ export const dashboardRouter = createTRPCRouter({
       return activities.slice(0, input.limit);
     }),
 
-  getPendingReviews: protectedProcedure
+  getPendingReviews: clinicianProcedure
     .input(
       z.object({
         clinicianId: z.string().optional(),
@@ -223,7 +223,7 @@ export const dashboardRouter = createTRPCRouter({
       return reviews.slice(0, input.limit);
     }),
 
-  getPatientList: protectedProcedure
+  getPatientList: clinicianProcedure
     .input(
       z.object({
         clinicianId: z.string().optional(),
@@ -332,7 +332,7 @@ export const dashboardRouter = createTRPCRouter({
       return result;
     }),
 
-  getPatientOverview: protectedProcedure
+  getPatientOverview: clinicianProcedure
     .input(z.object({ patientId: z.string() }))
     .query(
       async ({
@@ -434,7 +434,7 @@ export const dashboardRouter = createTRPCRouter({
       }
     ),
 
-  getAlertInbox: protectedProcedure
+  getAlertInbox: clinicianProcedure
     .input(
       z.object({
         clinicianId: z.string().optional(),

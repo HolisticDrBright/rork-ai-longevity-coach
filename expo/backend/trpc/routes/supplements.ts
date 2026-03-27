@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "../create-context";
+import { createTRPCRouter, protectedProcedure } from "../create-context";
 
 const SupplementFormSchema = z.enum([
   'capsule', 'softgel', 'liquid', 'powder', 'transdermal', 'liposomal', 'chewable', 'sublingual'
@@ -96,7 +96,7 @@ const ClickEventSchema = z.object({
 });
 
 export const supplementsRouter = createTRPCRouter({
-  getProducts: publicProcedure
+  getProducts: protectedProcedure
     .input(z.object({
       category: SupplementCategorySchema.optional(),
       activeOnly: z.boolean().optional().default(true),
@@ -110,7 +110,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  getProduct: publicProcedure
+  getProduct: protectedProcedure
     .input(z.object({ productId: z.string() }))
     .query(async ({ input }) => {
       console.log('[Supplements API] Getting product:', input.productId);
@@ -121,7 +121,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  createProduct: publicProcedure
+  createProduct: protectedProcedure
     .input(ProductInputSchema)
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Creating product:', input.name);
@@ -133,7 +133,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  updateProduct: publicProcedure
+  updateProduct: protectedProcedure
     .input(z.object({
       productId: z.string(),
       updates: ProductInputSchema.partial(),
@@ -147,7 +147,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  deleteProduct: publicProcedure
+  deleteProduct: protectedProcedure
     .input(z.object({ productId: z.string() }))
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Deleting product:', input.productId);
@@ -158,7 +158,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  getRecommendations: publicProcedure
+  getRecommendations: protectedProcedure
     .input(PatientNeedsSchema)
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Generating recommendations for:', input);
@@ -173,7 +173,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  trackClick: publicProcedure
+  trackClick: protectedProcedure
     .input(ClickEventSchema)
     .mutation(async ({ input }) => {
       const eventId = `click_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -191,7 +191,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  getClickStats: publicProcedure
+  getClickStats: protectedProcedure
     .input(z.object({
       productId: z.string().optional(),
       patientId: z.string().optional(),
@@ -207,7 +207,7 @@ export const supplementsRouter = createTRPCRouter({
       };
     }),
 
-  validateAffiliateUrl: publicProcedure
+  validateAffiliateUrl: protectedProcedure
     .input(z.object({
       url: z.string().url(),
       channel: AffiliateChannelSchema,

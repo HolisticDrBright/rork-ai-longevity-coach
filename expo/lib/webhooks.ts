@@ -12,6 +12,30 @@ interface WebhookPayload {
   [key: string]: unknown;
 }
 
+/**
+ * Compute HMAC-SHA256 signature for webhook payload verification.
+ * The receiver should recompute this from the body and compare.
+ */
+async function computeHmacSignature(body: string, secret: string): Promise<string> {
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
+    return Array.from(new Uint8Array(signature))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch {
+    // Fallback if SubtleCrypto unavailable
+    return '';
+  }
+}
+
 async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<boolean> {
   const secret = getWebhookSecret();
   if (!secret) {
@@ -23,13 +47,18 @@ async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<b
   console.log('[Webhooks] Sending webhook, event:', payload.eventType);
 
   try {
+    const body = JSON.stringify(payload);
+    const signature = await computeHmacSignature(body, secret);
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Webhook-Secret': secret,
+        'X-Webhook-Signature': signature,
+        'X-Webhook-Timestamp': payload.timestamp,
       },
-      body: JSON.stringify(payload),
+      body,
     });
 
     if (response.ok) {

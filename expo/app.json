@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "rork-app",
+    "scheme": "ailongevitypro",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -15,11 +15,18 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.ai-longevity-pro",
+      "bundleIdentifier": "com.ailongevitypro.app",
       "buildNumber": "1",
       "infoPlist": {
         "NSHealthShareUsageDescription": "AI Longevity Pro reads your health data to provide personalized longevity insights and recommendations.",
-        "NSHealthUpdateUsageDescription": "AI Longevity Pro writes workout and nutrition summaries back to Apple Health."
+        "NSHealthUpdateUsageDescription": "AI Longevity Pro writes workout and nutrition summaries back to Apple Health.",
+        "NSCameraUsageDescription": "AI Longevity Pro uses the camera to scan food for nutrition analysis.",
+        "NSPhotoLibraryUsageDescription": "AI Longevity Pro accesses your photos to analyze food images for nutrition tracking.",
+        "NSFaceIDUsageDescription": "AI Longevity Pro uses Face ID for secure app access and HIPAA-compliant session management.",
+        "NSLocalNetworkUsageDescription": "AI Longevity Pro uses the local network during development."
+      },
+      "config": {
+        "usesNonExemptEncryption": true
       }
     },
     "android": {
@@ -27,8 +34,13 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.ai_longevity_pro",
-      "versionCode": 1
+      "package": "com.ailongevitypro.app",
+      "versionCode": 1,
+      "permissions": [
+        "CAMERA",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -37,12 +49,24 @@
       [
         "expo-router",
         {
-          "origin": "https://rork.com/"
+          "origin": "https://ailongevitypro.com/"
         }
       ],
       "expo-font",
       "expo-web-browser",
       "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow AI Longevity Pro to use Face ID for secure access."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow AI Longevity Pro to use the camera for food scanning."
+        }
+      ],
       [
         "@sentry/react-native/expo",
         {
@@ -51,6 +75,17 @@
         }
       ]
     ],
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EAS_PROJECT_ID"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/YOUR_EAS_PROJECT_ID"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "experiments": {
       "typedRoutes": true
     }

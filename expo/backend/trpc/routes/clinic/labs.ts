@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   LabDocument,
@@ -12,7 +12,7 @@ import { calculateLabStatus, mapDbToLabDocument, mapDbToLabTest, mapDbToLabResul
 import { sanitizeSearchInput } from "../../sanitize";
 
 export const labsRouter = createTRPCRouter({
-  listDocuments: protectedProcedure
+  listDocuments: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -53,7 +53,7 @@ export const labsRouter = createTRPCRouter({
       };
     }),
 
-  uploadDocument: protectedProcedure
+  uploadDocument: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -98,7 +98,7 @@ export const labsRouter = createTRPCRouter({
       return mapDbToLabDocument(data);
     }),
 
-  getDocumentDownloadUrl: protectedProcedure
+  getDocumentDownloadUrl: clinicianProcedure
     .input(z.object({ documentId: z.string() }))
     .query(async ({ ctx, input }): Promise<{ url: string; expiresAt: string }> => {
       console.log('[Labs] Getting download URL for document');
@@ -120,7 +120,7 @@ export const labsRouter = createTRPCRouter({
       };
     }),
 
-  deleteDocument: protectedProcedure
+  deleteDocument: clinicianProcedure
     .input(z.object({ documentId: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Labs] Deleting document');
@@ -143,7 +143,7 @@ export const labsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  listTests: protectedProcedure
+  listTests: clinicianProcedure
     .input(
       z.object({
         category: z.string().optional(),
@@ -183,7 +183,7 @@ export const labsRouter = createTRPCRouter({
       return (data ?? []).map(mapDbToLabTest);
     }),
 
-  getTestByCode: protectedProcedure
+  getTestByCode: clinicianProcedure
     .input(z.object({ code: z.string() }))
     .query(async ({ ctx, input }): Promise<LabTest | null> => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
@@ -198,7 +198,7 @@ export const labsRouter = createTRPCRouter({
       return mapDbToLabTest(data);
     }),
 
-  listResults: protectedProcedure
+  listResults: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -270,7 +270,7 @@ export const labsRouter = createTRPCRouter({
       };
     }),
 
-  addResult: protectedProcedure
+  addResult: clinicianProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -334,7 +334,7 @@ export const labsRouter = createTRPCRouter({
       return mapDbToLabResult(data, mapDbToLabTest(labTest));
     }),
 
-  updateResult: protectedProcedure
+  updateResult: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -395,7 +395,7 @@ export const labsRouter = createTRPCRouter({
       return mapDbToLabResult(data, labTest ? mapDbToLabTest(labTest) : undefined);
     }),
 
-  deleteResult: protectedProcedure
+  deleteResult: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Labs] Deleting result');
@@ -413,7 +413,7 @@ export const labsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  getTestCategories: protectedProcedure.query(async ({ ctx }): Promise<string[]> => {
+  getTestCategories: clinicianProcedure.query(async ({ ctx }): Promise<string[]> => {
     const sb = createServerSupabaseClient(ctx.sessionToken);
 
     const { data } = await sb
@@ -428,7 +428,7 @@ export const labsRouter = createTRPCRouter({
     return Array.from(categories).sort();
   }),
 
-  getPatientLabSummary: protectedProcedure
+  getPatientLabSummary: clinicianProcedure
     .input(z.object({ patientId: z.string() }))
     .query(
       async ({

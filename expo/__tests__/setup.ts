@@ -60,6 +60,7 @@ export const MOCK_USER = {
   id: 'clinician-001',
   email: 'doc@clinic.test',
   role: 'authenticated',
+  appRoles: ['authenticated', 'practitioner'] as string[],
 } as const;
 
 export const mockCtx = {

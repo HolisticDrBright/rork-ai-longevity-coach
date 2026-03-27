@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, createTRPCRouter } from "../../create-context";
+import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   AlertRule,
@@ -25,7 +25,7 @@ const conditionSchema = z.object({
 });
 
 export const alertsRouter = createTRPCRouter({
-  listRules: protectedProcedure
+  listRules: clinicianProcedure
     .input(
       z.object({
         scope: z.enum(['global', 'patient']).optional(),
@@ -57,7 +57,7 @@ export const alertsRouter = createTRPCRouter({
       return (data ?? []).map((r: Record<string, unknown>) => mapDbToAlertRule(r));
     }),
 
-  createRule: protectedProcedure
+  createRule: clinicianProcedure
     .input(
       z.object({
         scope: z.enum(['global', 'patient']),
@@ -114,7 +114,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertRule(data);
     }),
 
-  updateRule: protectedProcedure
+  updateRule: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -161,7 +161,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertRule(data);
     }),
 
-  deleteRule: protectedProcedure
+  deleteRule: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Alerts] Deleting alert rule');
@@ -174,7 +174,7 @@ export const alertsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  toggleRule: protectedProcedure
+  toggleRule: clinicianProcedure
     .input(z.object({ id: z.string(), enabled: z.boolean() }))
     .mutation(async ({ ctx, input }): Promise<AlertRule> => {
       console.log('[Alerts] Toggling alert rule');
@@ -194,7 +194,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertRule(data);
     }),
 
-  listEvents: protectedProcedure
+  listEvents: clinicianProcedure
     .input(
       z.object({
         patientId: z.string().optional(),
@@ -246,7 +246,7 @@ export const alertsRouter = createTRPCRouter({
       };
     }),
 
-  getEvent: protectedProcedure
+  getEvent: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }): Promise<AlertEvent | null> => {
       console.log('[Alerts] Getting alert event');
@@ -269,7 +269,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertEvent(data, rule);
     }),
 
-  acknowledgeEvent: protectedProcedure
+  acknowledgeEvent: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -300,7 +300,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertEvent(data);
     }),
 
-  snoozeEvent: protectedProcedure
+  snoozeEvent: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -328,7 +328,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertEvent(data);
     }),
 
-  resolveEvent: protectedProcedure
+  resolveEvent: clinicianProcedure
     .input(
       z.object({
         id: z.string(),
@@ -359,7 +359,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertEvent(data);
     }),
 
-  dismissEvent: protectedProcedure
+  dismissEvent: clinicianProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<AlertEvent> => {
       console.log('[Alerts] Dismissing alert event');
@@ -379,7 +379,7 @@ export const alertsRouter = createTRPCRouter({
       return mapDbToAlertEvent(data);
     }),
 
-  bulkAcknowledge: protectedProcedure
+  bulkAcknowledge: clinicianProcedure
     .input(
       z.object({
         ids: z.array(z.string()),
@@ -409,7 +409,7 @@ export const alertsRouter = createTRPCRouter({
       return { success: true, count: (data ?? []).length };
     }),
 
-  getSummary: protectedProcedure
+  getSummary: clinicianProcedure
     .input(z.object({ patientId: z.string().optional() }))
     .query(async ({ ctx, input }): Promise<AlertSummary> => {
       console.log('[Alerts] Getting alert summary');
@@ -450,7 +450,7 @@ export const alertsRouter = createTRPCRouter({
       };
     }),
 
-  triggerAlert: protectedProcedure
+  triggerAlert: clinicianProcedure
     .input(
       z.object({
         ruleId: z.string().optional(),
