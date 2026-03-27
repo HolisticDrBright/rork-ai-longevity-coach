@@ -32,7 +32,7 @@ After creating the Fly app, set secrets with:
 fly secrets set \
   EXPO_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co" \
   EXPO_PUBLIC_SUPABASE_ANON_KEY="eyJ..." \
-  EXPO_PUBLIC_SENTRY_DSN="https://xxx@sentry.io/xxx" \
+  EXPO_PUBLIC_SENTRY_DSN="https://c8eb4baa37746384ed9a41ea0df7b58c@o4511102408458240.ingest.us.sentry.io/4511102475632640" \
   EXPO_PUBLIC_WEBHOOK_SECRET="your-webhook-secret" \
   EXPO_PUBLIC_WEBHOOK_BASE_URL="https://your-webhook-host/api/webhooks" \
   CORS_ALLOWED_ORIGINS="https://app.ailongevitypro.com" \
