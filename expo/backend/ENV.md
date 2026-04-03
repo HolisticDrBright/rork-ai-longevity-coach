@@ -30,8 +30,8 @@ After creating the Fly app, set secrets with:
 
 ```bash
 fly secrets set \
-  EXPO_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co" \
-  EXPO_PUBLIC_SUPABASE_ANON_KEY="eyJ..." \
+  EXPO_PUBLIC_SUPABASE_URL="https://utuszztwwadvoxxuyshn.supabase.co" \
+  EXPO_PUBLIC_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0dXN6enR3d2Fkdm94eHV5c2huIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxNDM5MDYsImV4cCI6MjA4NzcxOTkwNn0.q0KdU5N7gdAepQ7TU6vvNKv38rkaue61MgeJ2Py_4lc" \
   EXPO_PUBLIC_SENTRY_DSN="https://c8eb4baa37746384ed9a41ea0df7b58c@o4511102408458240.ingest.us.sentry.io/4511102475632640" \
   EXPO_PUBLIC_WEBHOOK_SECRET="your-webhook-secret" \
   EXPO_PUBLIC_WEBHOOK_BASE_URL="https://your-webhook-host/api/webhooks" \

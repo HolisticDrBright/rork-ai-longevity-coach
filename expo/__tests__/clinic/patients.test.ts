@@ -210,13 +210,24 @@ describe('patientsRouter handlers', () => {
   });
 
   describe('exportRecord', () => {
-    test('returns placeholder export URL', async () => {
+    test('returns exported patient data as JSON', async () => {
+      const patient = makePatientRow();
+      const healthHistory = makeHealthHistoryRow();
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'clinic_patients') return createChainableMock({ data: patient });
+        if (table === 'clinic_health_histories') return createChainableMock({ data: healthHistory });
+        if (table === 'clinic_lab_results') return createChainableMock({ data: [] });
+        if (table === 'clinic_biometric_readings') return createChainableMock({ data: [] });
+        return createChainableMock({ data: [] });
+      });
+
       const result = await caller.exportRecord({
         patientId: 'patient-001',
         format: 'json',
-      }) as { downloadUrl: string; expiresAt: string };
-      expect(result.downloadUrl).toContain('exports');
-      expect(result.expiresAt).toBeDefined();
+      }) as { data: Record<string, unknown>; exportedAt: string; format: string };
+      expect(result.data).toBeDefined();
+      expect(result.exportedAt).toBeDefined();
+      expect(result.format).toBe('json');
     });
   });
 

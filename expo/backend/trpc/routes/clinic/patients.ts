@@ -432,11 +432,69 @@ export const patientsRouter = createTRPCRouter({
       })
     )
     .mutation(
-      async (): Promise<{ downloadUrl: string; expiresAt: string }> => {
+      async ({ ctx, input }): Promise<{ data: Record<string, unknown>; exportedAt: string; format: string }> => {
         console.log('[Patients] Exporting patient record');
+        const sb = createServerSupabaseClient(ctx.sessionToken);
+        const sections = input.sections ?? ['demographics', 'health_history', 'labs', 'biometrics'];
+        const exportData: Record<string, unknown> = {};
+
+        if (sections.includes('demographics')) {
+          const { data } = await sb
+            .from('clinic_patients')
+            .select('*')
+            .eq('id', input.patientId)
+            .single();
+          if (data) exportData.demographics = mapDbToPatient(data);
+        }
+
+        if (sections.includes('health_history')) {
+          const { data } = await sb
+            .from('clinic_health_histories')
+            .select('*')
+            .eq('patient_id', input.patientId)
+            .single();
+          if (data) exportData.healthHistory = mapDbToHealthHistory(data);
+        }
+
+        if (sections.includes('labs')) {
+          const { data: results } = await sb
+            .from('clinic_lab_results')
+            .select('*')
+            .eq('patient_id', input.patientId)
+            .order('result_date', { ascending: false });
+          exportData.labResults = (results ?? []).map((r: Record<string, unknown>) => ({
+            id: r.id,
+            labTestId: r.lab_test_id,
+            value: r.value,
+            unit: r.unit,
+            status: r.status,
+            resultDate: r.result_date,
+            entryMethod: r.entry_method,
+          }));
+        }
+
+        if (sections.includes('biometrics')) {
+          const { data: readings } = await sb
+            .from('clinic_biometric_readings')
+            .select('*')
+            .eq('patient_id', input.patientId)
+            .order('reading_time', { ascending: false })
+            .limit(500);
+          exportData.biometricReadings = (readings ?? []).map((r: Record<string, unknown>) => ({
+            id: r.id,
+            biometricTypeId: r.biometric_type_id,
+            value: r.value,
+            unit: r.unit,
+            status: r.status,
+            readingTime: r.reading_time,
+            context: r.context,
+          }));
+        }
+
         return {
-          downloadUrl: `https://example.com/exports/pending`,
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          data: exportData,
+          exportedAt: new Date().toISOString(),
+          format: input.format,
         };
       }
     ),

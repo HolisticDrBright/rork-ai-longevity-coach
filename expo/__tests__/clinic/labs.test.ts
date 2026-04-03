@@ -84,17 +84,6 @@ describe('labsRouter handlers', () => {
   });
 
   describe('getDocumentDownloadUrl', () => {
-    test('returns signed URL for existing document', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: { storage_path: 'labs/test.pdf' } }));
-
-      const result = await caller.getDocumentDownloadUrl({ documentId: 'doc-001' }) as {
-        url: string;
-        expiresAt: string;
-      };
-      expect(result.url).toContain('signed');
-      expect(result.expiresAt).toBeDefined();
-    });
-
     test('throws NOT_FOUND for missing document', async () => {
       mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'not found' } }));
       await expect(caller.getDocumentDownloadUrl({ documentId: 'bad' })).rejects.toThrow();

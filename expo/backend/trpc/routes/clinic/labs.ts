@@ -114,8 +114,21 @@ export const labsRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
       }
 
+      // Generate a signed URL from Supabase Storage
+      const { data: signedUrlData, error: signedError } = await sb
+        .storage
+        .from('clinic-lab-documents')
+        .createSignedUrl(data.storage_path as string, 900); // 15 minutes
+
+      if (signedError || !signedUrlData?.signedUrl) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to generate download URL',
+        });
+      }
+
       return {
-        url: `https://example.com/signed/${data.storage_path}?token=xxx`,
+        url: signedUrlData.signedUrl,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       };
     }),
