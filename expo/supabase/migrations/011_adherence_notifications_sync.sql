@@ -3,26 +3,26 @@
 -- ============================================================
 
 -- Supplement adherence tracking
-CREATE TABLE IF NOT EXISTS public.supplement_logs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  supplement_name text NOT NULL,
-  dosage text,
-  scheduled_time text, -- 'morning', 'afternoon', 'evening', 'bedtime'
-  taken_at timestamptz,
-  skipped boolean DEFAULT false,
-  notes text,
-  date date NOT NULL DEFAULT CURRENT_DATE,
-  created_at timestamptz DEFAULT now()
-);
+-- supplement_logs table already exists from 001_initial_schema.sql
+-- Add new columns for adherence tracking (IF NOT EXISTS for idempotency)
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS dosage text;
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS scheduled_time text;
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS taken_at timestamptz;
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS skipped boolean DEFAULT false;
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS notes text;
+ALTER TABLE public.supplement_logs ADD COLUMN IF NOT EXISTS date date DEFAULT CURRENT_DATE;
 
-ALTER TABLE public.supplement_logs ENABLE ROW LEVEL SECURITY;
+-- RLS already enabled from 002_rls_policies.sql, add adherence-specific policy
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'supplement_logs' AND policyname = 'Users manage own supplement logs'
+  ) THEN
+    CREATE POLICY "Users manage own supplement logs" ON public.supplement_logs
+      FOR ALL USING (user_id = auth.uid());
+  END IF;
+END $$;
 
-CREATE POLICY "Users manage own supplement logs"
-  ON public.supplement_logs FOR ALL
-  USING (user_id = auth.uid());
-
-CREATE INDEX idx_supplement_logs_user_date ON public.supplement_logs(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_supplement_logs_user_date ON public.supplement_logs(user_id, date);
 
 -- Supplement schedules (what user should take daily)
 CREATE TABLE IF NOT EXISTS public.supplement_schedules (
