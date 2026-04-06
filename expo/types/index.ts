@@ -614,3 +614,28 @@ export interface ClinicalAnalysis {
   disclaimer: string;
   createdAt: string;
 }
+
+// Longevity Score Types
+
+export interface LongevityScore {
+  id: string;
+  userId: string;
+  score: number;
+  biologicalAge: number;
+  chronologicalAge: number;
+  componentScores: {
+    labs: number;
+    biometrics: number;
+    lifestyle: number;
+    adherence: number;
+  };
+  labCount: number;
+  biometricCount: number;
+  calculatedAt: string;
+}
+
+export interface LongevityScoreWithTrend extends LongevityScore {
+  previousScore?: number;
+  trend: 'improving' | 'stable' | 'declining';
+  trendPercent: number;
+}
