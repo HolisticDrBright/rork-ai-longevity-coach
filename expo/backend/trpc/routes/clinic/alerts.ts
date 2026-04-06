@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { clinicianProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
+import { assertValidUUID } from "../../ownership";
 import type {
   AlertRule,
   AlertEvent,
@@ -42,6 +43,7 @@ export const alertsRouter = createTRPCRouter({
 
       if (input.scope) query = query.eq('scope', input.scope);
       if (input.patientId) {
+        assertValidUUID(input.patientId, 'patientId');
         query = query.or(`scope.eq.global,patient_id.eq.${input.patientId}`);
       }
       if (input.category) query = query.eq('category', input.category);

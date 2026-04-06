@@ -535,13 +535,38 @@ const accountRouter = createTRPCRouter({
       return exportData;
     }),
 
-  /** Request account deletion */
+  /**
+   * Request account deletion (GDPR/CCPA compliant).
+   * Creates a pending request with a 30-day grace period.
+   * Actual deletion is performed by a scheduled job after the grace period.
+   * Users can cancel the request within 30 days.
+   */
   requestDeletion: protectedProcedure
     .mutation(async ({ ctx }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const userId = ctx.user.id;
 
-      // Create deletion request
+      // Check for existing pending deletion request
+      const { data: existing } = await sb
+        .from('data_export_requests')
+        .select('id, created_at')
+        .eq('user_id', userId)
+        .eq('request_type', 'delete')
+        .eq('status', 'pending')
+        .single();
+
+      if (existing) {
+        const scheduledDate = new Date(existing.created_at as string);
+        scheduledDate.setDate(scheduledDate.getDate() + 30);
+        return {
+          requestId: existing.id as string,
+          status: 'already_pending',
+          scheduledDeletionDate: scheduledDate.toISOString(),
+          message: 'A deletion request is already pending. Your data will be permanently deleted after the 30-day grace period.',
+        };
+      }
+
+      // Create new deletion request (30-day grace period)
       const { data, error } = await sb
         .from('data_export_requests')
         .insert({
@@ -556,43 +581,33 @@ const accountRouter = createTRPCRouter({
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create deletion request' });
       }
 
-      // Delete user data from all tables (cascade handles FK relationships)
-      // Profile deletion cascades to most tables via auth.users FK
-      const tables = [
-        'supplement_logs',
-        'supplement_schedules',
-        'notification_preferences',
-        'wearable_sync_log',
-        'daily_health_scores',
-        'longevity_scores',
-        'detected_clinical_patterns',
-        'doctor_reports',
-        'data_export_requests',
-      ];
-
-      for (const table of tables) {
-        await sb.from(table).delete().eq('user_id', userId);
-      }
-
-      // Delete clinic data where user is the patient
-      const clinicTables = [
-        'clinic_biometric_readings',
-        'clinic_lab_results',
-        'clinic_lab_documents',
-        'clinic_patient_thresholds',
-        'clinic_alert_events',
-        'clinic_health_histories',
-      ];
-
-      for (const table of clinicTables) {
-        await sb.from(table).delete().eq('patient_id', userId);
-      }
+      const scheduledDate = new Date();
+      scheduledDate.setDate(scheduledDate.getDate() + 30);
 
       return {
         requestId: data.id,
-        status: 'completed',
-        message: 'All user data has been deleted. Your account will be deactivated.',
+        status: 'pending',
+        scheduledDeletionDate: scheduledDate.toISOString(),
+        message: 'Your account deletion request has been received. Your data will be permanently deleted after a 30-day grace period. You can cancel this request at any time within those 30 days.',
       };
+    }),
+
+  /** Cancel a pending deletion request */
+  cancelDeletion: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const { error } = await sb
+        .from('data_export_requests')
+        .delete()
+        .eq('user_id', ctx.user.id)
+        .eq('request_type', 'delete')
+        .eq('status', 'pending');
+
+      if (error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to cancel deletion request' });
+      }
+
+      return { success: true, message: 'Deletion request cancelled. Your data will be preserved.' };
     }),
 
   /** Get deletion/export request status */

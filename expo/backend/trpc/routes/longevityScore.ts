@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, createTRPCRouter } from "../create-context";
 import { createServerSupabaseClient } from "../../supabase-server";
+import { assertOwnership } from "../ownership";
 
 /**
  * Score a single lab value 0-100 based on reference ranges.
@@ -84,6 +85,7 @@ export const longevityScoreRouter = createTRPCRouter({
   calculate: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const now = new Date();
       const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -284,6 +286,7 @@ export const longevityScoreRouter = createTRPCRouter({
   getCurrent: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
       const { data: rows, error } = await sb
@@ -358,6 +361,7 @@ export const longevityScoreRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const since = new Date(
         Date.now() - input.days * 24 * 60 * 60 * 1000

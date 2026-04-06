@@ -104,6 +104,10 @@ async function aesGcmDecrypt(encoded: string): Promise<string> {
   const key = await getCryptoKey();
   const combined = base64ToUint8(encoded);
 
+  if (combined.length <= IV_LENGTH) {
+    throw new Error('Encrypted data is too short or corrupted');
+  }
+
   const iv = combined.slice(0, IV_LENGTH);
   const ciphertext = combined.slice(IV_LENGTH);
 

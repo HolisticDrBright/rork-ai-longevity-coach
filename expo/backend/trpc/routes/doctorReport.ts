@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, createTRPCRouter } from "../create-context";
 import { createServerSupabaseClient } from "../../supabase-server";
+import { assertOwnership } from "../ownership";
 
 const REPORT_TYPE = z.enum(["comprehensive", "alert_specific", "lab_summary", "custom"]);
 
@@ -71,6 +72,7 @@ export const doctorReportRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const sections = getSectionsForType(input.reportType, input.sections);
 
@@ -423,6 +425,7 @@ export const doctorReportRouter = createTRPCRouter({
   list: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
       const { data, error } = await sb

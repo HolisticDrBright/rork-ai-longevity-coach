@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "../create-context";
 import { createServerSupabaseClient } from "../../supabase-server";
+import { assertOwnership } from "../ownership";
 
 const AlertStatusSchema = z.enum([
   "new",
@@ -280,6 +281,7 @@ export const clinicalPatternsRouter = createTRPCRouter({
   runDetection: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
       // 1. Fetch all active pattern rules
@@ -465,6 +467,7 @@ export const clinicalPatternsRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
       let query = sb

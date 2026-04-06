@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, createTRPCRouter } from "../create-context";
 import { createServerSupabaseClient } from "../../supabase-server";
+import { assertOwnership } from "../ownership";
 
 /**
  * Daily Health Score Router
@@ -49,6 +50,7 @@ export const healthScoreRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       console.log('[HealthScore] Calculating daily score');
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const targetDate = input.date ?? new Date().toISOString().split('T')[0];
@@ -211,6 +213,7 @@ export const healthScoreRouter = createTRPCRouter({
   getToday: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const today = new Date().toISOString().split('T')[0];
 
@@ -265,6 +268,7 @@ export const healthScoreRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - input.days);
@@ -299,8 +303,8 @@ export const healthScoreRouter = createTRPCRouter({
 
       // Trend: compare first half avg to second half avg
       let trend: 'improving' | 'stable' | 'declining' = 'stable';
-      if (values.length >= 6) {
-        const mid = Math.floor(values.length / 2);
+      const mid = Math.floor(values.length / 2);
+      if (values.length >= 6 && mid > 0) {
         const firstHalf = values.slice(0, mid).reduce((a, b) => a + b, 0) / mid;
         const secondHalf = values.slice(mid).reduce((a, b) => a + b, 0) / (values.length - mid);
         if (secondHalf - firstHalf > 3) trend = 'improving';
@@ -325,6 +329,7 @@ export const healthScoreRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
+      assertOwnership(ctx.user.id, input.userId);
       const sb = createServerSupabaseClient(ctx.sessionToken);
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - input.days);
