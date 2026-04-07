@@ -7,6 +7,7 @@ import { healthScoreRouter } from "./routes/healthScore";
 import { doctorReportRouter } from "./routes/doctorReport";
 import { clinicalPatternsRouter } from "./routes/clinicalPatterns";
 import { userServicesRouter } from "./routes/userServices";
+import { oxidativeStressRouter } from "./routes/oxidativeStress";
 
 export const appRouter = createTRPCRouter({
   nutrition: nutritionRouter,
@@ -17,6 +18,7 @@ export const appRouter = createTRPCRouter({
   doctorReport: doctorReportRouter,
   clinicalPatterns: clinicalPatternsRouter,
   userServices: userServicesRouter,
+  oxidativeStress: oxidativeStressRouter,
 });
 
 export type AppRouter = typeof appRouter;
