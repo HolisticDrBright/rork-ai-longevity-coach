@@ -8,6 +8,10 @@ import { doctorReportRouter } from "./routes/doctorReport";
 import { clinicalPatternsRouter } from "./routes/clinicalPatterns";
 import { userServicesRouter } from "./routes/userServices";
 import { oxidativeStressRouter } from "./routes/oxidativeStress";
+import { oatProtocolRouter } from "./routes/oatProtocol";
+import { clinicalProtocolsRouter } from "./routes/clinicalProtocols";
+import { productCatalogRouter } from "./routes/productCatalog";
+import { vaccineInjuryRouter } from "./routes/vaccineInjury";
 
 export const appRouter = createTRPCRouter({
   nutrition: nutritionRouter,
@@ -19,6 +23,10 @@ export const appRouter = createTRPCRouter({
   clinicalPatterns: clinicalPatternsRouter,
   userServices: userServicesRouter,
   oxidativeStress: oxidativeStressRouter,
+  oatProtocol: oatProtocolRouter,
+  clinicalProtocols: clinicalProtocolsRouter,
+  productCatalog: productCatalogRouter,
+  vaccineInjury: vaccineInjuryRouter,
 });
 
 export type AppRouter = typeof appRouter;
