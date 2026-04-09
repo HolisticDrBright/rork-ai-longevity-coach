@@ -12,6 +12,7 @@ import { oatProtocolRouter } from "./routes/oatProtocol";
 import { clinicalProtocolsRouter } from "./routes/clinicalProtocols";
 import { productCatalogRouter } from "./routes/productCatalog";
 import { vaccineInjuryRouter } from "./routes/vaccineInjury";
+import { peptideRouter } from "./routes/peptide";
 
 export const appRouter = createTRPCRouter({
   nutrition: nutritionRouter,
@@ -27,6 +28,7 @@ export const appRouter = createTRPCRouter({
   clinicalProtocols: clinicalProtocolsRouter,
   productCatalog: productCatalogRouter,
   vaccineInjury: vaccineInjuryRouter,
+  peptide: peptideRouter,
 });
 
 export type AppRouter = typeof appRouter;
