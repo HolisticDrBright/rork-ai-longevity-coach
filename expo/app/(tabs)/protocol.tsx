@@ -314,6 +314,30 @@ export default function ProtocolScreen() {
           </LinearGradient>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.peptideIntelBanner}
+          onPress={() => router.push('/longevity-protocol')}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={['#8B5CF6', '#EC4899']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.peptideIntelGradient}
+          >
+            <View style={styles.peptideIntelIcon}>
+              <Sparkles color="#fff" size={22} />
+            </View>
+            <View style={styles.peptideIntelContent}>
+              <Text style={styles.peptideIntelTitle}>Longevity Protocol</Text>
+              <Text style={styles.peptideIntelSubtitle}>
+                6-month program · 12 hallmarks of aging · Cycle-synced for women
+              </Text>
+            </View>
+            <ExternalLink color="#fff" size={20} />
+          </LinearGradient>
+        </TouchableOpacity>
+
         <View style={styles.peptideSectionCard}>
           <TouchableOpacity
             style={styles.peptideHeader}

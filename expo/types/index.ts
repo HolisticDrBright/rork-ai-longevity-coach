@@ -924,3 +924,183 @@ export interface PractitionerProtocolSummary {
   safetyAlerts: SafetyReport;
   effectivenessScore?: ProtocolEffectivenessScore;
 }
+
+// ============================================================
+// LONGEVITY PROTOCOL MODULE TYPES
+// ============================================================
+
+export type MenstrualStatus = 'pre_menopause' | 'peri_menopause' | 'post_menopause' | 'na';
+export type FitnessLevel = 'sedentary' | 'recreational' | 'athletic' | 'elite';
+export type DietType = 'carnivore' | 'paleo' | 'keto' | 'mediterranean' | 'vegan' | 'standard' | 'other';
+export type LongevityProtocolStatus = 'draft' | 'pending_review' | 'approved' | 'active' | 'completed' | 'archived';
+
+// The 12 Hallmarks of Aging
+export type HallmarkId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+
+export interface HallmarkInfo {
+  id: HallmarkId;
+  name: string;
+  description: string;
+  interventions: string[];
+}
+
+export interface LongevityIntake {
+  id: string;
+  userId: string;
+  biologicalAge?: number;
+  chronologicalAge?: number;
+  weightCurrent?: number;
+  weightIdeal?: number;
+  height?: number;
+  sex?: 'female' | 'male' | 'other';
+  menstrualStatus?: MenstrualStatus;
+  bodyComposition?: Record<string, number>;
+  fitnessLevel?: FitnessLevel;
+  dietType?: DietType;
+  conditions: string[];
+  sensitivities: string[];
+  oppositions: string[];
+  longevityGoals: string[];
+  preferredBrands: string[];
+  modalities: string[];
+  topComplaints: string[];
+  lifestyleFactors: string[];
+  labs?: {
+    nutrEval?: Record<string, any>;
+    genetics3x4?: Record<string, any>;
+    truAge?: Record<string, any>;
+    dutch?: Record<string, any>;
+    giMap?: Record<string, any>;
+    vibrant?: Record<string, any>;
+  };
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProtocolSupplement {
+  name: string;
+  brand?: string;
+  dose: string;
+  timing: string;
+  duration: string;
+  purpose: string;
+  hallmark: HallmarkId;
+}
+
+export interface ProtocolPeptideRx {
+  name: string;
+  dose: string;
+  route: 'subcutaneous' | 'intramuscular' | 'oral' | 'nasal' | 'topical';
+  cycle: string;
+  purpose: string;
+  hallmark: HallmarkId;
+}
+
+export interface ProtocolDiet {
+  type: DietType;
+  macros?: { protein?: string; carbs?: string; fat?: string };
+  notes: string;
+}
+
+export interface ProtocolFasting {
+  protocol: string;
+  frequency: string;
+  cycleSyncNotes?: string;
+}
+
+export interface ProtocolExercise {
+  strength: string;
+  cardio: string;
+  hiit: string;
+  frequency: string;
+  intensity: string;
+}
+
+export interface ProtocolModality {
+  modality: string;
+  frequency: string;
+  duration: string;
+  purpose: string;
+}
+
+export interface ProtocolMonth {
+  month: 1 | 2 | 3 | 4 | 5 | 6;
+  theme: string;
+  hallmarksTargeted: HallmarkId[];
+  supplements: ProtocolSupplement[];
+  peptides: ProtocolPeptideRx[];
+  diet: ProtocolDiet;
+  fasting: ProtocolFasting;
+  exercise: ProtocolExercise;
+  modalities: ProtocolModality[];
+  lifestyle: string[];
+  labsToOrder: string[];
+  checkInNotes: string;
+}
+
+export interface ProtocolSummary {
+  targetBiologicalAgeReduction: number;
+  hallmarksAddressed: HallmarkId[];
+  primaryRootCauses: string[];
+  expectedOutcomes: string[];
+  contraindicationsFlagged: string[];
+}
+
+export interface PulsingCalendarEntry {
+  item: string;
+  category: 'supplement' | 'peptide' | 'fasting' | 'exercise' | 'modality';
+  schedule: string;
+  days: number[]; // 0-179 days active
+  color: 'green' | 'amber' | 'red' | 'blue' | 'purple';
+}
+
+export interface LongevityProtocol {
+  id: string;
+  intakeId: string;
+  userId: string;
+  version: number;
+  generatedAt: string;
+  months: ProtocolMonth[];
+  summary: ProtocolSummary;
+  pulsingCalendar: PulsingCalendarEntry[];
+  safetyNotes: string[];
+  practitionerReviewRequired: string[];
+  status: LongevityProtocolStatus;
+  practitionerNotes?: string;
+  practitionerApproved: boolean;
+  approvedAt?: string;
+  approvedBy?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LongevityProgress {
+  id: string;
+  protocolId: string;
+  userId: string;
+  month: number;
+  day?: number;
+  itemKey: string;
+  itemCategory?: 'supplement' | 'peptide' | 'fasting' | 'exercise' | 'modality' | 'lifestyle' | 'lab';
+  taken: boolean;
+  notes?: string;
+  loggedAt: string;
+}
+
+export const HALLMARKS: HallmarkInfo[] = [
+  { id: 1, name: 'Genomic Instability', description: 'DNA damage accumulates over time', interventions: ['DNA repair support', 'Antioxidants'] },
+  { id: 2, name: 'Telomere Attrition', description: 'Telomere shortening drives cellular aging', interventions: ['Epitalon', 'Telomere Prime', 'Stress reduction'] },
+  { id: 3, name: 'Epigenetic Alterations', description: 'Methylation patterns drift with age', interventions: ['NAD+ precursors', 'Sirtuin activators', 'Methyl donors'] },
+  { id: 4, name: 'Loss of Proteostasis', description: 'Protein quality control fails', interventions: ['Autophagy enhancers', 'Caloric restriction', 'Heat shock'] },
+  { id: 5, name: 'Deregulated Nutrient Sensing', description: 'mTOR/AMPK/IGF-1 pathways dysregulate', interventions: ['Rapamycin', 'Fasting', 'mTOR cycling'] },
+  { id: 6, name: 'Mitochondrial Dysfunction', description: 'Cellular energy production declines', interventions: ['SS-31', 'MOTS-c', 'CoQ10', 'Methylene blue', 'PQQ'] },
+  { id: 7, name: 'Cellular Senescence', description: 'Zombie cells accumulate and inflame', interventions: ['Senolytics', 'Fisetin', 'Quercetin'] },
+  { id: 8, name: 'Stem Cell Exhaustion', description: 'Tissue regeneration capacity declines', interventions: ['StemRegen', 'Fasting-mimicking diet', 'Peptides'] },
+  { id: 9, name: 'Altered Intercellular Communication', description: 'Signaling between cells degrades', interventions: ['Anti-inflammatories', 'Omega-3s', 'Immune modulation'] },
+  { id: 10, name: 'Microbiome Dysbiosis', description: 'Gut microbiome composition shifts', interventions: ['Probiotics', 'Prebiotics', 'Targeted gut repair'] },
+  { id: 11, name: 'Chronic Inflammation', description: 'Inflammaging drives degeneration', interventions: ['Curcumin', 'Exercise', 'Dietary modification'] },
+  { id: 12, name: 'Extracellular Matrix Stiffening', description: 'Tissue pliability decreases with age', interventions: ['Collagen support', 'GHK-Cu', 'Movement'] },
+];
