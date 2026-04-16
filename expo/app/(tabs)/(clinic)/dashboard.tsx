@@ -274,12 +274,26 @@ export default function ClinicDashboardScreen() {
           <Bell size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Alert Inbox</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.quickAction}
           onPress={() => router.push('/(tabs)/(clinic)/supplements-admin' as any)}
         >
           <Package size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Supplements</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/feature-flags' as any)}
+        >
+          <Package size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>Feature Flags</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/ab-review' as any)}
+        >
+          <Package size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>A/B Review</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>

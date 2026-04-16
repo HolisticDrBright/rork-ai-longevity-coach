@@ -42,6 +42,18 @@ export default function ClinicLayout() {
           title: 'Supplements Admin',
         }}
       />
+      <Stack.Screen
+        name="feature-flags"
+        options={{
+          title: 'Feature Flags',
+        }}
+      />
+      <Stack.Screen
+        name="ab-review"
+        options={{
+          title: 'A/B Review',
+        }}
+      />
     </Stack>
   );
 }

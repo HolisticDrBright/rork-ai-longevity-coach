@@ -4,6 +4,11 @@ import { createTRPCRouter, protectedProcedure } from '../../create-context';
 import { createServerSupabaseClient } from '../../../supabase-server';
 import { IntakeInputSchema, LongevityStatusSchema } from './schemas';
 import { generateProtocolFromIntake } from './generator';
+import { generateProtocolWithClaude } from '../../../services/longevity/claudeGenerator';
+import { isFlagEnabled, getUserRoles, listFlags, setFlag } from '../../../lib/featureFlags';
+import { Sentry } from '../../../../lib/sentry';
+
+const LONGEVITY_CLAUDE_FLAG = 'longevity_claude_generation';
 
 export const longevityRouter = createTRPCRouter({
   // ── Intake management ───────────────────────────────────────
@@ -158,8 +163,65 @@ export const longevityRouter = createTRPCRouter({
         notes: intakeRow.notes,
       };
 
-      // 3. Generate protocol (deterministic; swap with Anthropic API call here if desired)
-      const generated = generateProtocolFromIntake(intakeInput);
+      // 3. Pick generation path based on feature flag.
+      //    Flag ON  → try Claude, fall back to deterministic on failure (silent to the user).
+      //    Flag OFF → deterministic path only (default for everyone at launch).
+      const userRoles = await getUserRoles(sb, ctx.user.id);
+      const claudeEnabled = await isFlagEnabled(sb, LONGEVITY_CLAUDE_FLAG, {
+        id: ctx.user.id,
+        roles: userRoles,
+      });
+
+      let generated;
+      let generationMethod: 'deterministic' | 'claude' | 'claude_fallback' = 'deterministic';
+      let generationMs: number | null = null;
+      let systemPromptVersion: string | null = null;
+      let model: string | null = null;
+
+      if (claudeEnabled) {
+        const claudeStart = Date.now();
+        try {
+          Sentry.addBreadcrumb({
+            category: 'longevity.claude',
+            message: 'generation_start',
+            data: { userId: ctx.user.id, intakeId: input.intakeId },
+          });
+          const claudeResult = await generateProtocolWithClaude(intakeInput);
+          generated = claudeResult.protocol;
+          generationMethod = 'claude';
+          generationMs = claudeResult.generationMs;
+          systemPromptVersion = claudeResult.systemPromptVersion;
+          model = claudeResult.model;
+          Sentry.addBreadcrumb({
+            category: 'longevity.claude',
+            message: 'generation_success',
+            data: {
+              durationMs: claudeResult.generationMs,
+              attempts: claudeResult.attempts,
+              model: claudeResult.model,
+            },
+          });
+        } catch (err) {
+          // Silent fallback — the patient still gets a valid protocol from
+          // the deterministic engine. Log so we can track quality over time.
+          Sentry.captureException(err, {
+            tags: { feature: 'longevity_claude_generation', phase: 'generation' },
+            extra: {
+              userId: ctx.user.id,
+              intakeId: input.intakeId,
+              elapsedMs: Date.now() - claudeStart,
+            },
+          });
+          console.log('[Longevity] Claude generation failed, falling back to deterministic', err);
+          generated = generateProtocolFromIntake(intakeInput);
+          generationMethod = 'claude_fallback';
+          generationMs = Date.now() - claudeStart;
+        }
+      } else {
+        const detStart = Date.now();
+        generated = generateProtocolFromIntake(intakeInput);
+        generationMs = Date.now() - detStart;
+      }
 
       // 4. Find the next version number
       const { data: existing } = await sb
@@ -175,7 +237,7 @@ export const longevityRouter = createTRPCRouter({
       const needsReview = generated.practitionerReviewRequired.length > 0;
       const initialStatus = needsReview ? 'pending_review' : 'draft';
 
-      // 6. Save
+      // 6. Save with generation provenance
       const { data: savedProtocol, error: saveError } = await sb
         .from('longevity_protocols')
         .insert({
@@ -188,9 +250,13 @@ export const longevityRouter = createTRPCRouter({
           safety_notes: generated.safetyNotes,
           practitioner_review_required: generated.practitionerReviewRequired,
           status: initialStatus,
+          generation_method: generationMethod,
+          generation_ms: generationMs,
+          system_prompt_version: systemPromptVersion,
+          model,
         })
         .select()
-        .single();
+        .maybeSingle();
 
       if (saveError || !savedProtocol) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to save protocol' });
@@ -404,4 +470,138 @@ export const longevityRouter = createTRPCRouter({
         })),
       };
     }),
+
+  // ── Feature flag admin (admin only) ─────────────────────────
+
+  listFlags: protectedProcedure.query(async ({ ctx }) => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+    const roles = await getUserRoles(sb, ctx.user.id);
+    if (!roles.includes('admin')) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Admin only' });
+    }
+    return listFlags(sb);
+  }),
+
+  setFlag: protectedProcedure
+    .input(z.object({
+      key: z.string(),
+      enabledUserIds: z.array(z.string().uuid()).optional(),
+      enabledRoles: z.array(z.string()).optional(),
+      rolloutPct: z.number().int().min(0).max(100).optional(),
+      description: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Admin only' });
+      }
+      return setFlag(sb, input.key, {
+        enabledUserIds: input.enabledUserIds,
+        enabledRoles: input.enabledRoles,
+        rolloutPct: input.rolloutPct,
+        description: input.description,
+        updatedBy: ctx.user.id,
+      });
+    }),
+
+  // ── Current user's Claude flag state (for UI disclosure) ────
+
+  getClaudeFlagState: protectedProcedure.query(async ({ ctx }) => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+    const roles = await getUserRoles(sb, ctx.user.id);
+    const enabled = await isFlagEnabled(sb, LONGEVITY_CLAUDE_FLAG, {
+      id: ctx.user.id,
+      roles,
+    });
+    return { enabled };
+  }),
+
+  // ── A/B evaluation (practitioner/admin only) ────────────────
+
+  listAbEvaluations: protectedProcedure
+    .input(z.object({ fixtureId: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      let query = sb.from('longevity_ab_evaluations').select('*').order('generated_at', { ascending: false });
+      if (input?.fixtureId) query = query.eq('patient_fixture_id', input.fixtureId);
+      const { data, error } = await query;
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch evaluations' });
+      return data ?? [];
+    }),
+
+  saveAbEvaluationReview: protectedProcedure
+    .input(z.object({
+      evaluationId: z.string().uuid(),
+      score: z.number().int().min(1).max(5),
+      winner: z.enum(['deterministic', 'claude', 'tie', 'neither']),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      const { data, error } = await sb
+        .from('longevity_ab_evaluations')
+        .update({
+          reviewer_id: ctx.user.id,
+          reviewer_score: input.score,
+          reviewer_winner: input.winner,
+          reviewer_notes: input.notes,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq('id', input.evaluationId)
+        .select()
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to save review' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Evaluation not found' });
+      return data;
+    }),
+
+  getGenerationStats: protectedProcedure.query(async ({ ctx }) => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+    const roles = await getUserRoles(sb, ctx.user.id);
+    if (!roles.includes('practitioner') && !roles.includes('admin')) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+    }
+    const { data } = await sb
+      .from('longevity_protocols')
+      .select('generation_method, generation_ms, model, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const rows = data ?? [];
+    const methods: Record<string, { count: number; totalMs: number }> = {
+      deterministic: { count: 0, totalMs: 0 },
+      claude: { count: 0, totalMs: 0 },
+      claude_fallback: { count: 0, totalMs: 0 },
+    };
+    for (const row of rows) {
+      const m = (row as any).generation_method ?? 'deterministic';
+      if (!methods[m]) methods[m] = { count: 0, totalMs: 0 };
+      methods[m].count++;
+      methods[m].totalMs += Number((row as any).generation_ms ?? 0);
+    }
+
+    const claudeAttempts = methods.claude.count + methods.claude_fallback.count;
+    const claudeSuccessRate = claudeAttempts > 0
+      ? Math.round((methods.claude.count / claudeAttempts) * 100)
+      : null;
+
+    return {
+      sampleSize: rows.length,
+      byMethod: Object.entries(methods).map(([method, s]) => ({
+        method,
+        count: s.count,
+        meanMs: s.count > 0 ? Math.round(s.totalMs / s.count) : 0,
+      })),
+      claudeSuccessRate,
+    };
+  }),
 });
