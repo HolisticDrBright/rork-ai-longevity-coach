@@ -15,7 +15,7 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { HALLMARKS } from '@/types';
-import type { ProtocolMonth } from '@/types';
+import type { ProtocolMonth, HallmarkId } from '@/types';
 
 const SECTION_CONFIG = [
   { key: 'supplements', label: 'Supplements', icon: Pill, color: '#3B82F6' },
@@ -220,8 +220,6 @@ function ItemRow({ title, subtitle, meta, hallmark, duration, color, onLog }: {
     </View>
   );
 }
-
-import type { HallmarkId } from '@/types';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },

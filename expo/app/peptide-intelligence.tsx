@@ -385,7 +385,6 @@ export default function PeptideIntelligenceScreen() {
             activeProtocol ? (
               <PeptideProtocolCalendar
                 phases={calendarPhases}
-                scheduleEntries={[]}
                 protocolStartDate={activeProtocol.start_date}
               />
             ) : (

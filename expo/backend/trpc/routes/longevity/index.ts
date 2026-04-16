@@ -102,12 +102,17 @@ export const longevityRouter = createTRPCRouter({
     .input(z.object({ intakeId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+      // RLS allows practitioners to read any intake; this app-layer check
+      // restricts direct patient fetches to the owner. Practitioners read
+      // via the practitioner portal routes with explicit assignment checks.
       const { data, error } = await sb
         .from('longevity_intakes')
         .select('*')
         .eq('id', input.intakeId)
-        .single();
-      if (error || !data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Intake not found' });
+        .eq('user_id', ctx.user.id)
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch intake' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Intake not found' });
       return data;
     }),
 
@@ -204,8 +209,10 @@ export const longevityRouter = createTRPCRouter({
         .from('longevity_protocols')
         .select('*')
         .eq('id', input.protocolId)
-        .single();
-      if (error || !data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found' });
+        .eq('user_id', ctx.user.id)
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch protocol' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found' });
       return data;
     }),
 
@@ -264,13 +271,22 @@ export const longevityRouter = createTRPCRouter({
     .input(z.object({ protocolId: z.string().uuid(), notes: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Require practitioner/admin role to add notes.
+      const { data: roles } = await sb.from('user_roles').select('role').eq('user_id', ctx.user.id);
+      const isPractitioner = (roles ?? []).some((r: { role: string }) => r.role === 'practitioner' || r.role === 'admin');
+      if (!isPractitioner) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only practitioners can add notes' });
+      }
+
       const { data, error } = await sb
         .from('longevity_protocols')
         .update({ practitioner_notes: input.notes })
         .eq('id', input.protocolId)
         .select()
-        .single();
+        .maybeSingle();
       if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to add notes' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found or access denied' });
       return data;
     }),
 
@@ -278,6 +294,14 @@ export const longevityRouter = createTRPCRouter({
     .input(z.object({ protocolId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Require practitioner/admin role to approve.
+      const { data: roles } = await sb.from('user_roles').select('role').eq('user_id', ctx.user.id);
+      const isPractitioner = (roles ?? []).some((r: { role: string }) => r.role === 'practitioner' || r.role === 'admin');
+      if (!isPractitioner) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only practitioners can approve protocols' });
+      }
+
       const { data, error } = await sb
         .from('longevity_protocols')
         .update({
@@ -288,8 +312,9 @@ export const longevityRouter = createTRPCRouter({
         })
         .eq('id', input.protocolId)
         .select()
-        .single();
+        .maybeSingle();
       if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to approve protocol' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found or access denied' });
       return data;
     }),
 

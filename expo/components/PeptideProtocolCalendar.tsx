@@ -42,11 +42,12 @@ const PHASE_LABELS: Record<PhaseType, string> = {
 
 interface Props {
   phases: ProtocolPhase[];
-  scheduleEntries: ScheduleEntry[];
+  scheduleEntries?: ScheduleEntry[];
   protocolStartDate?: string;
 }
 
-export default function PeptideProtocolCalendar({ phases, scheduleEntries, protocolStartDate }: Props) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export default function PeptideProtocolCalendar({ phases, protocolStartDate, scheduleEntries: _ }: Props) {
   const startDate = protocolStartDate ? new Date(protocolStartDate) : new Date();
   const [viewMonth, setViewMonth] = useState(startDate.getMonth());
   const [viewYear, setViewYear] = useState(startDate.getFullYear());

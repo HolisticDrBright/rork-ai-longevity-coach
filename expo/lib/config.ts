@@ -32,15 +32,30 @@ function getApiBaseUrl(env: Environment): string {
 
 export function getAppConfig(): AppConfig {
   const environment = getEnvironment();
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+  // In production, missing Supabase credentials are fatal — fail fast
+  // instead of allowing the app to boot with empty keys and crash later.
+  if (environment === 'production' && (!supabaseUrl || !supabaseAnonKey)) {
+    throw new Error(
+      'Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY in production build.'
+    );
+  }
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('[Config] Supabase credentials are missing — auth + database calls will fail.');
+  }
 
   return {
     environment,
     apiBaseUrl: getApiBaseUrl(environment),
-    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
-    supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
+    supabaseUrl,
+    supabaseAnonKey,
   };
 }
 
 export const appConfig = getAppConfig();
 
-console.log('[Config] Environment:', appConfig.environment, 'API:', appConfig.apiBaseUrl);
+if (__DEV__) {
+  console.log('[Config] Environment:', appConfig.environment, 'API:', appConfig.apiBaseUrl);
+}

@@ -472,7 +472,7 @@ export const peptideRouter = createTRPCRouter({
 
       // Save insights to DB
       if (insights.length > 0) {
-        await sb.from('peptide_correlation_insights').insert(
+        const { error: insertError } = await sb.from('peptide_correlation_insights').insert(
           insights.map(i => ({
             user_id: ctx.user.id,
             protocol_id: input.protocolId,
@@ -486,6 +486,10 @@ export const peptideRouter = createTRPCRouter({
             ai_explanation: i.aiExplanation,
           }))
         );
+        if (insertError) {
+          console.log('[Peptide] Failed to save correlation insights', insertError);
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to save insights' });
+        }
       }
 
       return { insights };
@@ -825,19 +829,21 @@ export const peptideRouter = createTRPCRouter({
   getProtocolSummary: protectedProcedure
     .input(z.object({
       protocolId: z.string().uuid(),
-      userId: z.string().uuid().optional(),
     }))
     .query(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      const targetUserId = input.userId ?? ctx.user.id;
 
+      // RLS enforces ownership (or practitioner role via helper); the
+      // .single() call will return null/error if the user can't read it.
+      // We don't accept an arbitrary userId to avoid IDOR risk.
       const { data: protocol, error } = await sb
         .from('peptide_protocols')
         .select('*, protocol_peptides(*, peptide_library(*))')
         .eq('id', input.protocolId)
-        .single();
+        .maybeSingle();
 
-      if (error || !protocol) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found' });
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch protocol' });
+      if (!protocol) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found' });
 
       // Get correlations
       const { data: correlations } = await sb
@@ -880,14 +886,23 @@ export const peptideRouter = createTRPCRouter({
     }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Verify caller is practitioner/admin before allowing note changes.
+      const { data: roles } = await sb.from('user_roles').select('role').eq('user_id', ctx.user.id);
+      const isPractitioner = (roles ?? []).some((r: { role: string }) => r.role === 'practitioner' || r.role === 'admin');
+      if (!isPractitioner) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only practitioners can add notes' });
+      }
+
       const { data, error } = await sb
         .from('peptide_protocols')
         .update({ practitioner_notes: input.notes })
         .eq('id', input.protocolId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to add practitioner notes' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found or access denied' });
       return data;
     }),
 
@@ -895,6 +910,14 @@ export const peptideRouter = createTRPCRouter({
     .input(z.object({ protocolId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Verify caller is practitioner/admin before allowing approval.
+      const { data: roles } = await sb.from('user_roles').select('role').eq('user_id', ctx.user.id);
+      const isPractitioner = (roles ?? []).some((r: { role: string }) => r.role === 'practitioner' || r.role === 'admin');
+      if (!isPractitioner) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only practitioners can approve protocols' });
+      }
+
       const { data, error } = await sb
         .from('peptide_protocols')
         .update({
@@ -904,9 +927,10 @@ export const peptideRouter = createTRPCRouter({
         })
         .eq('id', input.protocolId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to approve protocol' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found or access denied' });
       return data;
     }),
 

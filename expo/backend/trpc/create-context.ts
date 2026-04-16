@@ -26,11 +26,13 @@ export const createContext = async (opts: FetchCreateContextFnOptions) => {
           email: data.user.email,
           role: data.user.role ?? "authenticated",
         };
-      } else {
+      } else if (process.env.NODE_ENV !== "production") {
         console.log("[tRPC:context] Token validation failed");
       }
     } catch {
-      console.log("[tRPC:context] Token validation error");
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[tRPC:context] Token validation error");
+      }
     }
   }
 
