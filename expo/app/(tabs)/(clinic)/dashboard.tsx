@@ -300,6 +300,27 @@ export default function ClinicDashboardScreen() {
           <Package size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>A/B Review</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/pattern-inbox' as any)}
+        >
+          <Package size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>Pattern Inbox</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/paradigm-preferences' as any)}
+        >
+          <Package size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>Paradigms</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/pattern-stats' as any)}
+        >
+          <Package size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>Pattern Stats</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );

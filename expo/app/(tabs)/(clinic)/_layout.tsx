@@ -54,6 +54,24 @@ export default function ClinicLayout() {
           title: 'A/B Review',
         }}
       />
+      <Stack.Screen
+        name="pattern-inbox"
+        options={{
+          title: 'Pattern Inbox',
+        }}
+      />
+      <Stack.Screen
+        name="paradigm-preferences"
+        options={{
+          title: 'Paradigm Preferences',
+        }}
+      />
+      <Stack.Screen
+        name="pattern-stats"
+        options={{
+          title: 'Pattern Stats',
+        }}
+      />
     </Stack>
   );
 }
