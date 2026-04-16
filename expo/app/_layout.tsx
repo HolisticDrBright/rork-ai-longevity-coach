@@ -50,6 +50,7 @@ function RootLayoutNav() {
       <Stack.Screen name="privacy-policy" options={{ headerShown: true, title: 'Privacy Policy' }} />
       <Stack.Screen name="peptide-intelligence" options={{ headerShown: false }} />
       <Stack.Screen name="longevity-protocol" options={{ headerShown: false }} />
+      <Stack.Screen name="experimental-insights" options={{ headerShown: false }} />
     </Stack>
   );
 }
