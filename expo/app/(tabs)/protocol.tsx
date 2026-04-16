@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import {
   Pill,
   Clock,
@@ -35,6 +36,7 @@ import {
   X,
   Info,
   Activity,
+  Sparkles,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
@@ -287,6 +289,30 @@ export default function ProtocolScreen() {
         )}
 
         <SupplementsRecommendations patientId={userProfile?.id} />
+
+        <TouchableOpacity
+          style={styles.peptideIntelBanner}
+          onPress={() => router.push('/peptide-intelligence')}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={[Colors.primary, Colors.primaryLight]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.peptideIntelGradient}
+          >
+            <View style={styles.peptideIntelIcon}>
+              <Sparkles color="#fff" size={22} />
+            </View>
+            <View style={styles.peptideIntelContent}>
+              <Text style={styles.peptideIntelTitle}>Peptide Intelligence</Text>
+              <Text style={styles.peptideIntelSubtitle}>
+                AI protocol builder · Lab correlation · Safety engine · Dose tracker
+              </Text>
+            </View>
+            <ExternalLink color="#fff" size={20} />
+          </LinearGradient>
+        </TouchableOpacity>
 
         <View style={styles.peptideSectionCard}>
           <TouchableOpacity
@@ -1362,6 +1388,33 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 4,
   },
+  peptideIntelBanner: {
+    marginBottom: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  peptideIntelGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 12,
+  },
+  peptideIntelIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  peptideIntelContent: { flex: 1 },
+  peptideIntelTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  peptideIntelSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
   peptideSectionCard: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
