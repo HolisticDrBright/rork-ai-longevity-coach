@@ -4,6 +4,9 @@ import { createTRPCRouter, protectedProcedure } from '../../create-context';
 import { createServerSupabaseClient } from '../../../supabase-server';
 import { runMiner } from '../../../services/patterns/miner';
 import { generateHypotheses, type Paradigm } from '../../../services/patterns/hypothesizer';
+import { runEffectivenessJob } from '../../../services/interventions/effectivenessJob';
+import { backfillInterventionEvents } from '../../../services/interventions/backfill';
+import { interpretOutcome } from '../../../services/interventions/interpreter';
 import { isFlagEnabled, getUserRoles } from '../../../lib/featureFlags';
 import { Sentry } from '../../../../lib/sentry';
 
@@ -533,5 +536,190 @@ export const patternsRouter = createTRPCRouter({
         .maybeSingle();
       if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
       return data;
+    }),
+
+  // ── Intervention events (client-side on adding/removing interventions) ──
+
+  recordInterventionEvent: protectedProcedure
+    .input(z.object({
+      interventionType: z.enum(['supplement', 'peptide', 'protocol', 'lifestyle_task', 'diet_change']),
+      interventionId: z.string().uuid(),
+      interventionLabel: z.string(),
+      event: z.enum(['start', 'stop', 'dose_change', 'pause', 'resume']),
+      doseSnapshot: z.record(z.string(), z.unknown()).optional(),
+      startedAt: z.string(),
+      endedAt: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Snapshot concurrent interventions for confounder analysis
+      const { data: concurrent } = await sb
+        .from('intervention_events')
+        .select('id, intervention_type, intervention_label, intervention_id')
+        .eq('patient_id', ctx.user.id)
+        .eq('event', 'start')
+        .is('ended_at', null);
+
+      const { data, error } = await sb
+        .from('intervention_events')
+        .insert({
+          patient_id: ctx.user.id,
+          intervention_type: input.interventionType,
+          intervention_id: input.interventionId,
+          intervention_label: input.interventionLabel,
+          event: input.event,
+          dose_snapshot: input.doseSnapshot,
+          started_at: input.startedAt,
+          ended_at: input.endedAt,
+          concurrent_interventions: concurrent ?? [],
+          notes: input.notes,
+          source: 'user',
+        })
+        .select()
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+      return data;
+    }),
+
+  // ── Effectiveness admin endpoints ────────────────────────────
+
+  runEffectivenessNow: protectedProcedure.mutation(async ({ ctx }) => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+    await requireAdmin(sb, ctx.user.id);
+    Sentry.addBreadcrumb({ category: 'interventions.effectiveness', message: 'manual_trigger' });
+    try {
+      return await runEffectivenessJob(sb);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { subsystem: 'effectiveness_job' } });
+      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: (err as Error).message });
+    }
+  }),
+
+  backfillInterventions: protectedProcedure.mutation(async ({ ctx }) => {
+    const sb = createServerSupabaseClient(ctx.sessionToken);
+    await requireAdmin(sb, ctx.user.id);
+    try {
+      return await backfillInterventionEvents(sb);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { subsystem: 'intervention_backfill' } });
+      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: (err as Error).message });
+    }
+  }),
+
+  interpretEffectiveness: protectedProcedure
+    .input(z.object({
+      sourceType: z.enum(['patient_outcome', 'cohort_effectiveness']),
+      sourceId: z.string().uuid(),
+      paradigms: z.array(PARADIGM_ENUM).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      await requirePractitioner(sb, ctx.user.id);
+      await requireKillSwitchOff(sb, ctx.user.id);
+
+      // Resolve source row
+      let table: string;
+      if (input.sourceType === 'patient_outcome') table = 'intervention_outcomes';
+      else table = 'intervention_effectiveness';
+
+      const { data: source } = await sb.from(table).select('*').eq('id', input.sourceId).maybeSingle();
+      if (!source) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source row not found' });
+
+      let interventionLabel = 'Unknown';
+      let cohortContext: Record<string, unknown> | undefined;
+
+      if (input.sourceType === 'patient_outcome') {
+        const { data: evt } = await sb
+          .from('intervention_events')
+          .select('intervention_label')
+          .eq('id', (source as any).intervention_event_id)
+          .maybeSingle();
+        interventionLabel = evt?.intervention_label ?? 'Unknown';
+      } else {
+        interventionLabel = (source as any).intervention_id;
+        cohortContext = {
+          n_patients: (source as any).n_patients,
+          mean_effect_size: (source as any).mean_effect_size,
+          response_rate: (source as any).response_rate,
+          adverse_rate: (source as any).adverse_rate,
+        };
+      }
+
+      const result = await interpretOutcome(sb, {
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        interventionLabel,
+        outcomeLabel: (source as any).outcome_id,
+        baselineValue: (source as any).baseline_value ?? null,
+        responseValue: (source as any).response_value ?? null,
+        delta: (source as any).delta ?? null,
+        deltaPct: (source as any).delta_pct ?? null,
+        direction: (source as any).direction ?? 'inconclusive',
+        effectSize: (source as any).effect_size ?? (source as any).mean_effect_size ?? null,
+        confidence: (source as any).confidence ?? 'medium',
+        confoundFlags: (source as any).confound_flags ?? [],
+        paradigms: input.paradigms as Paradigm[],
+        cohortContext,
+      });
+      return result;
+    }),
+
+  // ── Effectiveness queries ────────────────────────────────────
+
+  listEffectiveness: protectedProcedure
+    .input(z.object({
+      outcomeType: z.string().optional(),
+      outcomeId: z.string().optional(),
+      minResponseRate: z.number().min(0).max(1).optional(),
+      minN: z.number().int().min(1).default(10),
+      limit: z.number().int().min(1).max(200).default(50),
+    }).optional())
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      let query = sb.from('intervention_effectiveness').select('*').gte('n_patients', input?.minN ?? 10);
+      if (input?.outcomeType) query = query.eq('outcome_type', input.outcomeType);
+      if (input?.outcomeId) query = query.eq('outcome_id', input.outcomeId);
+      if (input?.minResponseRate != null) query = query.gte('response_rate', input.minResponseRate);
+      query = query.order('response_rate', { ascending: false }).limit(input?.limit ?? 50);
+      const { data, error } = await query;
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+      return data ?? [];
+    }),
+
+  getMyInterventionOutcomes: protectedProcedure
+    .input(z.object({ minConfidence: z.enum(['high', 'medium', 'low']).default('medium') }).optional())
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const { data: profile } = await sb
+        .from('profiles')
+        .select('surface_experimental_insights')
+        .eq('id', ctx.user.id)
+        .maybeSingle();
+      if (!profile?.surface_experimental_insights) return [];
+
+      const allowed = input?.minConfidence === 'high' ? ['high']
+        : input?.minConfidence === 'low' ? ['high', 'medium', 'low']
+        : ['high', 'medium'];
+
+      const { data } = await sb
+        .from('intervention_outcomes')
+        .select('*, intervention_events!inner(patient_id, intervention_label, intervention_type, started_at)')
+        .eq('intervention_events.patient_id', ctx.user.id)
+        .in('confidence', allowed);
+      return data ?? [];
+    }),
+
+  getEffectivenessForIntervention: protectedProcedure
+    .input(z.object({ interventionId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const { data } = await sb
+        .from('intervention_effectiveness')
+        .select('*')
+        .eq('intervention_id', input.interventionId)
+        .order('response_rate', { ascending: false });
+      return data ?? [];
     }),
 });
