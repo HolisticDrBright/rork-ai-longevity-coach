@@ -614,3 +614,313 @@ export interface ClinicalAnalysis {
   disclaimer: string;
   createdAt: string;
 }
+
+// ============================================================
+// PEPTIDE INTELLIGENCE PLATFORM TYPES
+// ============================================================
+
+export type PeptideCategory =
+  | 'gh_secretagogue'
+  | 'healing'
+  | 'immune'
+  | 'cognitive'
+  | 'sleep'
+  | 'sexual_health'
+  | 'weight_management'
+  | 'longevity'
+  | 'skin'
+  | 'mitochondrial'
+  | 'bioregulator'
+  | 'antimicrobial'
+  | 'hormone';
+
+export type InteractionSeverity = 'info' | 'caution' | 'warning' | 'critical';
+
+export type ProtocolStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+
+export type PhaseType = 'loading' | 'active' | 'maintenance' | 'taper' | 'off';
+
+export type TaperType = 'none' | 'linear' | 'step';
+
+export type DoseStatus = 'taken' | 'skipped' | 'partial';
+
+export type InsightDirection = 'improved' | 'declined' | 'stable';
+
+export type CorrelationConfidence = 'strong' | 'moderate' | 'weak';
+
+export type LabType =
+  | 'blood_panel'
+  | 'dutch'
+  | 'gi_map'
+  | 'oat'
+  | 'mycotoxin'
+  | 'heavy_metal'
+  | 'viral'
+  | 'lyme'
+  | 'sibo'
+  | 'gut_zoomer';
+
+// Peptide Library Entry (from DB)
+export interface PeptideLibraryEntry {
+  id: string;
+  slug: string;
+  name: string;
+  aliases: string[];
+  category: PeptideCategory;
+  description: string;
+  mechanism: string;
+  typicalDoseMin: number;
+  typicalDoseMax: number;
+  doseUnit: 'mcg' | 'mg' | 'IU';
+  halfLifeHours: number;
+  routes: PeptideRoute[];
+  forms: PeptideForm[];
+  goals: PeptideGoal[];
+  stackingNotes: string;
+  storageNotes: string;
+  researchReferences: { title: string; type: string; url?: string }[];
+  legalNote: string;
+  wadaCaution: boolean;
+  clinicianOnly: boolean;
+  pregnancySafe: boolean;
+  lactationSafe: boolean;
+}
+
+// Protocol Types
+export interface PeptideProtocol {
+  id: string;
+  userId: string;
+  name: string;
+  goal: string;
+  status: ProtocolStatus;
+  labSnapshotId?: string;
+  wearableSnapshot?: Record<string, number>;
+  aiReasoning?: string;
+  suggestedRetestTimeline?: string;
+  startDate?: string;
+  endDate?: string;
+  practitionerNotes?: string;
+  practitionerApproved: boolean;
+  approvedAt?: string;
+  approvedBy?: string;
+  peptides: ProtocolPeptide[];
+  phases?: ProtocolPhase[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProtocolPeptide {
+  id: string;
+  protocolId: string;
+  peptideId: string;
+  peptide?: PeptideLibraryEntry;
+  doseAmount: number;
+  doseUnit: 'mcg' | 'mg' | 'IU';
+  frequency: string;
+  timing?: string;
+  durationWeeks?: number;
+  aiRationale?: string;
+  sortOrder: number;
+}
+
+export interface ProtocolPhase {
+  id: string;
+  protocolId: string;
+  phaseName: string;
+  phaseOrder: number;
+  phaseType: PhaseType;
+  startDate?: string;
+  endDate?: string;
+  durationDays?: number;
+  description?: string;
+}
+
+export interface ProtocolScheduleEntry {
+  id: string;
+  protocolPeptideId: string;
+  phaseId?: string;
+  phaseName?: string;
+  phaseOrder: number;
+  doseAmount: number;
+  doseUnit: string;
+  frequency: string;
+  durationDays: number;
+  isActivePhase: boolean;
+  taperType: TaperType;
+  taperStepReduction?: number;
+}
+
+// Dose Logging
+export interface PeptideDoseLog {
+  id: string;
+  userId: string;
+  protocolId: string;
+  protocolPeptideId: string;
+  loggedAt: string;
+  doseAmount: number;
+  doseUnit: string;
+  injectionSite?: string;
+  status: DoseStatus;
+  skipReason?: string;
+  notes?: string;
+}
+
+export interface AdherenceStats {
+  totalScheduled: number;
+  totalTaken: number;
+  totalSkipped: number;
+  adherencePercent: number;
+  currentStreak: number;
+  longestStreak: number;
+  byPeptide: {
+    peptideId: string;
+    peptideName: string;
+    taken: number;
+    skipped: number;
+    percent: number;
+  }[];
+}
+
+// Safety & Interactions
+export interface PeptideInteraction {
+  id: string;
+  peptideASlug: string;
+  peptideBSlug: string;
+  interactionType: 'synergistic' | 'antagonistic' | 'caution' | 'contraindicated';
+  severity: InteractionSeverity;
+  description: string;
+  recommendation?: string;
+}
+
+export interface PeptideContraindication {
+  condition: string;
+  severity: 'absolute' | 'relative';
+  notes?: string;
+}
+
+export interface PeptideLabThreshold {
+  id: string;
+  peptideSlug: string;
+  biomarkerName: string;
+  thresholdValue: number;
+  direction: 'above' | 'below';
+  severity: InteractionSeverity;
+  message: string;
+  recommendation?: string;
+}
+
+export interface SafetyReport {
+  interactions: PeptideInteraction[];
+  contraindications: {
+    peptideSlug: string;
+    condition: string;
+    severity: InteractionSeverity;
+    description: string;
+    recommendation?: string;
+  }[];
+  labThresholds: PeptideLabThreshold[];
+  overallSeverity: InteractionSeverity;
+  safeToStart: boolean;
+}
+
+// Correlation & Insights
+export interface CorrelationInsight {
+  id: string;
+  userId: string;
+  protocolId: string;
+  insightType: 'biomarker' | 'wearable' | 'composite';
+  metricName: string;
+  baselineValue?: number;
+  currentValue?: number;
+  changePercent?: number;
+  direction: InsightDirection;
+  confidence: CorrelationConfidence;
+  aiExplanation?: string;
+  generatedAt: string;
+}
+
+// Wearable Snapshots
+export interface WearableSnapshot {
+  id: string;
+  userId: string;
+  protocolId: string;
+  snapshotType: 'baseline' | 'current' | 'final';
+  hrvAvg?: number;
+  restingHrAvg?: number;
+  deepSleepPct?: number;
+  remSleepPct?: number;
+  totalSleepMin?: number;
+  spo2Avg?: number;
+  bodyTempAvg?: number;
+  stepsAvg?: number;
+  recoveryScoreAvg?: number;
+  measurementPeriodDays: number;
+  capturedAt: string;
+}
+
+export interface WearableEffectiveness {
+  metric: string;
+  baseline: number;
+  current: number;
+  delta: number;
+  deltaPercent: number;
+  direction: InsightDirection;
+}
+
+// Lab Optimization Suggestions
+export interface LabPeptideMapping {
+  id: string;
+  labType: LabType;
+  findingPattern: string;
+  findingDescription: string;
+  recommendedPeptideSlugs: string[];
+  recommendedPeptides?: PeptideLibraryEntry[];
+  priorityLevel: number;
+  reasoning: string;
+  prerequisiteNote?: string;
+}
+
+// Protocol Builder AI Recommendation
+export interface ProtocolRecommendation {
+  goal: string;
+  peptides: {
+    slug: string;
+    name: string;
+    doseAmount: number;
+    doseUnit: 'mcg' | 'mg' | 'IU';
+    frequency: string;
+    timing: string;
+    durationWeeks: number;
+    rationale: string;
+  }[];
+  reasoning: string;
+  warnings: {
+    severity: InteractionSeverity;
+    message: string;
+  }[];
+  suggestedRetestTimeline: string;
+  labSnapshot?: Record<string, number>;
+  wearableSnapshot?: Record<string, number>;
+}
+
+// Protocol Effectiveness Score
+export interface ProtocolEffectivenessScore {
+  score: number;
+  maxScore: number;
+  breakdown: {
+    category: string;
+    score: number;
+    weight: number;
+    metrics: WearableEffectiveness[];
+  }[];
+}
+
+// Practitioner Protocol Summary
+export interface PractitionerProtocolSummary {
+  protocol: PeptideProtocol;
+  adherence: AdherenceStats;
+  correlations: CorrelationInsight[];
+  wearableEffectiveness: WearableEffectiveness[];
+  safetyAlerts: SafetyReport;
+  effectivenessScore?: ProtocolEffectivenessScore;
+}
