@@ -23,6 +23,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
+import CohortStatsCard from '@/components/outcome/CohortStatsCard';
 
 interface StatCardProps {
   title: string;
@@ -259,8 +260,12 @@ export default function ClinicDashboardScreen() {
         )}
       </View>
 
+      <View style={{ marginHorizontal: 16, marginBottom: 16 }}>
+        <CohortStatsCard />
+      </View>
+
       <View style={styles.quickActions}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.quickAction}
           onPress={() => router.push('/(tabs)/(clinic)/patients' as any)}
         >

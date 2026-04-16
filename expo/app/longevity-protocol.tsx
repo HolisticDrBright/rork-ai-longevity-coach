@@ -28,8 +28,12 @@ import MonthDetailView from '@/components/MonthDetailView';
 import PulsingCalendar from '@/components/PulsingCalendar';
 import HallmarksCoverage from '@/components/HallmarksCoverage';
 import PractitionerReviewBanner from '@/components/PractitionerReviewBanner';
+import OutcomeReportView from '@/components/outcome/OutcomeReportView';
+import { buildOutcomeReportHtml } from '@/lib/outcomeReportHtml';
+import { Share, Platform } from 'react-native';
+import { Trophy } from 'lucide-react-native';
 
-type TabId = 'intake' | 'timeline' | 'calendar' | 'hallmarks' | 'summary';
+type TabId = 'intake' | 'timeline' | 'calendar' | 'hallmarks' | 'summary' | 'results';
 
 interface Tab {
   id: TabId;
@@ -43,6 +47,7 @@ const TABS: Tab[] = [
   { id: 'calendar', label: 'Pulsing', icon: Sparkles },
   { id: 'hallmarks', label: 'Hallmarks', icon: PieChart },
   { id: 'summary', label: 'Summary', icon: FileText },
+  { id: 'results', label: 'Results', icon: Trophy },
 ];
 
 export default function LongevityProtocolScreen() {
@@ -51,6 +56,10 @@ export default function LongevityProtocolScreen() {
 
   const intakeQuery = trpc.longevity.getLatestIntake.useQuery();
   const protocolQuery = trpc.longevity.getLatestProtocol.useQuery();
+  const outcomeReportQuery = trpc.longevity.outcomeReportGet.useQuery(
+    { protocolId: (protocolQuery.data as any)?.id ?? '' },
+    { enabled: !!(protocolQuery.data as any)?.id }
+  );
 
   const createIntakeMutation = trpc.longevity.createIntake.useMutation();
   const updateIntakeMutation = trpc.longevity.updateIntake.useMutation();
@@ -320,6 +329,60 @@ export default function LongevityProtocolScreen() {
                 ))}
               </View>
             </ScrollView>
+          )}
+
+          {activeTab === 'results' && protocol && (
+            (() => {
+              const outcomeReport = outcomeReportQuery.data as any;
+              if (outcomeReportQuery.isLoading) {
+                return <View style={styles.loadingContainer}><ActivityIndicator color={Colors.primary} /></View>;
+              }
+              if (!outcomeReport) {
+                return (
+                  <View style={styles.emptyState}>
+                    <Trophy color={Colors.textTertiary} size={40} />
+                    <Text style={styles.emptyTitle}>Results not ready</Text>
+                    <Text style={styles.emptyMessage}>
+                      Your Month 6 outcome report will appear here once your practitioner has reviewed and approved the reassessment data.
+                    </Text>
+                  </View>
+                );
+              }
+              // Patient can only see results when approved + shared. RLS enforces this,
+              // so getting the record here means it's visible.
+              if (!outcomeReport.practitioner_approved || !outcomeReport.shared_with_patient) {
+                return (
+                  <View style={styles.emptyState}>
+                    <Trophy color={Colors.textTertiary} size={40} />
+                    <Text style={styles.emptyTitle}>Awaiting practitioner review</Text>
+                    <Text style={styles.emptyMessage}>
+                      Your report is being reviewed. You'll get a notification when it's ready to view.
+                    </Text>
+                  </View>
+                );
+              }
+              const handleShare = async () => {
+                try {
+                  const html = buildOutcomeReportHtml(outcomeReport.report, 'Me');
+                  await Share.share({
+                    title: 'My 6-Month Longevity Results',
+                    message: outcomeReport.narrative_summary ?? 'My 6-Month Longevity Results',
+                    ...(Platform.OS === 'web' ? {} : { url: `data:text/html;base64,${btoa(unescape(encodeURIComponent(html)))}` }),
+                  });
+                } catch (e) {
+                  console.log('[Longevity] Share failed', e);
+                }
+              };
+              return (
+                <OutcomeReportView
+                  report={outcomeReport.report}
+                  narrativeSummary={outcomeReport.narrative_summary}
+                  approved={outcomeReport.practitioner_approved}
+                  onShare={handleShare}
+                  onExportPdf={handleShare}
+                />
+              );
+            })()
           )}
 
           {!protocol && activeTab !== 'intake' && (

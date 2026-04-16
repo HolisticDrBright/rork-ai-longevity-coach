@@ -5,8 +5,11 @@ import { createServerSupabaseClient } from '../../../supabase-server';
 import { IntakeInputSchema, LongevityStatusSchema } from './schemas';
 import { generateProtocolFromIntake } from './generator';
 import { generateProtocolWithClaude } from '../../../services/longevity/claudeGenerator';
+import { buildOutcomeReport } from '../../../services/longevity/outcomeReport';
 import { isFlagEnabled, getUserRoles, listFlags, setFlag } from '../../../lib/featureFlags';
 import { Sentry } from '../../../../lib/sentry';
+
+const OUTCOME_NARRATIVE_FLAG = 'longevity_claude_narrative';
 
 const LONGEVITY_CLAUDE_FLAG = 'longevity_claude_generation';
 
@@ -604,4 +607,309 @@ export const longevityRouter = createTRPCRouter({
       claudeSuccessRate,
     };
   }),
+
+  // ── Month 6 Outcome Report (practitioner-only writes) ───────
+
+  outcomeReportGenerate: protectedProcedure
+    .input(z.object({ protocolId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+
+      // Opt the narrative into Claude only when the flag says so for this user.
+      const useClaude = await isFlagEnabled(sb, OUTCOME_NARRATIVE_FLAG, {
+        id: ctx.user.id,
+        roles,
+      });
+
+      try {
+        Sentry.addBreadcrumb({
+          category: 'longevity.outcome_report',
+          message: 'build_start',
+          data: { protocolId: input.protocolId, useClaude },
+        });
+        const result = await buildOutcomeReport(sb, input.protocolId, { useClaude });
+
+        const { data: saved, error: saveError } = await sb
+          .from('longevity_outcome_reports')
+          .insert({
+            protocol_id: input.protocolId,
+            user_id: result.report.userId,
+            report: result.report,
+            narrative_summary: [
+              ...result.report.narrative.topWins.map(w => `✓ ${w}`),
+              '',
+              ...result.report.narrative.topGaps.map(g => `• ${g}`),
+              '',
+              result.report.narrative.maintenanceRecommendation,
+            ].join('\n'),
+            narrative_generation_method: result.narrativeMethod,
+            narrative_system_prompt_version: result.narrativeSystemPromptVersion,
+            data_completeness_pct: result.report.dataCompletenessPct,
+          })
+          .select()
+          .maybeSingle();
+
+        if (saveError || !saved) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to save outcome report' });
+        }
+        return saved;
+      } catch (err) {
+        Sentry.captureException(err, {
+          tags: { feature: 'longevity_outcome_report' },
+          extra: { protocolId: input.protocolId },
+        });
+        throw err instanceof TRPCError
+          ? err
+          : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Outcome report build failed' });
+      }
+    }),
+
+  outcomeReportGet: protectedProcedure
+    .input(z.object({ protocolId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const { data } = await sb
+        .from('longevity_outcome_reports')
+        .select('*')
+        .eq('protocol_id', input.protocolId)
+        .order('generated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    }),
+
+  outcomeReportUpdateNarrative: protectedProcedure
+    .input(z.object({
+      reportId: z.string().uuid(),
+      narrativeSummary: z.string().min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      const { data, error } = await sb
+        .from('longevity_outcome_reports')
+        .update({
+          narrative_summary: input.narrativeSummary,
+          narrative_generation_method: 'practitioner_override',
+        })
+        .eq('id', input.reportId)
+        .select()
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to save narrative' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Report not found' });
+      return data;
+    }),
+
+  outcomeReportApprove: protectedProcedure
+    .input(z.object({ reportId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      const { data, error } = await sb
+        .from('longevity_outcome_reports')
+        .update({
+          practitioner_approved: true,
+          approved_at: new Date().toISOString(),
+          approved_by: ctx.user.id,
+        })
+        .eq('id', input.reportId)
+        .select()
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to approve report' });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Report not found' });
+      return data;
+    }),
+
+  outcomeReportShare: protectedProcedure
+    .input(z.object({ reportId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      const { data, error } = await sb
+        .from('longevity_outcome_reports')
+        .update({
+          shared_with_patient: true,
+          shared_at: new Date().toISOString(),
+        })
+        .eq('id', input.reportId)
+        .eq('practitioner_approved', true)
+        .select()
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to share report' });
+      if (!data) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Report must be approved before sharing' });
+
+      // Queue an in-app notification so the patient sees "Results ready".
+      await sb.from('notification_queue').insert({
+        user_id: data.user_id,
+        date: new Date().toISOString().split('T')[0],
+        notification_type: 'longevity_outcome_ready',
+        payload_json: { reportId: data.id, protocolId: data.protocol_id },
+      });
+
+      return data;
+    }),
+
+  // ── Month 6 reassessment reminder ───────────────────────────
+
+  /**
+   * Practitioner-invokable check that queues a "upload Month 6 labs"
+   * notification when the patient has completed 80% of their progress items.
+   * Idempotent: won't duplicate for the same protocol.
+   */
+  checkReassessmentReminder: protectedProcedure
+    .input(z.object({ protocolId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+
+      const { data: protocol } = await sb
+        .from('longevity_protocols')
+        .select('id, user_id, status')
+        .eq('id', input.protocolId)
+        .maybeSingle();
+      if (!protocol) throw new TRPCError({ code: 'NOT_FOUND', message: 'Protocol not found' });
+
+      const { data: progressRows } = await sb
+        .from('longevity_protocol_progress')
+        .select('taken')
+        .eq('protocol_id', input.protocolId);
+
+      const total = (progressRows ?? []).length;
+      const taken = (progressRows ?? []).filter((r: any) => r.taken).length;
+      const pct = total > 0 ? (taken / total) * 100 : 0;
+
+      if (pct < 80) {
+        return { queued: false, reason: 'Below 80% adherence threshold', adherencePct: Math.round(pct) };
+      }
+
+      // De-dupe: skip if we already queued this reminder.
+      const { data: existing } = await sb
+        .from('notification_queue')
+        .select('id')
+        .eq('user_id', protocol.user_id)
+        .eq('notification_type', 'longevity_reassessment_due')
+        .contains('payload_json', { protocolId: input.protocolId })
+        .maybeSingle();
+      if (existing) return { queued: false, reason: 'Already queued', adherencePct: Math.round(pct) };
+
+      await sb.from('notification_queue').insert({
+        user_id: protocol.user_id,
+        date: new Date().toISOString().split('T')[0],
+        notification_type: 'longevity_reassessment_due',
+        payload_json: { protocolId: input.protocolId, adherencePct: Math.round(pct) },
+      });
+
+      return { queued: true, adherencePct: Math.round(pct) };
+    }),
+
+  // ── Clinic patient → longevity protocol lookup ───────────────
+
+  getLatestProtocolForClinicPatient: protectedProcedure
+    .input(z.object({ clinicPatientId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      // Resolve clinic patient → auth user via email.
+      const { data: patient } = await sb
+        .from('clinic_patients')
+        .select('email')
+        .eq('id', input.clinicPatientId)
+        .maybeSingle();
+      if (!patient?.email) return null;
+
+      const { data: profile } = await sb
+        .from('profiles')
+        .select('id')
+        .eq('email', patient.email)
+        .maybeSingle();
+      if (!profile?.id) return null;
+
+      const { data: protocol } = await sb
+        .from('longevity_protocols')
+        .select('*')
+        .eq('user_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return protocol;
+    }),
+
+  // ── Cohort analytics (anonymized aggregates) ────────────────
+
+  cohortStats: protectedProcedure
+    .input(z.object({ days: z.number().int().min(7).max(365).default(90) }).optional())
+    .query(async ({ ctx, input }) => {
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+      const roles = await getUserRoles(sb, ctx.user.id);
+      if (!roles.includes('practitioner') && !roles.includes('admin')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Practitioner or admin only' });
+      }
+      const days = input?.days ?? 90;
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+
+      const { data } = await sb
+        .from('longevity_outcome_reports')
+        .select('report, generated_at, data_completeness_pct')
+        .gte('generated_at', since)
+        .eq('practitioner_approved', true);
+
+      const rows = data ?? [];
+      const n = rows.length;
+
+      const truAgeDeltas: number[] = [];
+      const crpDeltas: number[] = [];
+      const hrvDeltas: number[] = [];
+      const completeness: number[] = [];
+
+      for (const row of rows) {
+        const r = (row as any).report;
+        const dc = (row as any).data_completeness_pct;
+        if (typeof dc === 'number') completeness.push(dc);
+        const ta = r?.biologicalAge?.deltaYears;
+        if (typeof ta === 'number') truAgeDeltas.push(ta);
+        const crpD = r?.inflammation?.crp?.deltaPercent;
+        if (typeof crpD === 'number') crpDeltas.push(crpD);
+        const hrvD = r?.wearables?.hrv?.deltaPercent;
+        if (typeof hrvD === 'number') hrvDeltas.push(hrvD);
+      }
+
+      const median = (arr: number[]): number | null => {
+        if (arr.length === 0) return null;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0
+          ? (sorted[mid - 1] + sorted[mid]) / 2
+          : sorted[mid];
+      };
+
+      return {
+        n,
+        windowDays: days,
+        medianTruAgeDeltaYears: median(truAgeDeltas),
+        medianCrpDeltaPercent: median(crpDeltas),
+        medianHrvDeltaPercent: median(hrvDeltas),
+        meanDataCompletenessPct: completeness.length > 0
+          ? Math.round(completeness.reduce((a, b) => a + b, 0) / completeness.length)
+          : null,
+      };
+    }),
 });

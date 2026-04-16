@@ -23,8 +23,34 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
+import OutcomeReportApprovalPanel from '@/components/outcome/OutcomeReportApprovalPanel';
 
-type TabType = 'overview' | 'labs' | 'biometrics' | 'alerts' | 'timeline';
+/**
+ * Bridges clinic patient id → longevity protocol id, then renders the
+ * approval panel. Handled as a small helper component so the tab renders
+ * cleanly even when the patient hasn't started a longevity protocol yet.
+ */
+function OutcomePanelForPatient({ clinicPatientId }: { clinicPatientId: string }) {
+  const protocolQuery = trpc.longevity.getLatestProtocolForClinicPatient.useQuery({ clinicPatientId });
+
+  if (protocolQuery.isLoading) {
+    return <Text style={{ fontSize: 13, color: Colors.textSecondary }}>Loading outcome report…</Text>;
+  }
+  const protocol = protocolQuery.data as any;
+  if (!protocol) {
+    return (
+      <View style={{ backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 20, alignItems: 'center' }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.text }}>No longevity protocol linked</Text>
+        <Text style={{ fontSize: 12, color: Colors.textSecondary, textAlign: 'center', marginTop: 6 }}>
+          This patient doesn't have a longevity protocol yet, or their email doesn't match an app user.
+        </Text>
+      </View>
+    );
+  }
+  return <OutcomeReportApprovalPanel protocolId={protocol.id} />;
+}
+
+type TabType = 'overview' | 'labs' | 'biometrics' | 'alerts' | 'timeline' | 'outcome';
 
 interface InfoRowProps {
   icon: React.ReactNode;
@@ -204,6 +230,7 @@ export default function PatientDetailScreen() {
     { key: 'overview', label: 'Overview' },
     { key: 'timeline', label: 'Timeline' },
     { key: 'alerts', label: 'Alerts' },
+    { key: 'outcome', label: 'Outcome Report' },
   ];
 
   const getStatusColor = () => {
@@ -419,6 +446,12 @@ export default function PatientDetailScreen() {
                 <Text style={styles.emptyText}>No active alerts</Text>
               </View>
             )}
+          </View>
+        )}
+
+        {activeTab === 'outcome' && id && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 24 }}>
+            <OutcomePanelForPatient clinicPatientId={id} />
           </View>
         )}
       </ScrollView>
