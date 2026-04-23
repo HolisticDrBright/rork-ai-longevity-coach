@@ -20,15 +20,6 @@ import {
   TrendDirection,
 } from '@/types/wearables';
 
-import {
-  generateMockRecords,
-  generateMockMealLogs,
-  generateMockSupplementLogs,
-  generateMockSymptomLogs,
-  mockConnections,
-  generateMockInsights,
-} from '@/mocks/wearables';
-
 import { generateDailyRecommendation } from '@/utils/wearables/recommendationEngine';
 import { generateBaseline, computeDataCompleteness, computeAllDeviations, DataCompletenessResult, BaselineDeviation } from '@/utils/wearables/baselineEngine';
 import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend } from '@/utils/wearables/trendEngine';
@@ -65,7 +56,7 @@ function computeChangePercent(data: (number | null)[]): number {
 
 export const [WearablesProvider, useWearables] = createContextHook(() => {
   const queryClient = useQueryClient();
-  const [connections, setConnections] = useState<WearableConnection[]>(mockConnections);
+  const [connections, setConnections] = useState<WearableConnection[]>([]);
   const [records, setRecords] = useState<DailyBiometricRecord[]>([]);
   const [baseline, setBaseline] = useState<UserBaseline | null>(null);
   const [mealLogs, setMealLogs] = useState<MealLogEntry[]>([]);
@@ -79,10 +70,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     queryKey: ['wearables_records'],
     queryFn: async () => {
       const stored = await secureGetJSON<DailyBiometricRecord[]>(STORAGE_KEYS.RECORDS);
-      if (stored && stored.length > 0) return stored;
-      const mock = generateMockRecords(30);
-      await secureSetJSON(STORAGE_KEYS.RECORDS, mock);
-      return mock;
+      return stored ?? [];
     },
   });
 
@@ -90,18 +78,17 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     queryKey: ['wearables_connections'],
     queryFn: async () => {
       const stored = await secureGetJSON<WearableConnection[]>(STORAGE_KEYS.CONNECTIONS);
-      return stored ?? mockConnections;
+      return stored ?? [];
     },
   });
 
   useEffect(() => {
     if (recordsQuery.data) {
       setRecords(recordsQuery.data);
-      const bl = generateBaseline(recordsQuery.data);
-      setBaseline(bl);
-      setMealLogs(generateMockMealLogs(7));
-      setSupplementLogs(generateMockSupplementLogs(7));
-      setSymptomLogs(generateMockSymptomLogs(14));
+      if (recordsQuery.data.length > 0) {
+        const bl = generateBaseline(recordsQuery.data);
+        setBaseline(bl);
+      }
     }
   }, [recordsQuery.data]);
 
@@ -116,7 +103,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
 
   const insights = useMemo((): InsightMessage[] => {
     if (records.length === 0) return [];
-    return generateMockInsights(records);
+    return [];
   }, [records]);
 
   const scores = useMemo((): AllScores | null => {
@@ -194,17 +181,18 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
 
   const refreshData = useMutation({
     mutationFn: async () => {
-      const mock = generateMockRecords(30);
-      await secureSetJSON(STORAGE_KEYS.RECORDS, mock);
+      // Real wearable sync will pull from connected device APIs.
+      // For now, invalidate the cache so the query re-fetches stored data.
       await writeAuditLog('PHI_UPDATE', 'wearables_sync', 'user');
-      return mock;
+      const stored = await secureGetJSON<DailyBiometricRecord[]>(STORAGE_KEYS.RECORDS);
+      return stored ?? [];
     },
     onSuccess: (data) => {
       setRecords(data);
-      const bl = generateBaseline(data);
-      setBaseline(bl);
-      setMealLogs(generateMockMealLogs(7));
-      setSupplementLogs(generateMockSupplementLogs(7));
+      if (data.length > 0) {
+        const bl = generateBaseline(data);
+        setBaseline(bl);
+      }
       setAiInsight(null);
       void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },
