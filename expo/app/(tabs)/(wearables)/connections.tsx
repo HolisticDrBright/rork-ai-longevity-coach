@@ -22,6 +22,24 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
+
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  apple_health_kit: 'Apple Health',
+  apple_health: 'Apple Health',
+  health_connect: 'Health Connect',
+  oura: 'Oura Ring',
+  fitbit: 'Fitbit',
+  whoop: 'WHOOP',
+  garmin: 'Garmin',
+  withings: 'Withings',
+  polar: 'Polar',
+  eight_sleep: 'Eight Sleep',
+  strava: 'Strava',
+};
+
+function displayName(slug: string): string {
+  return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
+}
 import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 export default function ConnectionsScreen() {
@@ -41,7 +59,7 @@ export default function ConnectionsScreen() {
   const handleDisconnect = useCallback((provider: string) => {
     Alert.alert(
       'Disconnect device',
-      `Are you sure you want to disconnect ${provider}? Historical data will be preserved.`,
+      `Are you sure you want to disconnect ${displayName(provider)}? Historical data will be preserved.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -137,7 +155,7 @@ export default function ConnectionsScreen() {
                   <Watch size={20} color={Colors.primary} />
                 </View>
                 <View style={styles.deviceInfo}>
-                  <Text style={styles.deviceName}>{conn.source}</Text>
+                  <Text style={styles.deviceName}>{displayName(conn.source)}</Text>
                   {conn.lastSync && (
                     <View style={styles.syncRow}>
                       <Clock size={11} color={Colors.textTertiary} />
@@ -233,7 +251,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   deviceInfo: { flex: 1, gap: 4 },
-  deviceName: { fontSize: 15, fontWeight: '600', color: Colors.text, textTransform: 'capitalize' },
+  deviceName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   syncText: { fontSize: 11, color: Colors.textTertiary },
   disconnectButton: {

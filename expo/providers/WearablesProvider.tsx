@@ -162,7 +162,8 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     mutationFn: async () => {
       return healthService.connectDevice();
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      void writeAuditLog('PHI_UPDATE', 'wearable_connection', `connected:${result.newProvider ?? 'unknown'}`);
       void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
       void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },
@@ -171,8 +172,10 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   const disconnectDevice = useMutation({
     mutationFn: async (provider: string) => {
       await healthService.disconnectProvider(provider);
+      return provider;
     },
-    onSuccess: () => {
+    onSuccess: (provider) => {
+      void writeAuditLog('PHI_UPDATE', 'wearable_connection', `disconnected:${provider}`);
       void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
     },
   });
