@@ -288,3 +288,27 @@ export async function hasConnections(): Promise<boolean> {
 export function isReady(): boolean {
   return isInitialized();
 }
+
+/**
+ * Trigger a historical backfill from last_sync_at forward.
+ *
+ * On first connect, Junction's Health SDK is configured with
+ * numberOfDaysToBackFill = 180. This function triggers a manual sync
+ * which pushes that historical data through the webhook pipeline.
+ * The webhook's idempotent upsert makes re-runs safe.
+ *
+ * After backfill completes, updates last_sync_at on the connection.
+ */
+export async function requestBackfill(): Promise<SyncResult> {
+  if (!isInitialized()) {
+    return { inserted: 0, skipped: 0, errors: ['SDK not initialized'] };
+  }
+
+  try {
+    await triggerSync();
+    await refreshConnectionList();
+    return { inserted: 0, skipped: 0, errors: [] };
+  } catch (err) {
+    return { inserted: 0, skipped: 0, errors: [(err as Error).message] };
+  }
+}

@@ -34,6 +34,8 @@ import {
   BarChart3,
   X,
   CircleAlert,
+  Watch,
+  Plus,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
@@ -102,10 +104,36 @@ export default function WearablesTodayScreen() {
     );
   }
 
+  const connectedCount = connections.filter(c => c.connected).length;
+
+  // Empty state when no devices connected — CTA only, not persistent
+  if (connectedCount === 0 && !isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 14 }}>
+        <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center' }}>
+          <Watch size={32} color={Colors.textTertiary} />
+        </View>
+        <Text style={{ fontSize: 20, fontWeight: '700' as const, color: Colors.text }}>No wearable data yet</Text>
+        <Text style={{ fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20, maxWidth: 300 }}>
+          Connect a device to see your sleep, HRV, recovery, and activity trends here.
+        </Text>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 14, marginTop: 8 }}
+          onPress={() => router.push('/(tabs)/(wearables)/connections' as never)}
+        >
+          <Plus color="#fff" size={18} />
+          <Text style={{ fontSize: 15, fontWeight: '700' as const, color: '#fff' }}>Connect a device</Text>
+        </TouchableOpacity>
+        <Text style={{ fontSize: 12, color: Colors.textTertiary, textAlign: 'center' }}>
+          Works with Oura, Fitbit, Apple Health, Health Connect, Garmin, Whoop, and more.
+        </Text>
+      </View>
+    );
+  }
+
   const rec = recommendation;
   const status = rec?.recoveryStatus ?? 'yellow';
   const statusConfig = statusColors[status];
-  const connectedCount = connections.filter(c => c.connected).length;
   const activeNotifications = notifications.filter(n => !n.dismissed);
   const notableDeviations = baselineDeviations.filter(d => d.classification !== 'normal');
 
