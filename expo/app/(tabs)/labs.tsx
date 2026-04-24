@@ -248,8 +248,8 @@ export default function LabsScreen() {
 
     if (analysisResult.supplements.length > 0 || analysisResult.herbs.length > 0) {
       sendLabsWebhook(
-        userProfile.id || 'unknown',
-        userProfile.email || '',
+        userProfile?.id || 'unknown',
+        userProfile?.email || '',
         'comprehensive_panel',
         [...analysisResult.supplements, ...analysisResult.herbs],
       );

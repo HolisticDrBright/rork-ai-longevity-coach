@@ -40,7 +40,7 @@ export const biometricsRouter = createTRPCRouter({
     .input(z.object({ code: z.string() }))
     .query(async ({ ctx, input }): Promise<BiometricType | null> => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      const { data } = await sb.from('clinic_biometric_types').select('*').eq('code', input.code).single();
+      const { data } = await sb.from('clinic_biometric_types').select('*').eq('code', input.code).maybeSingle();
       if (!data) return null;
       return mapDbToBiometricType(data);
     }),
@@ -65,7 +65,7 @@ export const biometricsRouter = createTRPCRouter({
 
       let typeId = input.biometricTypeId;
       if (!typeId && input.biometricCode) {
-        const { data: t } = await sb.from('clinic_biometric_types').select('id').eq('code', input.biometricCode).single();
+        const { data: t } = await sb.from('clinic_biometric_types').select('id').eq('code', input.biometricCode).maybeSingle();
         if (t) typeId = t.id;
       }
 
@@ -123,10 +123,10 @@ export const biometricsRouter = createTRPCRouter({
       let biometricType: BiometricType | undefined;
 
       if (input.biometricTypeId) {
-        const { data } = await sb.from('clinic_biometric_types').select('*').eq('id', input.biometricTypeId).single();
+        const { data } = await sb.from('clinic_biometric_types').select('*').eq('id', input.biometricTypeId).maybeSingle();
         if (data) biometricType = mapDbToBiometricType(data);
       } else if (input.biometricCode) {
-        const { data } = await sb.from('clinic_biometric_types').select('*').eq('code', input.biometricCode).single();
+        const { data } = await sb.from('clinic_biometric_types').select('*').eq('code', input.biometricCode).maybeSingle();
         if (data) biometricType = mapDbToBiometricType(data);
       }
 
@@ -152,7 +152,7 @@ export const biometricsRouter = createTRPCRouter({
           status,
         })
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to add reading' });
@@ -163,12 +163,27 @@ export const biometricsRouter = createTRPCRouter({
     }),
 
   deleteReading: protectedProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ id: z.string(), patientId: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Biometrics] Deleting reading');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      const { error } = await sb.from('clinic_biometric_readings').delete().eq('id', input.id);
+      // Verify the clinician owns this patient before allowing delete
+      const { data: patient } = await sb
+        .from('clinic_patients')
+        .select('id')
+        .eq('id', input.patientId)
+        .eq('clinician_id', ctx.user.id)
+        .maybeSingle();
+      if (!patient) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to modify this patient' });
+      }
+
+      const { error } = await sb
+        .from('clinic_biometric_readings')
+        .delete()
+        .eq('id', input.id)
+        .eq('patient_id', input.patientId);
       if (error) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Reading not found' });
       }
@@ -264,7 +279,7 @@ export const biometricsRouter = createTRPCRouter({
       console.log('[Biometrics] Getting glucose stats');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      const { data: glucoseType } = await sb.from('clinic_biometric_types').select('id').eq('code', 'glucose').single();
+      const { data: glucoseType } = await sb.from('clinic_biometric_types').select('id').eq('code', 'glucose').maybeSingle();
       if (!glucoseType) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Glucose type not configured' });
       }
@@ -276,7 +291,7 @@ export const biometricsRouter = createTRPCRouter({
         .from('clinic_patient_thresholds')
         .select('glucose_high,glucose_low')
         .eq('patient_id', input.patientId)
-        .single();
+        .maybeSingle();
 
       const highThreshold = (thresholdRow?.glucose_high as number) ?? 180;
       const lowThreshold = (thresholdRow?.glucose_low as number) ?? 70;
@@ -323,7 +338,7 @@ export const biometricsRouter = createTRPCRouter({
         .from('clinic_patient_thresholds')
         .select('*')
         .eq('patient_id', input.patientId)
-        .single();
+        .maybeSingle();
 
       if (data) return mapDbToThresholds(data);
 
@@ -375,7 +390,7 @@ export const biometricsRouter = createTRPCRouter({
         .from('clinic_patient_thresholds')
         .upsert(upsertData, { onConflict: 'patient_id' })
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to update thresholds' });
