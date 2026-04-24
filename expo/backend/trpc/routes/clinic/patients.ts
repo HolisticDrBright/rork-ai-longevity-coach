@@ -430,7 +430,17 @@ export const patientsRouter = createTRPCRouter({
       })
     )
     .mutation(
-      async (): Promise<{ downloadUrl: string; expiresAt: string }> => {
+      async ({ ctx, input }): Promise<{ downloadUrl: string; expiresAt: string }> => {
+        const sb = createServerSupabaseClient(ctx.sessionToken);
+        const { data: patient } = await sb
+          .from('clinic_patients')
+          .select('id')
+          .eq('id', input.patientId)
+          .eq('clinician_id', ctx.user.id)
+          .maybeSingle();
+        if (!patient) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Patient not found or access denied' });
+        }
         console.log('[Patients] Exporting patient record');
         return {
           downloadUrl: `https://example.com/exports/pending`,
@@ -443,7 +453,7 @@ export const patientsRouter = createTRPCRouter({
     console.log('[Patients] Getting all patient tags');
     const sb = createServerSupabaseClient(ctx.sessionToken);
 
-    const { data } = await sb.from('clinic_patients').select('tags');
+    const { data } = await sb.from('clinic_patients').select('tags').eq('clinician_id', ctx.user.id);
 
     const tagsSet = new Set<string>();
     (data ?? []).forEach((row: Record<string, unknown>) => {
