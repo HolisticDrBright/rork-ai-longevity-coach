@@ -1,7 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 
 import {
@@ -13,34 +12,20 @@ import {
   SupplementLogEntry,
   SymptomLogEntry,
   WearableConnection,
-  WearableSource,
   AllScores,
   TrendSeries,
   TrendDataPoint,
   TrendDirection,
 } from '@/types/wearables';
 
-import {
-  generateMockRecords,
-  generateMockMealLogs,
-  generateMockSupplementLogs,
-  generateMockSymptomLogs,
-  mockConnections,
-  generateMockInsights,
-} from '@/mocks/wearables';
+import * as healthService from '@/services/health/healthService';
+import type { ProviderConnection } from '@/services/health/types';
 
 import { generateDailyRecommendation } from '@/utils/wearables/recommendationEngine';
 import { generateBaseline, computeDataCompleteness, computeAllDeviations, DataCompletenessResult, BaselineDeviation } from '@/utils/wearables/baselineEngine';
 import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend } from '@/utils/wearables/trendEngine';
 import { generateNotifications, generatePractitionerFlags, NotificationItem, PractitionerFlag } from '@/utils/wearables/notificationEngine';
 import { composeAIInsight, AIInsightOutput } from '@/utils/wearables/aiInsightComposer';
-
-const STORAGE_KEYS = {
-  CONNECTIONS: 'wearables_connections',
-  RECORDS: 'wearables_records',
-  BASELINE: 'wearables_baseline',
-  AI_INSIGHT: 'wearables_ai_insight',
-};
 
 function computeTrendDirection(data: (number | null)[]): TrendDirection {
   const valid = data.filter((v): v is number => v !== null);
@@ -63,51 +48,58 @@ function computeChangePercent(data: (number | null)[]): number {
   return Math.round(((last - first) / Math.max(first, 1)) * 100);
 }
 
+function mapProviderToLegacy(p: ProviderConnection): WearableConnection {
+  return {
+    id: p.id,
+    source: p.provider as WearableConnection['source'],
+    connected: p.status === 'active' || p.status === 'connecting',
+    lastSync: p.lastSyncAt,
+    permissions: [],
+  };
+}
+
 export const [WearablesProvider, useWearables] = createContextHook(() => {
   const queryClient = useQueryClient();
-  const [connections, setConnections] = useState<WearableConnection[]>(mockConnections);
   const [records, setRecords] = useState<DailyBiometricRecord[]>([]);
   const [baseline, setBaseline] = useState<UserBaseline | null>(null);
-  const [mealLogs, setMealLogs] = useState<MealLogEntry[]>([]);
-  const [supplementLogs, setSupplementLogs] = useState<SupplementLogEntry[]>([]);
-  const [symptomLogs, setSymptomLogs] = useState<SymptomLogEntry[]>([]);
+  const [mealLogs] = useState<MealLogEntry[]>([]);
+  const [supplementLogs] = useState<SupplementLogEntry[]>([]);
+  const [symptomLogs] = useState<SymptomLogEntry[]>([]);
   const [aiInsight, setAiInsight] = useState<AIInsightOutput | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [practitionerFlags, setPractitionerFlags] = useState<PractitionerFlag[]>([]);
 
+  // Records now come from Supabase via healthService
   const recordsQuery = useQuery({
     queryKey: ['wearables_records'],
     queryFn: async () => {
-      const stored = await secureGetJSON<DailyBiometricRecord[]>(STORAGE_KEYS.RECORDS);
-      if (stored && stored.length > 0) return stored;
-      const mock = generateMockRecords(30);
-      await secureSetJSON(STORAGE_KEYS.RECORDS, mock);
-      return mock;
+      const toDate = new Date().toISOString().substring(0, 10);
+      const fromDate = new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
+      return healthService.getDailyRecords(fromDate, toDate);
     },
+    refetchInterval: 5 * 60 * 1000,
   });
 
+  // Connections now come from Supabase via healthService
   const connectionsQuery = useQuery({
     queryKey: ['wearables_connections'],
     queryFn: async () => {
-      const stored = await secureGetJSON<WearableConnection[]>(STORAGE_KEYS.CONNECTIONS);
-      return stored ?? mockConnections;
+      const conns = await healthService.listConnections();
+      return conns.map(mapProviderToLegacy);
     },
   });
+
+  const connections = connectionsQuery.data ?? [];
 
   useEffect(() => {
     if (recordsQuery.data) {
       setRecords(recordsQuery.data);
-      const bl = generateBaseline(recordsQuery.data);
-      setBaseline(bl);
-      setMealLogs(generateMockMealLogs(7));
-      setSupplementLogs(generateMockSupplementLogs(7));
-      setSymptomLogs(generateMockSymptomLogs(14));
+      if (recordsQuery.data.length > 0) {
+        const bl = generateBaseline(recordsQuery.data);
+        setBaseline(bl);
+      }
     }
   }, [recordsQuery.data]);
-
-  useEffect(() => {
-    if (connectionsQuery.data) setConnections(connectionsQuery.data);
-  }, [connectionsQuery.data]);
 
   const recommendation = useMemo((): DailyRecommendation | null => {
     if (records.length === 0 || !baseline) return null;
@@ -115,9 +107,8 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   }, [records, baseline, mealLogs, supplementLogs]);
 
   const insights = useMemo((): InsightMessage[] => {
-    if (records.length === 0) return [];
-    return generateMockInsights(records);
-  }, [records]);
+    return [];
+  }, []);
 
   const scores = useMemo((): AllScores | null => {
     return recommendation?.scores ?? null;
@@ -152,8 +143,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
       if (!todayRecord || !scores || !baseline) {
         throw new Error('Missing data for AI insight');
       }
-      console.log('[WearablesProvider] Generating AI insight...');
-      const result = await composeAIInsight({
+      return composeAIInsight({
         record: todayRecord,
         scores,
         deviations: baselineDeviations,
@@ -163,48 +153,45 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
         supplements: supplementLogs,
         baseline,
       });
-      await secureSetJSON(STORAGE_KEYS.AI_INSIGHT, result);
-      return result;
     },
-    onSuccess: (data) => {
-      setAiInsight(data);
-      console.log('[WearablesProvider] AI insight generated successfully');
+    onSuccess: (data) => setAiInsight(data),
+  });
+
+  // Connect/disconnect now go through healthService
+  const connectDevice = useMutation({
+    mutationFn: async () => {
+      return healthService.connectDevice();
     },
-    onError: (error) => {
-      console.error('[WearablesProvider] AI insight generation failed:', error);
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
+      void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },
   });
 
-  const toggleConnection = useMutation({
-    mutationFn: async (source: WearableSource) => {
-      const updated = connections.map(c =>
-        c.source === source
-          ? { ...c, connected: !c.connected, lastSync: !c.connected ? new Date().toISOString() : null }
-          : c
-      );
-      await secureSetJSON(STORAGE_KEYS.CONNECTIONS, updated);
-      await writeAuditLog('PHI_UPDATE', 'wearable_connection', source);
-      return updated;
+  const disconnectDevice = useMutation({
+    mutationFn: async (provider: string) => {
+      await healthService.disconnectProvider(provider);
     },
-    onSuccess: (data) => {
-      setConnections(data);
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
     },
   });
 
+  // Refresh triggers a Junction sync
   const refreshData = useMutation({
     mutationFn: async () => {
-      const mock = generateMockRecords(30);
-      await secureSetJSON(STORAGE_KEYS.RECORDS, mock);
+      await healthService.syncAll();
       await writeAuditLog('PHI_UPDATE', 'wearables_sync', 'user');
-      return mock;
+      const toDate = new Date().toISOString().substring(0, 10);
+      const fromDate = new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
+      return healthService.getDailyRecords(fromDate, toDate);
     },
     onSuccess: (data) => {
       setRecords(data);
-      const bl = generateBaseline(data);
-      setBaseline(bl);
-      setMealLogs(generateMockMealLogs(7));
-      setSupplementLogs(generateMockSupplementLogs(7));
+      if (data.length > 0) {
+        const bl = generateBaseline(data);
+        setBaseline(bl);
+      }
       setAiInsight(null);
       void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },
@@ -217,16 +204,10 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   const getTrendSeries = useCallback((metric: string, days: number = 14): TrendSeries => {
     const slice = records.slice(0, days);
     const colorMap: Record<string, string> = {
-      hrv: '#4A90D9',
-      restingHr: '#E76F51',
-      sleepScore: '#7C3AED',
-      sleepDuration: '#2563EB',
-      steps: '#16A34A',
-      readinessScore: '#0D9488',
-      adherenceScore: '#F59E0B',
-      stressScore: '#EF4444',
+      hrv: '#4A90D9', restingHr: '#E76F51', sleepScore: '#7C3AED',
+      sleepDuration: '#2563EB', steps: '#16A34A', readinessScore: '#0D9488',
+      adherenceScore: '#F59E0B', stressScore: '#EF4444',
     };
-
     const getData = (r: DailyBiometricRecord): number | null => {
       switch (metric) {
         case 'hrv': return r.hrv;
@@ -244,17 +225,9 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
         default: return null;
       }
     };
-
     const data: TrendDataPoint[] = slice.map(r => ({ date: r.date, value: getData(r) })).reverse();
     const values = data.map(d => d.value);
-
-    return {
-      label: metric,
-      color: colorMap[metric] ?? '#6B7280',
-      data,
-      direction: computeTrendDirection(values),
-      changePercent: computeChangePercent(values),
-    };
+    return { label: metric, color: colorMap[metric] ?? '#6B7280', data, direction: computeTrendDirection(values), changePercent: computeChangePercent(values) };
   }, [records]);
 
   const getTrendAnalysis = useCallback((metric: string, days: number = 14, higherIsBetter: boolean = true): TrendAnalysis => {
@@ -299,7 +272,8 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     symptomLogs,
     isLoading,
     isRefreshing: refreshData.isPending,
-    toggleConnection: toggleConnection.mutate,
+    connectDevice: connectDevice.mutate,
+    disconnectDevice: disconnectDevice.mutate,
     refreshData: refreshData.mutate,
     getTrendSeries,
     getTrendAnalysis,
@@ -313,11 +287,13 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     notifications: notifications.filter(n => !n.dismissed),
     practitionerFlags,
     dismissNotification,
+    hasConnections: connections.some(c => c.connected),
   }), [
     connections, records, todayRecord, baseline, recommendation,
     insights, scores, mealLogs, supplementLogs, symptomLogs,
-    isLoading, refreshData.isPending, toggleConnection.mutate,
-    refreshData.mutate, getTrendSeries, getTrendAnalysis,
+    isLoading, refreshData.isPending, connectDevice.mutate,
+    disconnectDevice.mutate, refreshData.mutate,
+    getTrendSeries, getTrendAnalysis,
     getWeekdayWeekendEffect, getCycleLinkedTrends,
     dataCompleteness, baselineDeviations,
     aiInsight, generateAIInsightMutation.isPending,
