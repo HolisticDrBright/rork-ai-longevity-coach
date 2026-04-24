@@ -21,6 +21,73 @@ import type {
   ProviderConnection,
   SyncResult,
 } from './types';
+import type { DailyBiometricRecord } from '@/types/wearables';
+
+/**
+ * Map a Supabase row (snake_case) → DailyBiometricRecord (camelCase).
+ * This is the typing boundary: nothing downstream sees `any`.
+ */
+function mapDbRowToDailyBiometricRecord(row: Record<string, unknown>): DailyBiometricRecord {
+  return {
+    id: String(row.id ?? ''),
+    userId: String(row.user_id ?? ''),
+    source: (row.primary_source ?? 'manual') as any,
+    date: String(row.date ?? ''),
+    sleepDurationMinutes: row.sleep_duration_minutes as number | null ?? null,
+    sleepEfficiency: row.sleep_efficiency as number | null ?? null,
+    deepSleepMinutes: row.deep_sleep_minutes as number | null ?? null,
+    remSleepMinutes: row.rem_sleep_minutes as number | null ?? null,
+    lightSleepMinutes: row.light_sleep_minutes as number | null ?? null,
+    sleepLatencyMinutes: row.sleep_latency_minutes as number | null ?? null,
+    wakeAfterSleepOnset: row.wake_after_sleep_onset_minutes as number | null ?? null,
+    awakenings: row.awakenings as number | null ?? null,
+    sleepScore: row.sleep_score as number | null ?? null,
+    bedtime: row.bedtime as string | null ?? null,
+    wakeTime: row.wake_time as string | null ?? null,
+    hrv: row.hrv as number | null ?? null,
+    restingHr: row.resting_hr as number | null ?? null,
+    avgHr: row.avg_hr as number | null ?? null,
+    nighttimeHr: null,
+    respiratoryRate: row.respiratory_rate as number | null ?? null,
+    tempDeviation: row.temp_deviation as number | null ?? null,
+    skinTemp: null,
+    readinessScore: row.readiness_score_vendor as number | null ?? null,
+    stressScoreDevice: row.stress_score_vendor as number | null ?? null,
+    steps: row.steps as number | null ?? null,
+    distanceKm: row.distance_meters != null ? Number(row.distance_meters) / 1000 : null,
+    caloriesBurned: row.calories_burned as number | null ?? null,
+    activeMinutes: row.active_minutes as number | null ?? null,
+    sedentaryMinutes: row.sedentary_minutes as number | null ?? null,
+    vo2Max: row.vo2max as number | null ?? null,
+    workoutMinutes: row.workout_minutes as number | null ?? null,
+    workoutType: null,
+    trainingLoad: row.training_load as number | null ?? null,
+    strainScore: row.strain_score as number | null ?? null,
+    weight: row.weight_kg as number | null ?? null,
+    bodyFatPercent: row.body_fat_percent as number | null ?? null,
+    spo2: row.spo2 as number | null ?? null,
+    glucoseAvg: row.glucose_avg as number | null ?? null,
+    bloodPressureSystolic: row.systolic_bp as number | null ?? null,
+    bloodPressureDiastolic: row.diastolic_bp as number | null ?? null,
+    cyclePhase: (row.cycle_phase ?? null) as any,
+    cycleDayEstimate: null,
+    hydrationMl: row.hydration_ml as number | null ?? null,
+    alcoholUnits: row.alcohol_units as number | null ?? null,
+    caffeineMg: row.caffeine_mg as number | null ?? null,
+    caffeineLastTime: null,
+    energyScore: row.energy_score_subjective as number | null ?? null,
+    stressScoreSubjective: row.stress_score_subjective as number | null ?? null,
+    sorenessScore: row.soreness_score_subjective as number | null ?? null,
+    moodScore: row.mood_score_subjective as number | null ?? null,
+    libidoScore: row.libido_score_subjective as number | null ?? null,
+    bowelScore: row.bowel_score_subjective as number | null ?? null,
+    cravingsScore: row.cravings_score_subjective as number | null ?? null,
+    adherenceScore: row.adherence_score_raw as number | null ?? null,
+    subjectiveReadiness: null,
+    symptomFlags: Array.isArray(row.symptom_flags_json) ? row.symptom_flags_json : [],
+    dataQualityScore: Number(row.data_quality_score ?? 0),
+  };
+}
 
 /**
  * Initialize the wearable data layer. Call once after the user is authenticated.
@@ -58,14 +125,18 @@ export async function connectDevice(): Promise<{
     }
   }
 
-  // Open Junction Link for cloud providers
+  // Open Junction Link for cloud providers.
+  // v6 Link is web-based and doesn't return which provider was connected.
+  // We use write-ahead: insert a 'connecting' placeholder, then the webhook
+  // updates it to 'active' when first data arrives. The UI polls
+  // refreshConnectionList() to pick up the change.
   try {
     await openProviderLink();
   } catch (err) {
     console.log('[Health] Link flow completed or cancelled', err);
   }
 
-  // Refresh the connection list in Supabase
+  // Refresh immediately to pick up any new connections Junction knows about
   await refreshConnectionList();
 
   return { success: true, permissionResult: permResult };
@@ -152,7 +223,7 @@ export async function syncAll(): Promise<SyncResult> {
 export async function getDailyRecords(
   fromDate: string,
   toDate: string,
-): Promise<any[]> {
+): Promise<DailyBiometricRecord[]> {
   const { data, error } = await supabase
     .from('daily_biometric_records')
     .select('*')
@@ -164,7 +235,7 @@ export async function getDailyRecords(
     console.error('[Health] Failed to fetch daily records', error);
     return [];
   }
-  return data ?? [];
+  return (data ?? []).map(row => mapDbRowToDailyBiometricRecord(row as Record<string, unknown>));
 }
 
 /**

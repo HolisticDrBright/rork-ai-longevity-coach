@@ -11,6 +11,7 @@ import { useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as healthService from '@/services/health/healthService';
 import type { ProviderConnection } from '@/services/health/types';
+import type { DailyBiometricRecord } from '@/types/wearables';
 
 const RECORDS_KEY = 'health_daily_records';
 const CONNECTIONS_KEY = 'health_connections';
