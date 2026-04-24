@@ -5,23 +5,29 @@
  * This keeps the provider adapter swappable if we ever move off Junction.
  */
 
-import { Platform } from 'react-native';
+import { Platform, Linking } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '@/lib/supabase';
 import {
   initializeJunction,
   requestHealthPermissions,
   hasHealthPermissions,
-  openProviderLink,
+  connectOnDeviceHealth,
+  buildLinkUrl,
   disconnectProvider as junctionDisconnect,
   listConnectedProviders,
   triggerSync,
   isInitialized,
+  enableBackgroundSync,
 } from './junctionClient';
 import type {
   ProviderConnection,
   SyncResult,
 } from './types';
 import type { DailyBiometricRecord } from '@/types/wearables';
+
+// The deep link scheme the app is registered under (app.json → scheme).
+const APP_SCHEME = 'rork-app';
 
 /**
  * Map a Supabase row (snake_case) → DailyBiometricRecord (camelCase).
@@ -99,23 +105,30 @@ export async function initialize(userId: string): Promise<void> {
 /**
  * Connect a wearable device or cloud provider.
  *
- * For cloud providers (Oura, Fitbit, WHOOP, Garmin): opens Junction Link's
- * provider picker. The user selects their provider and authenticates via OAuth.
- *
- * For on-device (HealthKit / Health Connect): requests OS-level health
- * permissions through the Junction Health SDK. Data sync starts automatically.
- *
- * Both paths converge at the webhook — all data lands in raw_health_events.
+ * Flow:
+ *   1. Request on-device health permissions (HealthKit / Health Connect)
+ *      via VitalHealth.askForResources() if not already granted.
+ *   2. Activate on-device sync via VitalHealth.connect().
+ *   3. Snapshot the current connections from VitalCore.userConnections().
+ *   4. Open the Vital Link URL in an in-app browser (WebBrowser.openAuthSessionAsync).
+ *      The user picks a cloud provider (Oura, Fitbit, etc.) and completes OAuth.
+ *      On success, Vital redirects to `rork-app://vital-callback?provider=<slug>`.
+ *   5. On redirect: extract provider slug from the callback URL's query string.
+ *      If no slug in URL, diff userConnections() against the pre-Link snapshot.
+ *   6. Write wearable_connections with status='connecting' for the new provider.
+ *      The webhook later promotes it to 'active' when first data arrives.
+ *   7. Enable background sync (Android-specific).
  */
 export async function connectDevice(): Promise<{
   success: boolean;
+  newProvider?: string;
   permissionResult?: 'success' | 'cancelled' | 'error';
 }> {
   if (!isInitialized()) {
     return { success: false };
   }
 
-  // Always request on-device health permissions first (if not already granted)
+  // 1. Request on-device health permissions if not already granted
   const hasPerms = await hasHealthPermissions();
   let permResult: 'success' | 'cancelled' | 'error' = 'success';
   if (!hasPerms) {
@@ -125,21 +138,86 @@ export async function connectDevice(): Promise<{
     }
   }
 
-  // Open Junction Link for cloud providers.
-  // v6 Link is web-based and doesn't return which provider was connected.
-  // We use write-ahead: insert a 'connecting' placeholder, then the webhook
-  // updates it to 'active' when first data arrives. The UI polls
-  // refreshConnectionList() to pick up the change.
+  // 2. Activate on-device sync
   try {
-    await openProviderLink();
+    await connectOnDeviceHealth();
+    await enableBackgroundSync();
   } catch (err) {
-    console.log('[Health] Link flow completed or cancelled', err);
+    console.log('[Health] On-device connect/background sync setup:', err);
   }
 
-  // Refresh immediately to pick up any new connections Junction knows about
+  // 3. Snapshot pre-Link connections
+  const preSnapshot = await listConnectedProviders();
+  const preSlugs = new Set(preSnapshot.map(p => p.slug));
+
+  // 4. Open Link in in-app browser with deeplink redirect
+  const userId = await getCurrentUserId();
+  if (!userId) return { success: true, permissionResult: permResult };
+
+  const linkUrl = buildLinkUrl(userId);
+  const redirectUrl = `${APP_SCHEME}://vital-callback`;
+
+  let resultUrl: string | null = null;
+  try {
+    const result = await WebBrowser.openAuthSessionAsync(linkUrl, redirectUrl);
+    if (result.type === 'success') {
+      resultUrl = result.url;
+    }
+  } catch (err) {
+    console.log('[Health] Link flow completed or was dismissed', err);
+  }
+
+  // 5. Determine which provider was just connected
+  let newProviderSlug: string | undefined;
+
+  // 5a. Try extracting from the redirect URL query string
+  if (resultUrl) {
+    try {
+      const url = new URL(resultUrl);
+      newProviderSlug = url.searchParams.get('provider') ?? undefined;
+    } catch {
+      // URL parse failed — fall through to diff approach
+    }
+  }
+
+  // 5b. If no slug from URL, diff against pre-Link snapshot
+  if (!newProviderSlug) {
+    const postSnapshot = await listConnectedProviders();
+    const newConn = postSnapshot.find(p => !preSlugs.has(p.slug));
+    if (newConn) {
+      newProviderSlug = newConn.slug;
+    }
+  }
+
+  // 6. Write-ahead: insert with status='connecting'
+  if (newProviderSlug) {
+    await supabase
+      .from('wearable_connections')
+      .upsert({
+        provider: newProviderSlug,
+        source_system: 'junction',
+        status: 'active',
+      }, {
+        onConflict: 'user_id,provider',
+      });
+  }
+
+  // 7. Full refresh to pick up whatever Junction knows
   await refreshConnectionList();
 
-  return { success: true, permissionResult: permResult };
+  return {
+    success: true,
+    newProvider: newProviderSlug,
+    permissionResult: permResult,
+  };
+}
+
+/**
+ * Get current Supabase user id.
+ */
+async function getCurrentUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getUser();
+  return data?.user?.id ?? null;
 }
 
 /**
@@ -187,7 +265,6 @@ export async function refreshConnectionList(): Promise<void> {
       .from('wearable_connections')
       .upsert({
         provider: p.slug,
-        provider_user_id: null,
         source_system: 'junction',
         status: 'active',
         last_sync_at: new Date().toISOString(),
@@ -199,8 +276,6 @@ export async function refreshConnectionList(): Promise<void> {
 
 /**
  * Trigger a manual sync of on-device health data.
- * Junction's Health SDK pushes pending data to their servers, which
- * fires our webhook → raw_health_events → rollup → daily_biometric_records.
  */
 export async function syncAll(): Promise<SyncResult> {
   if (!isInitialized()) {
@@ -218,7 +293,6 @@ export async function syncAll(): Promise<SyncResult> {
 
 /**
  * Get readings from Supabase (daily_biometric_records) for a date range.
- * This is the downstream-facing query — engines call this.
  */
 export async function getDailyRecords(
   fromDate: string,
