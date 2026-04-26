@@ -17,15 +17,27 @@
  */
 
 import { Platform } from 'react-native';
-import {
-  VitalHealth,
-  VitalResource,
-  HealthConfig,
-  type PermissionOutcome,
-  type ConnectionStatus as VitalConnectionStatus,
-} from '@tryvital/vital-health-react-native';
-import { VitalCore } from '@tryvital/vital-core-react-native';
 import type { HealthSource } from './types';
+
+// Vital SDK is a native module — imports fail in managed Expo builds
+// where the packages aren't installed. Lazy-load to prevent crash.
+let VitalHealth: any = null;
+let VitalCore: any = null;
+let VitalResource: any = {};
+let HealthConfig: any = null;
+
+try {
+  const healthMod = require('@tryvital/vital-health-react-native');
+  VitalHealth = healthMod.VitalHealth;
+  VitalResource = healthMod.VitalResource;
+  HealthConfig = healthMod.HealthConfig;
+  const coreMod = require('@tryvital/vital-core-react-native');
+  VitalCore = coreMod.VitalCore;
+} catch {
+  console.warn('[Junction] Vital SDK not installed — wearable features disabled. Run npm install + expo prebuild to enable.');
+}
+
+const SDK_AVAILABLE = VitalHealth !== null && VitalCore !== null;
 
 const VITAL_ENVIRONMENT = (process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox') as string;
 const VITAL_REGION = (process.env.EXPO_PUBLIC_VITAL_REGION ?? 'us') as string;
@@ -40,6 +52,11 @@ let initialized = false;
  */
 export async function initializeJunction(userId: string): Promise<void> {
   if (initialized) return;
+
+  if (!SDK_AVAILABLE) {
+    console.warn('[Junction] Vital SDK not available — skipping init');
+    return;
+  }
 
   if (!VITAL_API_KEY) {
     console.warn('[Junction] EXPO_PUBLIC_VITAL_API_KEY not set — wearable features disabled');
@@ -98,8 +115,9 @@ const REQUESTED_RESOURCES: VitalResource[] = [
  * v6: askForResources(resources, provider?) returns PermissionOutcome.
  */
 export async function requestHealthPermissions(): Promise<'success' | 'cancelled' | 'error'> {
+  if (!SDK_AVAILABLE) return 'error';
   try {
-    const outcome: PermissionOutcome = await VitalHealth.askForResources(REQUESTED_RESOURCES);
+    const outcome = await VitalHealth.askForResources(REQUESTED_RESOURCES);
     if (outcome === 'success') return 'success';
     if (outcome === 'cancelled' || outcome === 'notPrompted') return 'cancelled';
     return 'error';
@@ -114,8 +132,9 @@ export async function requestHealthPermissions(): Promise<'success' | 'cancelled
  * v6: getConnectionStatus(provider?) returns ConnectionStatus.
  */
 export async function hasHealthPermissions(): Promise<boolean> {
+  if (!SDK_AVAILABLE) return false;
   try {
-    const status: VitalConnectionStatus = await VitalHealth.getConnectionStatus();
+    const status = await VitalHealth.getConnectionStatus();
     return status === 'connected' || status === 'autoConnect';
   } catch {
     return false;
@@ -127,6 +146,7 @@ export async function hasHealthPermissions(): Promise<boolean> {
  * v6: VitalHealth.connect(provider?) activates background sync.
  */
 export async function connectOnDeviceHealth(): Promise<void> {
+  if (!SDK_AVAILABLE) return;
   await VitalHealth.connect();
 }
 
@@ -149,6 +169,7 @@ export function buildLinkUrl(vitalUserId: string): string {
  * v6: VitalCore.deregisterProvider(provider) — takes a ProviderSlug string.
  */
 export async function disconnectProvider(provider: string): Promise<void> {
+  if (!SDK_AVAILABLE) return;
   await VitalCore.deregisterProvider(provider as any);
 }
 
@@ -161,6 +182,7 @@ export async function listConnectedProviders(): Promise<Array<{
   slug: string;
   status: string;
 }>> {
+  if (!SDK_AVAILABLE) return [];
   try {
     const connections = await VitalCore.userConnections();
     return (connections ?? []).map((c: any) => ({
@@ -178,6 +200,7 @@ export async function listConnectedProviders(): Promise<Array<{
  * v6: VitalHealth.syncData(resources?, provider?)
  */
 export async function triggerSync(): Promise<void> {
+  if (!SDK_AVAILABLE) return;
   await VitalHealth.syncData();
 }
 
@@ -186,6 +209,7 @@ export async function triggerSync(): Promise<void> {
  * which is configured via HealthConfig).
  */
 export async function enableBackgroundSync(): Promise<boolean> {
+  if (!SDK_AVAILABLE) return false;
   if (Platform.OS === 'android') {
     return await VitalHealth.enableBackgroundSync();
   }
