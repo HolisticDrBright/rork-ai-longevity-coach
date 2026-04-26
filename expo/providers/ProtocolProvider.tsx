@@ -21,8 +21,6 @@ import {
   PeptideRecommendation,
   PeptideGoal,
 } from '@/types';
-import { sampleProtocol } from '@/mocks/protocols';
-import { CONDITION_PROTOCOLS } from '@/mocks/conditionProtocols';
 import {
   PEPTIDES_DATABASE,
   DOSING_GUIDANCE,
@@ -42,7 +40,7 @@ const getTodayDate = () => new Date().toISOString().split('T')[0];
 
 export const [ProtocolProvider, useProtocol] = createContextHook(() => {
   const queryClient = useQueryClient();
-  const [protocols, setProtocols] = useState<Protocol[]>([sampleProtocol]);
+  const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [dailyAdherence, setDailyAdherence] = useState<DailyAdherence[]>([]);
   const [weeklyCheckIns, setWeeklyCheckIns] = useState<WeeklyCheckIn[]>([]);
   const [userPeptidePlans, setUserPeptidePlans] = useState<UserPeptidePlan[]>([]);
@@ -52,7 +50,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     queryKey: ['protocols'],
     queryFn: async () => {
       const stored = await secureGetJSON<Protocol[]>(STORAGE_KEYS.PROTOCOLS);
-      return stored ?? [sampleProtocol];
+      return stored ?? [];
     },
   });
 
@@ -401,7 +399,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
   const isLoading = protocolsQuery.isLoading || adherenceQuery.isLoading || checkInsQuery.isLoading;
 
-  const conditionProtocols = CONDITION_PROTOCOLS;
+  const conditionProtocols: any[] = [];
 
   const peptideDatabase = PEPTIDES_DATABASE;
   const dosingGuidance = DOSING_GUIDANCE;

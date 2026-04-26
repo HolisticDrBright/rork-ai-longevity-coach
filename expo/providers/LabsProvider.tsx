@@ -15,7 +15,6 @@ import { supabase } from '@/lib/supabase';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
-import { sampleLabPanel, previousLabPanel } from '@/mocks/labs';
 
 export interface SupplementRecommendation {
   name: string;
@@ -74,14 +73,14 @@ const STORAGE_KEY = 'longevity_lab_panels';
 
 export const [LabsProvider, useLabs] = createContextHook(() => {
   const queryClient = useQueryClient();
-  const [labPanels, setLabPanels] = useState<LabPanel[]>([previousLabPanel, sampleLabPanel]);
+  const [labPanels, setLabPanels] = useState<LabPanel[]>([]);
 
   const labsQuery = useQuery({
     queryKey: ['labPanels'],
     queryFn: async () => {
       const stored = await secureGetJSON<LabPanel[]>(STORAGE_KEY);
       await recordAccessPattern('lab_panels', 'read');
-      return stored ?? [previousLabPanel, sampleLabPanel];
+      return stored ?? [];
     },
   });
 

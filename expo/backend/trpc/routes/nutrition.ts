@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { createTRPCRouter, publicProcedure } from "../create-context";
+import { createTRPCRouter, protectedProcedure } from "../create-context";
 
 const PASSIO_BASE_URL = process.env.PASSIO_BASE_URL || "https://api.passiolife.com/v2";
 const PASSIO_API_KEY = process.env.PASSIO_API_KEY || "";
@@ -198,7 +198,7 @@ const swapSuggestions: Record<string, string> = {
 };
 
 export const nutritionRouter = createTRPCRouter({
-  analyzePhoto: publicProcedure
+  analyzePhoto: protectedProcedure
     .input(z.object({
       photoBase64: z.string(),
       mealType: z.enum(["breakfast", "lunch", "dinner", "snack"]),
@@ -259,7 +259,7 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  calculateNutrition: publicProcedure
+  calculateNutrition: protectedProcedure
     .input(z.object({
       foodLogId: z.string(),
       confirmedItems: z.array(z.object({
@@ -366,7 +366,7 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  searchFoods: publicProcedure
+  searchFoods: protectedProcedure
     .input(z.object({
       query: z.string(),
     }))
@@ -408,7 +408,7 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  lookupBarcode: publicProcedure
+  lookupBarcode: protectedProcedure
     .input(z.object({
       barcode: z.string(),
     }))

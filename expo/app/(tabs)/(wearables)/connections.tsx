@@ -1,10 +1,13 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  Switch,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
@@ -13,123 +16,177 @@ import {
   WifiOff,
   Clock,
   Shield,
-  Info,
+  Plus,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
-import { WearableSource } from '@/types/wearables';
 
-const sourceConfig: Record<WearableSource, { name: string; description: string; phase: string; color: string }> = {
-  apple_health: { name: 'Apple HealthKit', description: 'Sleep, heart rate, steps, workouts, HRV', phase: 'Phase 1', color: '#FF2D55' },
-  google_health: { name: 'Google Health Connect', description: 'Sleep, heart rate, steps, workouts', phase: 'Phase 1', color: '#4285F4' },
-  oura: { name: 'Oura Ring', description: 'Sleep, readiness, HRV, temperature, activity', phase: 'Phase 1', color: '#C4A77D' },
-  whoop: { name: 'WHOOP', description: 'Strain, recovery, sleep, HRV', phase: 'Phase 2', color: '#00BFA5' },
-  fitbit: { name: 'Fitbit', description: 'Sleep, heart rate, steps, SpO2', phase: 'Phase 2', color: '#00B0B9' },
-  garmin: { name: 'Garmin Connect', description: 'Training load, VO2 max, sleep, HR', phase: 'Phase 3', color: '#007DC3' },
-  manual: { name: 'Manual Entry', description: 'Enter data manually', phase: '', color: '#6B7280' },
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  apple_health_kit: 'Apple Health',
+  apple_health: 'Apple Health',
+  health_connect: 'Health Connect',
+  oura: 'Oura Ring',
+  fitbit: 'Fitbit',
+  whoop: 'WHOOP',
+  garmin: 'Garmin',
+  withings: 'Withings',
+  polar: 'Polar',
+  eight_sleep: 'Eight Sleep',
+  strava: 'Strava',
 };
 
-const phases = ['Phase 1', 'Phase 2', 'Phase 3'];
+function displayName(slug: string): string {
+  return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
+}
+import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 export default function ConnectionsScreen() {
-  const { connections, toggleConnection } = useWearables();
+  const { connections, hasConnections, isRefreshing } = useWearables();
+  const connectMutation = useConnectDevice();
+  const disconnectMutation = useDisconnectProvider();
+  const syncMutation = useSyncHealth();
 
-  const handleToggle = useCallback((source: WearableSource) => {
+  const handleConnect = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    toggleConnection(source);
-  }, [toggleConnection]);
+    const result = await connectMutation.mutateAsync();
+    if (result.success && result.newProvider) {
+      Alert.alert('Connected', `${result.newProvider} is now connected. Data will start syncing shortly.`);
+    }
+  }, [connectMutation]);
 
-  const connectedCount = connections.filter(c => c.connected).length;
+  const handleDisconnect = useCallback((provider: string) => {
+    Alert.alert(
+      'Disconnect device',
+      `Are you sure you want to disconnect ${displayName(provider)}? Historical data will be preserved.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => disconnectMutation.mutate(provider),
+        },
+      ]
+    );
+  }, [disconnectMutation]);
+
+  const handleRefreshHistory = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    syncMutation.mutate();
+  }, [syncMutation]);
+
+  const connectedDevices = connections.filter(c => c.connected);
+  const isConnecting = connectMutation.isPending;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.statusCard}>
-        <View style={styles.statusRow}>
-          {connectedCount > 0
-            ? <Wifi size={20} color={Colors.success} />
-            : <WifiOff size={20} color={Colors.textTertiary} />
-          }
-          <Text style={styles.statusText}>
-            {connectedCount} device{connectedCount !== 1 ? 's' : ''} connected
-          </Text>
-        </View>
-        <Text style={styles.statusDescription}>
-          Connect your wearable devices to enable personalized health intelligence. More data sources lead to better recommendations.
-        </Text>
-      </View>
-
+      {/* Privacy banner */}
       <View style={styles.privacyCard}>
         <Shield size={16} color={Colors.primary} />
         <Text style={styles.privacyText}>
-          Your health data is encrypted and stored securely. We only request the data types needed for wellness analysis. No data is shared with third parties.
+          Your health data is encrypted end-to-end. We only read the data types needed for wellness analysis.
         </Text>
       </View>
 
-      {phases.map(phase => {
-        const phaseConnections = connections.filter(c => sourceConfig[c.source]?.phase === phase);
-        if (phaseConnections.length === 0) return null;
+      {/* Empty state */}
+      {!hasConnections && !isConnecting && (
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconContainer}>
+            <Watch size={40} color={Colors.textTertiary} />
+          </View>
+          <Text style={styles.emptyTitle}>No devices connected</Text>
+          <Text style={styles.emptyBody}>
+            Connect a wearable device to unlock personalized health intelligence — sleep analysis, HRV trends, recovery scoring, and more.
+          </Text>
+          <TouchableOpacity style={styles.connectButton} onPress={handleConnect}>
+            <Plus color="#fff" size={20} />
+            <Text style={styles.connectButtonText}>Connect a device</Text>
+          </TouchableOpacity>
+          <Text style={styles.providerHint}>
+            Works with Oura, Fitbit, Apple Health, Health Connect, Garmin, Whoop, and more.
+          </Text>
+          {Platform.OS === 'android' && (
+            <Text style={styles.androidNote}>
+              Note: Android Health Connect limits historical data to the last 30 days. This is a Google restriction, not ours.
+            </Text>
+          )}
+        </View>
+      )}
 
-        return (
-          <View key={phase}>
-            <Text style={styles.phaseTitle}>{phase} Integrations</Text>
-            {phaseConnections.map(conn => {
-              const config = sourceConfig[conn.source];
-              if (!config) return null;
+      {/* Connecting state */}
+      {isConnecting && (
+        <View style={styles.connectingCard}>
+          <ActivityIndicator color={Colors.primary} />
+          <Text style={styles.connectingText}>Connecting your device…</Text>
+        </View>
+      )}
 
-              return (
-                <View key={conn.id} style={[styles.connectionCard, conn.connected && styles.connectionCardActive]}>
-                  <View style={styles.connectionHeader}>
-                    <View style={[styles.connectionIcon, { backgroundColor: config.color + '18' }]}>
-                      <Watch size={20} color={config.color} />
-                    </View>
-                    <View style={styles.connectionInfo}>
-                      <Text style={styles.connectionName}>{config.name}</Text>
-                      <Text style={styles.connectionDescription}>{config.description}</Text>
-                    </View>
-                    <Switch
-                      value={conn.connected}
-                      onValueChange={() => handleToggle(conn.source)}
-                      trackColor={{ false: Colors.borderLight, true: Colors.primary + '60' }}
-                      thumbColor={conn.connected ? Colors.primary : '#f4f3f4'}
-                      testID={`toggle-${conn.source}`}
-                    />
-                  </View>
-                  {conn.connected && conn.lastSync && (
+      {/* Connected devices list */}
+      {connectedDevices.length > 0 && (
+        <View style={styles.connectedSection}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderLeft}>
+              <Wifi size={16} color={Colors.success} />
+              <Text style={styles.sectionTitle}>
+                {connectedDevices.length} device{connectedDevices.length !== 1 ? 's' : ''} connected
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={handleRefreshHistory}
+              disabled={syncMutation.isPending || isRefreshing}
+            >
+              {syncMutation.isPending || isRefreshing ? (
+                <ActivityIndicator color={Colors.primary} size="small" />
+              ) : (
+                <>
+                  <RefreshCw size={14} color={Colors.primary} />
+                  <Text style={styles.refreshText}>Refresh</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {connectedDevices.map(conn => (
+            <View key={conn.id} style={styles.deviceCard}>
+              <View style={styles.deviceHeader}>
+                <View style={styles.deviceIcon}>
+                  <Watch size={20} color={Colors.primary} />
+                </View>
+                <View style={styles.deviceInfo}>
+                  <Text style={styles.deviceName}>{displayName(conn.source)}</Text>
+                  {conn.lastSync && (
                     <View style={styles.syncRow}>
-                      <Clock size={12} color={Colors.textTertiary} />
+                      <Clock size={11} color={Colors.textTertiary} />
                       <Text style={styles.syncText}>
-                        Last synced: {new Date(conn.lastSync).toLocaleString()}
+                        Last synced {new Date(conn.lastSync).toLocaleString()}
                       </Text>
                     </View>
                   )}
-                  {conn.connected && conn.permissions.length > 0 && (
-                    <View style={styles.permissionsRow}>
-                      {conn.permissions.map((perm, i) => (
-                        <View key={i} style={styles.permissionChip}>
-                          <Text style={styles.permissionText}>{perm}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
                 </View>
-              );
-            })}
-          </View>
-        );
-      })}
+                <TouchableOpacity
+                  style={styles.disconnectButton}
+                  onPress={() => handleDisconnect(conn.source)}
+                  disabled={disconnectMutation.isPending}
+                >
+                  <Trash2 size={16} color={Colors.danger} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
 
-      <View style={styles.infoCard}>
-        <Info size={16} color={Colors.textTertiary} />
-        <Text style={styles.infoText}>
-          Phase 2 and Phase 3 integrations are available for connection but may have limited data in the current version. The system architecture supports adding new providers without restructuring.
-        </Text>
-      </View>
-
-      <View style={styles.disclaimer}>
-        <Text style={styles.disclaimerText}>
-          Device connections require appropriate permissions on your device. Some features may require the corresponding app to be installed. Data availability varies by device and platform.
-        </Text>
-      </View>
+          {/* Connect another */}
+          <TouchableOpacity
+            style={styles.connectAnotherButton}
+            onPress={handleConnect}
+            disabled={isConnecting}
+          >
+            <Plus size={16} color={Colors.primary} />
+            <Text style={styles.connectAnotherText}>Connect another device</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -137,66 +194,75 @@ export default function ConnectionsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: 16, paddingBottom: 40 },
-  statusCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  statusText: { fontSize: 16, fontWeight: '700' as const, color: Colors.text },
-  statusDescription: { fontSize: 13, color: Colors.textSecondary, lineHeight: 19 },
   privacyCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 20,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: Colors.primary + '08', borderRadius: 12,
+    padding: 14, marginBottom: 16,
+    borderWidth: 1, borderColor: Colors.primary + '20',
   },
-  privacyText: { flex: 1, fontSize: 12, color: '#1E40AF', lineHeight: 17 },
-  phaseTitle: { fontSize: 15, fontWeight: '700' as const, color: Colors.text, marginBottom: 10, marginTop: 8 },
-  connectionCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: Colors.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  connectionCardActive: { borderColor: Colors.primary + '40' },
-  connectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  connectionIcon: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  connectionInfo: { flex: 1 },
-  connectionName: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, marginBottom: 2 },
-  connectionDescription: { fontSize: 12, color: Colors.textSecondary },
-  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.borderLight },
-  syncText: { fontSize: 11, color: Colors.textTertiary },
-  permissionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  permissionChip: { backgroundColor: Colors.surfaceSecondary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  permissionText: { fontSize: 10, color: Colors.textTertiary, fontWeight: '500' as const },
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+  privacyText: { flex: 1, fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
+  emptyState: { alignItems: 'center', padding: 24, gap: 12 },
+  emptyIconContainer: {
+    width: 80, height: 80, borderRadius: 40,
     backgroundColor: Colors.surfaceSecondary,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 12,
-    marginBottom: 12,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 8,
   },
-  infoText: { flex: 1, fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
-  disclaimer: { padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: 10, marginBottom: 20 },
-  disclaimerText: { fontSize: 11, color: Colors.textTertiary, lineHeight: 16, textAlign: 'center' },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: Colors.text },
+  emptyBody: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20, maxWidth: 320 },
+  connectButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.primary, borderRadius: 12,
+    paddingHorizontal: 24, paddingVertical: 14, marginTop: 8,
+  },
+  connectButtonText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  providerHint: { fontSize: 12, color: Colors.textTertiary, textAlign: 'center', marginTop: 4 },
+  androidNote: {
+    fontSize: 11, color: Colors.textTertiary, textAlign: 'center',
+    fontStyle: 'italic', marginTop: 8, maxWidth: 300,
+  },
+  connectingCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: Colors.surface, borderRadius: 12,
+    padding: 20, justifyContent: 'center',
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  connectingText: { fontSize: 14, color: Colors.textSecondary },
+  connectedSection: { gap: 10 },
+  sectionHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  refreshButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+    borderWidth: 1, borderColor: Colors.primary,
+  },
+  refreshText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+  deviceCard: {
+    backgroundColor: Colors.surface, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.border, padding: 14,
+  },
+  deviceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  deviceIcon: {
+    width: 40, height: 40, borderRadius: 10,
+    backgroundColor: Colors.primary + '15',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  deviceInfo: { flex: 1, gap: 4 },
+  deviceName: { fontSize: 15, fontWeight: '600', color: Colors.text },
+  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  syncText: { fontSize: 11, color: Colors.textTertiary },
+  disconnectButton: {
+    width: 36, height: 36, borderRadius: 8,
+    backgroundColor: Colors.danger + '10',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  connectAnotherButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 12, borderRadius: 10,
+    borderWidth: 1, borderColor: Colors.primary, borderStyle: 'dashed',
+  },
+  connectAnotherText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
 });
