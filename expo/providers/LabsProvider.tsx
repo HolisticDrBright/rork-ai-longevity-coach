@@ -263,36 +263,75 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
       const isImage = mimeType.startsWith('image/');
       const isPdf = mimeType === 'application/pdf';
-      
+
       if (!isImage && !isPdf) {
         throw new Error('Please upload an image or PDF file of your lab results.');
       }
 
-      const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
+      // PDFs can't be sent as images to the AI — they need to be handled differently.
+      // The AI vision model only accepts actual images (PNG, JPG, etc.).
+      // For PDFs: try sending the base64 as a document, and if the model rejects it,
+      // prompt the user to take a photo/screenshot of their lab results instead.
+      if (isPdf) {
+        console.log('[Labs] PDF detected — sending as document to AI');
+        try {
+          // Send PDF as a file attachment. The @rork-ai/toolkit-sdk's generateObject
+          // supports file content via the 'file' content type for document analysis.
+          // We send the base64 PDF and let the model extract text from it.
+          extractedData = await generateObject({
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: extractionPrompt },
+                  { type: 'file', data: base64Content, mimeType: 'application/pdf' },
+                ],
+              },
+            ],
+            schema: labExtractionSchema,
+          });
 
-      const extractionPrompt = `You are analyzing a lab report image/document. Extract ALL biomarker values you can see.
+          if (extractedData.biomarkers.length === 0) {
+            // Model couldn't extract — try sending as image in case it's a scanned PDF
+            console.log('[Labs] No biomarkers from PDF file mode, trying as image...');
+            const pdfImageUrl = `data:application/pdf;base64,${base64Content}`;
+            extractedData = await generateObject({
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: extractionPrompt },
+                    { type: 'image', image: pdfImageUrl },
+                  ],
+                },
+              ],
+              schema: labExtractionSchema,
+            });
+          }
 
-For each biomarker found, provide:
-- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")
-- value: The numeric value
-- unit: The unit of measurement
-- referenceMin/referenceMax: The lab's reference range
-- functionalMin/functionalMax: The optimal functional medicine range
-- status: "optimal" (within functional range), "normal" (within reference but not optimal), "suboptimal" (slightly outside), or "critical" (significantly outside)
+          if (extractedData.biomarkers.length === 0) {
+            throw new Error('PDF_UNREADABLE');
+          }
 
-Also provide:
-- supplements: Recommended supplements with dose, timing, reason, and mechanism
-- herbs: Recommended herbs/botanicals with dose, timing, reason, and mechanism  
-- priorityActions: Top 3-5 priority actions to take
+          console.log('[Labs] PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
+        } catch (pdfError) {
+          const msg = pdfError instanceof Error ? pdfError.message : '';
+          if (msg === 'PDF_UNREADABLE') {
+            throw new Error(
+              'We couldn\'t extract biomarkers from this PDF. Try uploading a clearer version, or take a screenshot of the results page and upload the image.'
+            );
+          }
+          console.log('[Labs] PDF extraction failed:', msg);
+          throw new Error(
+            'Failed to analyze this PDF. Please try again, or take a photo/screenshot of your lab results and upload the image.'
+          );
+        }
+      } else {
+        // Image file — send directly to AI vision
+        const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
 
-Be thorough and extract every biomarker visible in the document.`;
+      console.log('[Labs] Extracting biomarkers from image...');
 
-      console.log('[Labs] Extracting biomarkers...');
-      
-      let extractedData = { biomarkers: [], supplements: [], herbs: [], priorityActions: [] } as z.infer<typeof labExtractionSchema>;
-      let analysisText = '';
-      let extractionError: string | null = null;
-      
       try {
         console.log('[Labs] Starting biomarker extraction...');
         extractedData = await generateObject({
@@ -312,16 +351,20 @@ Be thorough and extract every biomarker visible in the document.`;
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.log('[Labs] Extraction error occurred');
         extractionError = errorMessage;
-        
+
         if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
           console.log('[Labs] Network error detected, will try text analysis...');
         }
+      }
       }
 
       if (extractedData.biomarkers.length === 0 && extractionError) {
         console.log('[Labs] No biomarkers extracted and had error, throwing...');
         throw new Error('Unable to read lab results from the document. Please try uploading a clearer image or PDF.');
       }
+
+      const imageDataUrl = isPdf ? '' : `data:${mimeType};base64,${base64Content}`;
+      let analysisText = '';
 
       const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
 
@@ -367,14 +410,17 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       console.log('[Labs] Generating analysis...');
       
       try {
+        const analysisContent: Array<Record<string, string>> = [
+          { type: 'text', text: labAnalysisPrompt },
+        ];
+        if (imageDataUrl) {
+          analysisContent.push({ type: 'image', image: imageDataUrl });
+        }
         analysisText = await generateText({
           messages: [
             {
               role: 'user',
-              content: [
-                { type: 'text', text: labAnalysisPrompt },
-                { type: 'image', image: imageDataUrl },
-              ],
+              content: analysisContent,
             },
           ],
         });
