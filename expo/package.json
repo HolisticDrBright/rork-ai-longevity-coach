@@ -7,7 +7,8 @@
     "start-web": "bunx rork start -p mw7mguqqnf6d1vg2tpt8o --web --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p mw7mguqqnf6d1vg2tpt8o --web --tunnel",
     "lint": "expo lint",
-    "ios": "expo start --ios"
+    "ios": "expo run:ios",
+    "android": "expo run:android"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -23,11 +24,14 @@
     "@trpc/client": "^11.9.0",
     "@trpc/react-query": "^11.9.0",
     "@trpc/server": "^11.9.0",
+    "@tryvital/vital-core-react-native": "^6.0.0",
+    "@tryvital/vital-health-react-native": "^6.0.0",
     "@ungap/structured-clone": "^1.3.0",
     "expo": "~54.0.27",
     "expo-blur": "~15.0.8",
     "expo-constants": "~18.0.11",
     "expo-crypto": "~15.0.8",
+    "expo-dev-client": "~6.0.20",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.21",
     "expo-font": "~14.0.10",
@@ -59,10 +63,7 @@
     "superjson": "^2.2.6",
     "vitest": "^4.1.1",
     "zod": "^4.3.6",
-    "zustand": "^5.0.2",
-    "@tryvital/vital-core-react-native": "^6.0.0",
-    "@tryvital/vital-health-react-native": "^6.0.0",
-    "expo-dev-client": "~5.0.0"
+    "zustand": "^5.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

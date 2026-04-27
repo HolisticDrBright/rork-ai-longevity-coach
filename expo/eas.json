@@ -39,7 +39,8 @@
         "AI_COACH_FREE_LIMIT":"20",
         "PATTERN_DETECTION_INTERVAL_HOURS":"24",
         "SENTRY_ALLOW_FAILURE":"true",
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "EAS_NO_FROZEN_LOCKFILE":"1"
       }
     }
   },
