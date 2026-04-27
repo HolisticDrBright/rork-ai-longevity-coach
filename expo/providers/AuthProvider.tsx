@@ -83,6 +83,24 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
       const bioEnabled = await SecureStore.getItemAsync(BIOMETRIC_ENABLED_KEY);
       setBiometricEnabled(bioEnabled === 'true');
+
+      // If the user has a PIN set and biometrics enabled, try auto-authenticating
+      // so they don't have to re-enter the PIN every app launch.
+      if (pinHash && bioEnabled === 'true') {
+        try {
+          const result = await LocalAuthentication.authenticateAsync({
+            promptMessage: 'Unlock AI Longevity Pro',
+            cancelLabel: 'Use PIN',
+            disableDeviceFallback: true,
+          });
+          if (result.success) {
+            setIsAuthenticated(true);
+            await writeAuditLog('AUTH_LOGIN', 'biometric_auto', 'user', 'Auto biometric auth on launch');
+          }
+        } catch {
+          // Biometric failed — user will see PIN screen
+        }
+      }
     } catch {
       // noop
     } finally {

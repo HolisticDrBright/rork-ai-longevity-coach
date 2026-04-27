@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
-    paddingBottom: 40,
+    paddingBottom: 120,
   },
   alertCard: {
     flexDirection: 'row',

@@ -465,7 +465,7 @@ function actionCategoryColor(category: string): string {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  content: { padding: 16, paddingBottom: 40 },
+  content: { padding: 16, paddingBottom: 120 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
   loadingText: { marginTop: 12, color: Colors.textSecondary, fontSize: 15 },
   topBar: {

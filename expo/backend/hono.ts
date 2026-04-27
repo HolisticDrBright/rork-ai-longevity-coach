@@ -23,8 +23,12 @@ app.use("*", async (c, next) => {
 });
 
 app.onError((err, c) => {
-  const { captureError } = require('../lib/sentry');
-  captureError(err, { source: 'hono_onError', path: c.req.path, method: c.req.method });
+  try {
+    const { captureError } = require('../lib/sentry');
+    captureError(err, { source: 'hono_onError', path: c.req.path, method: c.req.method });
+  } catch {
+    // Sentry not available — log only
+  }
   console.log("[API] Error occurred at", new Date().toISOString());
   return c.json({ error: "Internal server error" }, 500);
 });

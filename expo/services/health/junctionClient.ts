@@ -1,30 +1,19 @@
 /**
  * Junction (Vital) SDK v6 wrapper.
  *
- * Single adapter for all wearable data. Handles:
- *   - SDK initialization (VitalCore.configure → VitalCore.setUserId → VitalHealth.configure)
- *   - HealthKit / Health Connect permission requests via VitalHealth.askForResources()
- *   - On-device data sync via VitalHealth.syncData()
- *   - Provider listing via VitalCore.userConnections()
- *   - Provider disconnect via VitalCore.deregisterProvider()
+ * CURRENT STATE: The Vital native SDK packages are NOT installed.
+ * All functions return safe defaults (empty arrays, false, void).
+ * The app runs normally — wearable features show empty state.
  *
- * Cloud provider connections (Oura, Fitbit, Garmin, WHOOP) are handled via
- * the Vital Link widget, which is opened from the connection UX screen using
- * the Vital Link URL. The mobile SDK itself does NOT expose createConnectedSource()
- * in v6 — Link is a web-based flow that redirects back to the app.
- *
- * The app only ever imports from healthService.ts; this file is internal.
+ * TO ENABLE WEARABLES:
+ *   1. npm install @tryvital/vital-core-react-native @tryvital/vital-health-react-native expo-dev-client
+ *   2. Re-add the @tryvital/vital-health-react-native config plugin to app.json
+ *   3. npx expo prebuild
+ *   4. eas build --profile development
+ *   5. Uncomment the SDK imports below and remove the stubs
  */
 
 import { Platform } from 'react-native';
-import {
-  VitalHealth,
-  VitalResource,
-  HealthConfig,
-  type PermissionOutcome,
-  type ConnectionStatus as VitalConnectionStatus,
-} from '@tryvital/vital-health-react-native';
-import { VitalCore } from '@tryvital/vital-core-react-native';
 import type { HealthSource } from './types';
 
 const VITAL_ENVIRONMENT = (process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox') as string;
@@ -33,168 +22,59 @@ const VITAL_API_KEY = process.env.EXPO_PUBLIC_VITAL_API_KEY ?? '';
 
 let initialized = false;
 
-/**
- * Initialize the Vital SDK (v6 API).
- * VitalCore.configure() takes (apiKey, environment, region, enableLogs).
- * VitalHealth.configure() takes a HealthConfig object.
- */
-export async function initializeJunction(userId: string): Promise<void> {
-  if (initialized) return;
+// ────────────────────────────────────────────────────────────
+// SDK is not installed — all functions are safe stubs.
+// When the native SDK is installed + prebuilt, replace these
+// stubs with real SDK calls.
+// ────────────────────────────────────────────────────────────
 
+export async function initializeJunction(userId: string): Promise<void> {
   if (!VITAL_API_KEY) {
     console.warn('[Junction] EXPO_PUBLIC_VITAL_API_KEY not set — wearable features disabled');
     return;
   }
-
-  try {
-    // v6: configure(apiKey, environment, region, enableLogs)
-    await VitalCore.configure(VITAL_API_KEY, VITAL_ENVIRONMENT, VITAL_REGION, __DEV__);
-    await VitalCore.setUserId(userId);
-
-    const config = new HealthConfig();
-    config.numberOfDaysToBackFill = 180;
-    config.logsEnabled = __DEV__;
-
-    if (Platform.OS === 'ios') {
-      config.iOSConfig.backgroundDeliveryEnabled = true;
-      config.iOSConfig.dataPushMode = 'automatic';
-    } else {
-      config.androidConfig.syncOnAppStart = true;
-    }
-
-    await VitalHealth.configure(config);
-    initialized = true;
-    console.log('[Junction] SDK v6 initialized');
-  } catch (err) {
-    console.error('[Junction] Initialization failed', err);
-    throw err;
-  }
+  console.log('[Junction] SDK not installed — running in stub mode. Wearable features disabled.');
+  initialized = true;
 }
 
-/**
- * The resources we request permissions for.
- * Trimmed to only what our analytical engines actually consume.
- */
-// Trimmed to exactly what daily_biometric_records consumes + what we have
-// Android Health Connect permissions for. 13 resources, 13 permissions.
-const REQUESTED_RESOURCES: VitalResource[] = [
-  VitalResource.Sleep,            // READ_SLEEP
-  VitalResource.Activity,         // (derived from steps/calories/exercise)
-  VitalResource.Steps,            // READ_STEPS
-  VitalResource.Distance,         // READ_DISTANCE
-  VitalResource.ActiveEnergyBurned, // READ_ACTIVE_CALORIES_BURNED
-  VitalResource.Workout,          // READ_EXERCISE
-  VitalResource.HeartRate,        // READ_HEART_RATE
-  VitalResource.HeartRateVariability, // READ_HEART_RATE_VARIABILITY
-  VitalResource.BloodOxygen,      // READ_OXYGEN_SATURATION
-  VitalResource.RespiratoryRate,  // READ_RESPIRATORY_RATE
-  VitalResource.Temperature,      // READ_BODY_TEMPERATURE
-  VitalResource.Body,             // READ_WEIGHT + READ_BODY_FAT
-  VitalResource.VO2Max,           // (derived from workout data on Android)
-];
-
-/**
- * Request HealthKit / Health Connect permissions through the Vital SDK.
- * v6: askForResources(resources, provider?) returns PermissionOutcome.
- */
 export async function requestHealthPermissions(): Promise<'success' | 'cancelled' | 'error'> {
-  try {
-    const outcome: PermissionOutcome = await VitalHealth.askForResources(REQUESTED_RESOURCES);
-    if (outcome === 'success') return 'success';
-    if (outcome === 'cancelled' || outcome === 'notPrompted') return 'cancelled';
-    return 'error';
-  } catch (err) {
-    console.error('[Junction] Permission request failed', err);
-    return 'error';
-  }
+  console.warn('[Junction] SDK not installed — cannot request permissions');
+  return 'error';
 }
 
-/**
- * Check whether on-device health data sync is active.
- * v6: getConnectionStatus(provider?) returns ConnectionStatus.
- */
 export async function hasHealthPermissions(): Promise<boolean> {
-  try {
-    const status: VitalConnectionStatus = await VitalHealth.getConnectionStatus();
-    return status === 'connected' || status === 'autoConnect';
-  } catch {
-    return false;
-  }
+  return false;
 }
 
-/**
- * Connect on-device health data (HealthKit / Health Connect).
- * v6: VitalHealth.connect(provider?) activates background sync.
- */
 export async function connectOnDeviceHealth(): Promise<void> {
-  await VitalHealth.connect();
+  // no-op without SDK
 }
 
-/**
- * Build the Vital Link URL for cloud provider connections.
- * The app opens this in an in-app browser. When the user completes
- * the OAuth flow, the provider is connected server-side and data
- * starts flowing through the webhook.
- *
- * Note: v6 does NOT expose createConnectedSource() on the mobile SDK.
- * Link is a web-based flow.
- */
 export function buildLinkUrl(vitalUserId: string): string {
   const env = VITAL_ENVIRONMENT === 'production' ? '' : 'sandbox.';
   return `https://link.${env}tryvital.io/?token=${VITAL_API_KEY}&user_id=${vitalUserId}`;
 }
 
-/**
- * Disconnect a provider.
- * v6: VitalCore.deregisterProvider(provider) — takes a ProviderSlug string.
- */
 export async function disconnectProvider(provider: string): Promise<void> {
-  await VitalCore.deregisterProvider(provider as any);
+  // no-op without SDK
 }
 
-/**
- * List all connected providers for the current user.
- * v6: VitalCore.userConnections() returns UserConnection[].
- */
 export async function listConnectedProviders(): Promise<Array<{
   name: string;
   slug: string;
   status: string;
 }>> {
-  try {
-    const connections = await VitalCore.userConnections();
-    return (connections ?? []).map((c: any) => ({
-      name: c.provider?.name ?? c.name ?? 'Unknown',
-      slug: c.provider?.slug ?? c.slug ?? 'unknown',
-      status: c.status ?? 'active',
-    }));
-  } catch {
-    return [];
-  }
+  return [];
 }
 
-/**
- * Trigger a manual sync of on-device health data.
- * v6: VitalHealth.syncData(resources?, provider?)
- */
 export async function triggerSync(): Promise<void> {
-  await VitalHealth.syncData();
+  // no-op without SDK
 }
 
-/**
- * Enable background sync (Android-specific; iOS uses background delivery
- * which is configured via HealthConfig).
- */
 export async function enableBackgroundSync(): Promise<boolean> {
-  if (Platform.OS === 'android') {
-    return await VitalHealth.enableBackgroundSync();
-  }
-  return true;
+  return false;
 }
 
-/**
- * Map a Vital provider slug to our HealthSource format.
- */
 export function toHealthSource(providerSlug: string): HealthSource {
   const slug = providerSlug.toLowerCase();
   if (slug === 'apple_health_kit' || slug === 'apple_health') return 'junction:healthkit';
