@@ -268,6 +268,26 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
         throw new Error('Please upload an image or PDF file of your lab results.');
       }
 
+      let extractedData = { biomarkers: [], supplements: [], herbs: [], priorityActions: [] } as z.infer<typeof labExtractionSchema>;
+      let extractionError: string | null = null;
+
+      const extractionPrompt = `You are analyzing a lab report. Extract ALL biomarker values you can find.
+
+For each biomarker found, provide:
+- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")
+- value: The numeric value
+- unit: The unit of measurement
+- referenceMin/referenceMax: The lab's reference range
+- functionalMin/functionalMax: The optimal functional medicine range
+- status: "optimal" (within functional range), "normal" (within reference but not optimal), "suboptimal" (slightly outside), or "critical" (significantly outside)
+
+Also provide:
+- supplements: Recommended supplements with dose, timing, reason, and mechanism
+- herbs: Recommended herbs/botanicals with dose, timing, reason, and mechanism
+- priorityActions: Top 3-5 priority actions to take
+
+Be thorough and extract every biomarker visible in the document.`;
+
       // PDFs can't be sent as images to the AI — they need to be handled differently.
       // The AI vision model only accepts actual images (PNG, JPG, etc.).
       // For PDFs: try sending the base64 as a document, and if the model rejects it,
