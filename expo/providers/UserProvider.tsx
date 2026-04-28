@@ -121,6 +121,113 @@ export const [UserProvider, useUser] = createContextHook(() => {
     if (userQuery.data) setUserProfile(userQuery.data);
   }, [userQuery.data]);
 
+  const supabaseProfileQuery = useQuery({
+    queryKey: ['supabaseProfile'],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+      console.log('[UserProvider] Hydrating profile from Supabase...');
+      const [profileRes, lifestyleRes, contraRes, questionnaireRes] = await Promise.all([
+        profileService.get(),
+        lifestyleService.get(),
+        contraindicationService.get(),
+        supabase.from('questionnaire_responses').select('*').eq('user_id', session.user.id),
+      ]);
+      return {
+        profile: profileRes.data,
+        lifestyle: lifestyleRes.data,
+        contraindications: contraRes.data,
+        questionnaire: questionnaireRes.data,
+      };
+    },
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+        void queryClient.invalidateQueries({ queryKey: ['supabaseProfile'] });
+      }
+      if (event === 'SIGNED_OUT') {
+        void queryClient.invalidateQueries({ queryKey: ['supabaseProfile'] });
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [queryClient]);
+
+  useEffect(() => {
+    const remote = supabaseProfileQuery.data;
+    if (!remote) return;
+
+    if (remote.profile) {
+      const r = remote.profile;
+      const merged: UserProfile = {
+        ...defaultUserProfile,
+        ...userProfile,
+        id: r.id || userProfile.id,
+        email: r.email ?? userProfile.email,
+        firstName: r.first_name ?? userProfile.firstName,
+        lastName: r.last_name ?? userProfile.lastName,
+        sex: (r.sex as UserProfile['sex']) ?? userProfile.sex,
+        dateOfBirth: r.birth_date ?? userProfile.dateOfBirth,
+        height: r.height ?? userProfile.height,
+        weight: r.weight ?? userProfile.weight,
+        goals: r.goals ?? userProfile.goals,
+        onboardingCompleted: r.onboarding_completed || userProfile.onboardingCompleted,
+      };
+      const changed =
+        merged.onboardingCompleted !== userProfile.onboardingCompleted ||
+        merged.id !== userProfile.id ||
+        merged.email !== userProfile.email ||
+        merged.firstName !== userProfile.firstName;
+      if (changed) {
+        console.log('[UserProvider] Applying remote profile (onboardingCompleted=' + merged.onboardingCompleted + ')');
+        setUserProfile(merged);
+        void secureSetJSON(STORAGE_KEYS.USER_PROFILE, merged);
+      }
+    }
+
+    if (remote.lifestyle) {
+      const l = remote.lifestyle;
+      const mergedLifestyle: LifestyleProfile = {
+        sleepHours: l.sleep_hours ?? defaultLifestyleProfile.sleepHours,
+        sleepQuality: l.sleep_quality ?? defaultLifestyleProfile.sleepQuality,
+        stressLevel: l.stress_level ?? defaultLifestyleProfile.stressLevel,
+        dietType: (l.diet_type as LifestyleProfile['dietType']) ?? defaultLifestyleProfile.dietType,
+        cookingSkill: (l.cooking_skill as LifestyleProfile['cookingSkill']) ?? defaultLifestyleProfile.cookingSkill,
+        shoppingCadence: (l.shopping_cadence as LifestyleProfile['shoppingCadence']) ?? defaultLifestyleProfile.shoppingCadence,
+        exerciseFrequency: l.exercise_frequency ?? defaultLifestyleProfile.exerciseFrequency,
+        exerciseTypes: l.exercise_types ?? [],
+      };
+      setLifestyleProfile(mergedLifestyle);
+      void secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, mergedLifestyle);
+    }
+
+    if (remote.contraindications) {
+      const c = remote.contraindications;
+      const mergedContra: Contraindication = {
+        pregnant: c.pregnant ?? false,
+        nursing: c.nursing ?? false,
+        medications: c.medications ?? [],
+        allergies: c.allergies ?? [],
+        conditions: c.conditions ?? [],
+      };
+      setContraindications(mergedContra);
+      void secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, mergedContra);
+    }
+
+    if (remote.questionnaire && remote.questionnaire.length > 0) {
+      const responses: QuestionnaireResponse[] = remote.questionnaire.map((row: { question_id: string; category_id: string; severity: number; timestamp: string }) => ({
+        questionId: row.question_id,
+        categoryId: row.category_id,
+        severity: row.severity as 0 | 1 | 2 | 3 | 4,
+        timestamp: row.timestamp,
+      }));
+      setQuestionnaireResponses(responses);
+      void secureSetJSON(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, responses);
+    }
+  }, [supabaseProfileQuery.data]);
+
   useEffect(() => {
     if (userQuery.isLoading || pendingRoleAppliedRef.current) return;
     (async () => {
