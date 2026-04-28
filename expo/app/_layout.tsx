@@ -10,7 +10,7 @@ initSentry();
 
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { HIPAAProvider, useHIPAA } from '@/providers/HIPAAProvider';
-import { SupabaseAuthProvider } from '@/providers/SupabaseAuthProvider';
+import { SupabaseAuthProvider, useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
 import { UserProvider } from '@/providers/UserProvider';
 import { ProtocolProvider } from '@/providers/ProtocolProvider';
 import { LabsProvider } from '@/providers/LabsProvider';
@@ -21,6 +21,7 @@ import { WearablesProvider } from '@/providers/WearablesProvider';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { HIPAAConsentBanner, BreachAlertBanner } from '@/components/HIPAABanner';
 import AuthScreen from '@/app/auth';
+import SignInScreen from '@/app/signin';
 import Colors from '@/constants/colors';
 
 void SplashScreen.preventAutoHideAsync();
@@ -53,14 +54,23 @@ function RootLayoutNav() {
 }
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated: hasSupabaseSession, isLoading: supabaseLoading } = useSupabaseAuth();
+  const { isAuthenticated: hasPinAuth, isLoading: pinLoading } = useAuth();
 
-  if (authLoading) return null;
+  // Wait for both auth layers to initialize
+  if (supabaseLoading || pinLoading) return null;
 
-  if (!isAuthenticated) {
+  // Step 1: No Supabase session → show sign-in / sign-up screen
+  if (!hasSupabaseSession) {
+    return <SignInScreen />;
+  }
+
+  // Step 2: Has Supabase session but no PIN auth → show PIN screen
+  if (!hasPinAuth) {
     return <AuthScreen />;
   }
 
+  // Step 3: Both authenticated → show the app
   return <>{children}</>;
 }
 
