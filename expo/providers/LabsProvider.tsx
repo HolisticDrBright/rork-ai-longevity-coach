@@ -307,12 +307,42 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
   const pickLabImages = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string }[]> => {
     try {
-      if (Platform.OS !== 'web') {
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) {
-          console.log('[Labs] Media library permission denied');
-          return [];
-        }
+      if (Platform.OS === 'web') {
+        return await new Promise<{ uri: string; name: string; mimeType: string }[]>((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.multiple = true;
+          input.style.display = 'none';
+          input.onchange = () => {
+            const files = Array.from(input.files ?? []);
+            const validImages = files.filter((f) => (f.type || '').startsWith('image/'));
+            const skipped = files.length - validImages.length;
+            if (skipped > 0) {
+              console.log('[Labs] Ignored', skipped, 'non-image files (e.g. PDFs). Use Upload PDF instead.');
+            }
+            const results = validImages.map((f, i) => ({
+              uri: URL.createObjectURL(f),
+              name: f.name || `lab-image-${i + 1}.jpg`,
+              mimeType: f.type || 'image/jpeg',
+            }));
+            console.log('[Labs] Picked', results.length, 'images (web)');
+            document.body.removeChild(input);
+            resolve(results);
+          };
+          input.oncancel = () => {
+            try { document.body.removeChild(input); } catch {}
+            resolve([]);
+          };
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        console.log('[Labs] Media library permission denied');
+        return [];
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
