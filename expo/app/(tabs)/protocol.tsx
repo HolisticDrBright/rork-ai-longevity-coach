@@ -97,7 +97,7 @@ export default function ProtocolScreen() {
     acknowledgePeptideDisclaimer,
   } = useProtocol();
   
-  const { userProfile, contraindications } = useUser();
+  const { userProfile, contraindications, categoryScores } = useUser();
   const { flaggedBiomarkers, latestAnalysis } = useLabs();
 
   const labDeficiencies = useMemo<string[]>(() => {
@@ -138,7 +138,7 @@ export default function ProtocolScreen() {
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [disclaimerChecked, setDisclaimerChecked] = useState(false);
 
-  const userGoals: PeptideGoal[] = userProfile?.goals?.map((g: string) => {
+  const userGoals: PeptideGoal[] = useMemo(() => {
     const goalMap: Record<string, PeptideGoal> = {
       'weight_loss': 'fat_loss',
       'better_sleep': 'sleep',
@@ -148,8 +148,80 @@ export default function ProtocolScreen() {
       'cognitive': 'cognition',
       'recovery': 'recovery',
     };
-    return goalMap[g] || g as PeptideGoal;
-  }).filter(Boolean) || ['recovery', 'longevity'];
+    const explicit: PeptideGoal[] = (userProfile?.goals ?? [])
+      .map((g: string) => (goalMap[g] || (g as PeptideGoal)))
+      .filter(Boolean);
+
+    const derived = new Set<PeptideGoal>(explicit);
+
+    categoryScores.forEach((c) => {
+      if (c.percentage < 25) return;
+      switch (c.categoryId) {
+        case 'thyroid':
+        case 'adrenal':
+        case 'hormones':
+          derived.add('metabolic_health');
+          derived.add('recovery');
+          break;
+        case 'gut_digestive':
+        case 'leaky_gut':
+          derived.add('immune_support');
+          derived.add('recovery');
+          break;
+        case 'mold':
+        case 'heavy_metals':
+        case 'parasites':
+        case 'lyme':
+        case 'viral':
+          derived.add('immune_support');
+          derived.add('longevity');
+          break;
+        case 'sleep':
+          derived.add('sleep');
+          derived.add('recovery');
+          break;
+        case 'cognitive':
+        case 'brain':
+          derived.add('cognition');
+          break;
+        case 'inflammation':
+        case 'pain':
+          derived.add('injury_rehab');
+          derived.add('recovery');
+          break;
+        default:
+          break;
+      }
+    });
+
+    flaggedBiomarkers.forEach((b) => {
+      const n = b.name.toLowerCase();
+      if (n.includes('glucose') || n.includes('a1c') || n.includes('insulin') || n.includes('triglycer') || n.includes('cholesterol') || n.includes('ldl')) {
+        derived.add('metabolic_health');
+      }
+      if (n.includes('testosterone') || n.includes('dhea') || n.includes('estrogen')) {
+        derived.add('libido');
+        derived.add('muscle_growth');
+      }
+      if (n.includes('crp') || n.includes('inflam') || n.includes('homocyst')) {
+        derived.add('recovery');
+        derived.add('longevity');
+      }
+      if (n.includes('tsh') || n.includes('thyroid') || n.includes('t3') || n.includes('t4') || n.includes('cortisol')) {
+        derived.add('metabolic_health');
+        derived.add('recovery');
+      }
+      if (n.includes('vitamin d') || n.includes('b12') || n.includes('ferritin') || n.includes('iron')) {
+        derived.add('immune_support');
+        derived.add('recovery');
+      }
+    });
+
+    if (derived.size === 0) {
+      return ['recovery', 'longevity', 'metabolic_health', 'immune_support'];
+    }
+    return Array.from(derived);
+  }, [userProfile?.goals, categoryScores, flaggedBiomarkers]);
 
   const userContraindications = [
     ...(contraindications?.conditions || []),
