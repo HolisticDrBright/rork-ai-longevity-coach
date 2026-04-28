@@ -23,6 +23,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
+import {
+  mockDashboardStats,
+  mockRecentActivity,
+  mockPendingReviews,
+} from '@/mocks/clinicMockData';
 
 interface StatCardProps {
   title: string;
@@ -152,11 +157,20 @@ export default function ClinicDashboardScreen() {
     setRefreshing(false);
   }, [statsQuery, activityQuery, reviewsQuery]);
 
-  const stats = statsQuery.data;
-  const activities = activityQuery.data || [];
-  const reviews = reviewsQuery.data || [];
+  const hasRealData =
+    !!statsQuery.data && (statsQuery.data.totalPatients ?? 0) > 0;
 
-  const isLoading = statsQuery.isLoading || activityQuery.isLoading;
+  const stats = hasRealData ? statsQuery.data : mockDashboardStats;
+  const activities =
+    hasRealData && (activityQuery.data?.length ?? 0) > 0
+      ? activityQuery.data!
+      : mockRecentActivity;
+  const reviews =
+    hasRealData && (reviewsQuery.data?.length ?? 0) > 0
+      ? reviewsQuery.data!
+      : mockPendingReviews;
+
+  const isLoading = statsQuery.isLoading && activityQuery.isLoading;
 
   if (isLoading && !refreshing) {
     return (

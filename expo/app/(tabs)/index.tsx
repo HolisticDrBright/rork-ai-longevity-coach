@@ -59,17 +59,22 @@ const getActionIcon = (type: TodayAction['type']) => {
 };
 
 export default function TodayScreen() {
-  const { userProfile, questionnaireResponses, categoryScores, isLoading: userLoading } = useUser();
+  const { userProfile, questionnaireResponses, categoryScores, isLoading: userLoading, isClinician } = useUser();
   const { todayActions, adherencePercentage, weeklyAdherenceStats, toggleActionComplete, isLoading: protocolLoading } = useProtocol();
   const { flaggedBiomarkers } = useLabs();
 
   const progressAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!userLoading && !userProfile.onboardingCompleted) {
+    if (userLoading) return;
+    if (isClinician) {
+      router.replace('/(tabs)/(clinic)/dashboard' as any);
+      return;
+    }
+    if (!userProfile.onboardingCompleted) {
       router.replace('/onboarding' as any);
     }
-  }, [userProfile.onboardingCompleted, userLoading]);
+  }, [userProfile.onboardingCompleted, userLoading, isClinician]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {

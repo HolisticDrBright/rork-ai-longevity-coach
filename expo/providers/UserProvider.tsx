@@ -1,6 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
@@ -28,6 +29,8 @@ const STORAGE_KEYS = {
   QUESTIONNAIRE_RESPONSES: 'longevity_questionnaire_responses',
   CLINICAL_INTAKE: 'longevity_clinical_intake',
 };
+
+const PENDING_ROLE_KEY = 'longevity_pending_role';
 
 const defaultUserProfile: UserProfile = {
   id: '',
@@ -112,9 +115,46 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
   });
 
+  const pendingRoleAppliedRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (userQuery.data) setUserProfile(userQuery.data);
   }, [userQuery.data]);
+
+  useEffect(() => {
+    if (userQuery.isLoading || pendingRoleAppliedRef.current) return;
+    (async () => {
+      try {
+        const pendingRole = await AsyncStorage.getItem(PENDING_ROLE_KEY);
+        if (!pendingRole) return;
+        pendingRoleAppliedRef.current = true;
+        const current = userQuery.data ?? defaultUserProfile;
+        if (pendingRole === 'clinician') {
+          if (current.role !== 'clinician' || !current.onboardingCompleted) {
+            const id = current.id || `clinician_${Date.now()}`;
+            const updated: UserProfile = {
+              ...current,
+              id,
+              role: 'clinician',
+              onboardingCompleted: true,
+            };
+            await secureSetJSON(STORAGE_KEYS.USER_PROFILE, updated);
+            setUserProfile(updated);
+            void queryClient.invalidateQueries({ queryKey: ['userProfile'] });
+            console.log('[UserProvider] Applied pending clinician role');
+          }
+        } else if (pendingRole === 'patient' && current.role !== 'patient') {
+          const updated: UserProfile = { ...current, role: 'patient' };
+          await secureSetJSON(STORAGE_KEYS.USER_PROFILE, updated);
+          setUserProfile(updated);
+          void queryClient.invalidateQueries({ queryKey: ['userProfile'] });
+        }
+        await AsyncStorage.removeItem(PENDING_ROLE_KEY);
+      } catch (e) {
+        console.log('[UserProvider] pending role apply failed', e);
+      }
+    })();
+  }, [userQuery.isLoading, userQuery.data, queryClient]);
 
   useEffect(() => {
     if (lifestyleQuery.data) setLifestyleProfile(lifestyleQuery.data);

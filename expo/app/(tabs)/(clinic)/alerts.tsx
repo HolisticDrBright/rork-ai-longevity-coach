@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
 import type { AlertSeverity, AlertEventStatus } from '@/types/clinic';
+import { mockClinicAlerts } from '@/mocks/clinicMockData';
 
 interface AlertItemProps {
   id: string;
@@ -151,7 +152,9 @@ export default function AlertsScreen() {
     },
   });
 
-  const alerts = alertsQuery.data?.alerts || [];
+  const realAlerts = alertsQuery.data?.alerts || [];
+  const baseAlerts = realAlerts.length > 0 ? realAlerts : (mockClinicAlerts as unknown as typeof realAlerts);
+  const alerts = severityFilter ? baseAlerts.filter((a) => a.severity === severityFilter) : baseAlerts;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

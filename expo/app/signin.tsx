@@ -13,8 +13,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Sparkles, Mail, Lock, User, Stethoscope, ChevronRight, Eye, EyeOff } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
+
+const PENDING_ROLE_KEY = 'longevity_pending_role';
 
 type AuthMode = 'welcome' | 'signin' | 'signup';
 type UserRole = 'patient' | 'clinician';
@@ -45,12 +48,17 @@ export default function SignInScreen() {
       return;
     }
     setSubmitting(true);
+    try {
+      await AsyncStorage.setItem(PENDING_ROLE_KEY, role);
+    } catch (e) {
+      console.log('[signin] could not persist role', e);
+    }
     const success = await signIn(email.trim(), password);
     setSubmitting(false);
     if (!success && authError) {
       Alert.alert('Sign in failed', authError);
     }
-  }, [email, password, signIn, authError]);
+  }, [email, password, role, signIn, authError]);
 
   const handleSignUp = useCallback(async () => {
     if (!email.trim() || !password) {
@@ -66,6 +74,11 @@ export default function SignInScreen() {
       return;
     }
     setSubmitting(true);
+    try {
+      await AsyncStorage.setItem(PENDING_ROLE_KEY, role);
+    } catch (e) {
+      console.log('[signin] could not persist role', e);
+    }
     const success = await signUp(email.trim(), password);
     setSubmitting(false);
     if (success) {
