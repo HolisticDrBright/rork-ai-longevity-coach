@@ -175,10 +175,21 @@ const labExtractionSchema = z.object({
 });
 
 const STORAGE_KEY = 'longevity_lab_panels';
+const LATEST_ANALYSIS_KEY = 'longevity_latest_lab_analysis';
+
+export interface StoredLabAnalysis {
+  panelId?: string;
+  generatedAt: string;
+  supplements: SupplementRecommendation[];
+  herbs: SupplementRecommendation[];
+  priorityActions: string[];
+  flaggedBiomarkerNames: string[];
+}
 
 export const [LabsProvider, useLabs] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [labPanels, setLabPanels] = useState<LabPanel[]>([]);
+  const [latestAnalysis, setLatestAnalysis] = useState<StoredLabAnalysis | null>(null);
 
   const labsQuery = useQuery({
     queryKey: ['labPanels'],
@@ -189,9 +200,32 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     },
   });
 
+  const latestAnalysisQuery = useQuery({
+    queryKey: ['latestLabAnalysis'],
+    queryFn: async () => {
+      const stored = await secureGetJSON<StoredLabAnalysis>(LATEST_ANALYSIS_KEY);
+      return stored ?? null;
+    },
+  });
+
   useEffect(() => {
     if (labsQuery.data) setLabPanels(labsQuery.data);
   }, [labsQuery.data]);
+
+  useEffect(() => {
+    if (latestAnalysisQuery.data !== undefined) setLatestAnalysis(latestAnalysisQuery.data);
+  }, [latestAnalysisQuery.data]);
+
+  const saveLatestAnalysisMutation = useMutation({
+    mutationFn: async (analysis: StoredLabAnalysis) => {
+      await secureSetJSON(LATEST_ANALYSIS_KEY, analysis);
+      return analysis;
+    },
+    onSuccess: (data) => {
+      setLatestAnalysis(data);
+      void queryClient.invalidateQueries({ queryKey: ['latestLabAnalysis'] });
+    },
+  });
 
   const saveLabsMutation = useMutation({
     mutationFn: async (panels: LabPanel[]) => {
@@ -875,6 +909,10 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     },
   });
 
+  const saveLatestAnalysis = useCallback((analysis: StoredLabAnalysis) => {
+    saveLatestAnalysisMutation.mutate(analysis);
+  }, [saveLatestAnalysisMutation]);
+
   return useMemo(() => ({
     labPanels,
     latestPanel,
@@ -882,6 +920,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     flaggedBiomarkers,
     optimalBiomarkers,
     biomarkersByCategory,
+    latestAnalysis,
     isLoading: labsQuery.isLoading,
     getBiomarkerTrend,
     addLabPanel,
@@ -895,6 +934,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     updateLabPanelBiomarkers,
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
+    saveLatestAnalysis,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [
     labPanels,
@@ -903,6 +943,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     flaggedBiomarkers,
     optimalBiomarkers,
     biomarkersByCategory,
+    latestAnalysis,
     labsQuery.isLoading,
     getBiomarkerTrend,
     addLabPanel,
@@ -917,5 +958,6 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     analyzeLabImagesMutation.error,
     updateLabPanelBiomarkers,
     sendLabUploadStartedWebhook,
+    saveLatestAnalysis,
   ]);
 });

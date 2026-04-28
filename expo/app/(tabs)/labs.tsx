@@ -68,6 +68,7 @@ export default function LabsScreen() {
     isAnalyzing,
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
+    saveLatestAnalysis,
   } = useLabs();
   const { userProfile } = useUser();
 
@@ -311,6 +312,16 @@ export default function LabsScreen() {
         [...analysisResult.supplements, ...analysisResult.herbs],
       );
     }
+
+    saveLatestAnalysis({
+      generatedAt: new Date().toISOString(),
+      supplements: analysisResult.supplements,
+      herbs: analysisResult.herbs,
+      priorityActions: analysisResult.priorityActions,
+      flaggedBiomarkerNames: analysisResult.biomarkers
+        .filter(b => b.status === 'suboptimal' || b.status === 'critical')
+        .map(b => b.name),
+    });
   };
 
   if (isLoading) {

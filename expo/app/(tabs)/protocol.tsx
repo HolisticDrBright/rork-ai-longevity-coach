@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -40,6 +40,7 @@ import {
 import Colors from '@/constants/colors';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useUser } from '@/providers/UserProvider';
+import { useLabs } from '@/providers/LabsProvider';
 import SupplementsRecommendations from '@/components/SupplementsRecommendations';
 import {
   Supplement,
@@ -97,6 +98,35 @@ export default function ProtocolScreen() {
   } = useProtocol();
   
   const { userProfile, contraindications } = useUser();
+  const { flaggedBiomarkers, latestAnalysis } = useLabs();
+
+  const labDeficiencies = useMemo<string[]>(() => {
+    const deficiencies = new Set<string>();
+    flaggedBiomarkers.forEach(b => {
+      const name = b.name.toLowerCase();
+      deficiencies.add(name);
+      if (name.includes('vitamin d')) deficiencies.add('vitamin d');
+      if (name.includes('b12') || name.includes('cobalamin')) deficiencies.add('b12');
+      if (name.includes('folate')) deficiencies.add('folate');
+      if (name.includes('ferritin') || name.includes('iron')) deficiencies.add('iron');
+      if (name.includes('magnesium')) deficiencies.add('magnesium');
+      if (name.includes('zinc')) deficiencies.add('zinc');
+      if (name.includes('omega') || name.includes('epa') || name.includes('dha')) deficiencies.add('omega-3');
+      if (name.includes('homocysteine')) { deficiencies.add('b12'); deficiencies.add('folate'); deficiencies.add('methylation'); }
+      if (name.includes('crp') || name.includes('inflammation')) deficiencies.add('inflammation');
+      if (name.includes('glucose') || name.includes('a1c') || name.includes('insulin')) deficiencies.add('blood sugar');
+      if (name.includes('tsh') || name.includes('thyroid') || name.includes('t3') || name.includes('t4')) deficiencies.add('thyroid support');
+      if (name.includes('cortisol')) deficiencies.add('adrenal support');
+      if (name.includes('cholesterol') || name.includes('ldl') || name.includes('triglycer')) deficiencies.add('cardiovascular');
+      if (name.includes('testosterone') || name.includes('dhea')) deficiencies.add('hormones');
+    });
+    return Array.from(deficiencies);
+  }, [flaggedBiomarkers]);
+
+  const labSupplementHints = useMemo<string[]>(() => {
+    if (!latestAnalysis) return [];
+    return latestAnalysis.supplements.map(s => s.name.toLowerCase());
+  }, [latestAnalysis]);
   
   const [expandedSections, setExpandedSections] = useState<string[]>([
     'supplements',
@@ -286,7 +316,50 @@ export default function ProtocolScreen() {
           </>
         )}
 
-        <SupplementsRecommendations patientId={userProfile?.id} />
+        {latestAnalysis && (latestAnalysis.supplements.length > 0 || latestAnalysis.herbs.length > 0) && (
+          <View style={styles.labRecsCard}>
+            <View style={styles.labRecsHeader}>
+              <View style={[styles.sectionIconContainer, { backgroundColor: '#fff3e0' }]}>
+                <FileText color="#e67e22" size={20} />
+              </View>
+              <View style={styles.sectionTitleContainer}>
+                <Text style={styles.sectionTitle}>From Your Latest Labs</Text>
+                <Text style={styles.sectionCount}>
+                  {latestAnalysis.supplements.length + latestAnalysis.herbs.length} AI recommendations
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.labRecsSubtext}>
+              Based on your uploaded lab analysis. Tap Shop to use your practitioner affiliate links.
+            </Text>
+            {[...latestAnalysis.supplements, ...latestAnalysis.herbs].map((rec, idx) => (
+              <View key={`labrec-${idx}`} style={styles.labRecRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.labRecName}>{rec.name}</Text>
+                  <Text style={styles.labRecDose}>{rec.dose} • {rec.timing}</Text>
+                  {rec.reason ? (
+                    <Text style={styles.labRecReason} numberOfLines={2}>{rec.reason}</Text>
+                  ) : null}
+                </View>
+                {rec.affiliateLink && (
+                  <TouchableOpacity
+                    style={styles.labRecShopBtn}
+                    onPress={() => openLink(rec.affiliateLink!.url)}
+                  >
+                    <ExternalLink color="#fff" size={12} />
+                    <Text style={styles.labRecShopText}>Shop</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        <SupplementsRecommendations
+          patientId={userProfile?.id}
+          labDeficiencies={labDeficiencies}
+          labSupplementHints={labSupplementHints}
+        />
 
         <View style={styles.peptideSectionCard}>
           <TouchableOpacity
@@ -1300,6 +1373,62 @@ const styles = StyleSheet.create({
   sectionContent: {
     paddingHorizontal: 18,
     paddingBottom: 18,
+  },
+  labRecsCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    marginBottom: 16,
+    padding: 18,
+  },
+  labRecsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  labRecsSubtext: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 17,
+  },
+  labRecRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    gap: 12,
+  },
+  labRecName: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  labRecDose: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  labRecReason: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  labRecShopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#e67e22',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  labRecShopText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: '#fff',
   },
   itemCard: {
     backgroundColor: Colors.surfaceSecondary,

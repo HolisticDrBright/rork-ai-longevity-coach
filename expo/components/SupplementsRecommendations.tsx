@@ -36,11 +36,15 @@ import {
 interface SupplementsRecommendationsProps {
   patientId?: string;
   compact?: boolean;
+  labDeficiencies?: string[];
+  labSupplementHints?: string[];
 }
 
 export default function SupplementsRecommendations({
   patientId,
   compact = false,
+  labDeficiencies,
+  labSupplementHints,
 }: SupplementsRecommendationsProps) {
   const { getRecommendations, trackClick } = useSupplements();
   const { userProfile, contraindications } = useUser();
@@ -49,16 +53,16 @@ export default function SupplementsRecommendations({
   const [showDisclosure, setShowDisclosure] = useState(false);
 
   const needs: PatientSupplementNeeds = useMemo(() => ({
-    goals: userProfile?.goals || [],
+    goals: [...(userProfile?.goals || []), ...(labSupplementHints || [])],
     conditions: contraindications?.conditions || [],
-    labDeficiencies: [],
+    labDeficiencies: labDeficiencies || [],
     medications: contraindications?.medications || [],
     allergies: contraindications?.allergies || [],
     preferences: {
       pregnantOrNursing: contraindications?.pregnant || contraindications?.nursing,
-      maxProducts: 5,
+      maxProducts: 8,
     },
-  }), [userProfile, contraindications]);
+  }), [userProfile, contraindications, labDeficiencies, labSupplementHints]);
 
   const bundle: RecommendationBundle = useMemo(() => {
     console.log('[SupplementsRec] Generating recommendations for:', needs);
