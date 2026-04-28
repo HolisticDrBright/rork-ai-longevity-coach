@@ -252,6 +252,7 @@ export default function LabsScreen() {
       const result = await analyzeLab({
         fileUri: uploadedDocument.uri,
         mimeType: uploadedDocument.mimeType,
+        fileName: uploadedDocument.name,
         panelId: pendingPanelId || undefined,
       });
       

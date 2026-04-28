@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL;
 const SECRET_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY;
+const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 
 const openaiGateway = createGateway({
   baseURL: `${TOOLKIT_URL}/v2/vercel/v3/ai`,
@@ -18,6 +19,96 @@ const openaiGateway = createGateway({
 });
 
 const OPENAI_MODEL_ID = 'openai/gpt-5-mini' as const;
+const OPENAI_DIRECT_MODEL = 'gpt-4.1' as const;
+
+async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<string> {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
+  console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
+
+  if (Platform.OS !== 'web') {
+    const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'application/pdf',
+      parameters: { purpose: 'user_data' },
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    });
+    if (result.status < 200 || result.status >= 300) {
+      console.log('[Labs] OpenAI upload failed:', result.status, result.body);
+      throw new Error(`OpenAI file upload failed (${result.status}).`);
+    }
+    const json = JSON.parse(result.body) as { id: string };
+    console.log('[Labs] OpenAI file uploaded, id:', json.id);
+    return json.id;
+  }
+
+  const response = await fetch(fileUri);
+  const blob = await response.blob();
+  const formData = new FormData();
+  formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
+  formData.append('purpose', 'user_data');
+  const res = await fetch('https://api.openai.com/v1/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    console.log('[Labs] OpenAI web upload failed:', res.status, t);
+    throw new Error(`OpenAI file upload failed (${res.status}).`);
+  }
+  const json = (await res.json()) as { id: string };
+  console.log('[Labs] OpenAI file uploaded (web), id:', json.id);
+  return json.id;
+}
+
+async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
+  const body: Record<string, unknown> = {
+    model: OPENAI_DIRECT_MODEL,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'file', file: { file_id: fileId } },
+          { type: 'text', text: prompt },
+        ],
+      },
+    ],
+  };
+  if (expectJson) {
+    body.response_format = { type: 'json_object' };
+  }
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    console.log('[Labs] OpenAI chat call failed:', res.status, t);
+    throw new Error(`OpenAI request failed (${res.status}).`);
+  }
+  const json = (await res.json()) as { choices: { message: { content: string } }[] };
+  return json.choices[0]?.message?.content ?? '';
+}
+
+async function deleteOpenAIFile(fileId: string): Promise<void> {
+  if (!OPENAI_API_KEY) return;
+  try {
+    await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    });
+    console.log('[Labs] Cleaned up OpenAI file:', fileId);
+  } catch (e) {
+    console.log('[Labs] Cleanup of OpenAI file failed (non-blocking):', e);
+  }
+}
 void generateText;
 void generateObject;
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
@@ -267,48 +358,42 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   }, []);
 
   const analyzeLabMutation = useMutation({
-    mutationFn: async (params: { fileUri: string; mimeType: string; panelId?: string }): Promise<LabAnalysisResult> => {
-      const { fileUri, mimeType, panelId } = params;
+    mutationFn: async (params: { fileUri: string; mimeType: string; panelId?: string; fileName?: string }): Promise<LabAnalysisResult> => {
+      const { fileUri, mimeType, panelId, fileName } = params;
       console.log('[Labs] Starting lab analysis');
-      
-      let base64Content = '';
-      
-      if (Platform.OS !== 'web') {
-        try {
-          base64Content = await FileSystem.readAsStringAsync(fileUri, {
-            encoding: 'base64',
-          });
-          console.log('[Labs] File read successfully');
-        } catch {
-          console.log('[Labs] Error reading file');
-          throw new Error('Could not read the uploaded file. Please try again.');
-        }
-      } else {
-        try {
-          const response = await fetch(fileUri);
-          const blob = await response.blob();
-          base64Content = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const result = reader.result as string;
-              const base64 = result.split(',')[1];
-              resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          console.log('[Labs] Web file read successfully');
-        } catch {
-          console.log('[Labs] Error reading web file');
-          throw new Error('Could not read the uploaded file. Please try again.');
-        }
-      }
 
       const isImage = mimeType.startsWith('image/');
       const isPdf = mimeType === 'application/pdf';
 
       if (!isImage && !isPdf) {
         throw new Error('Please upload an image or PDF file of your lab results.');
+      }
+
+      let base64Content = '';
+      if (isImage) {
+        if (Platform.OS !== 'web') {
+          try {
+            base64Content = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+          } catch {
+            throw new Error('Could not read the uploaded file. Please try again.');
+          }
+        } else {
+          try {
+            const response = await fetch(fileUri);
+            const blob = await response.blob();
+            base64Content = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const result = reader.result as string;
+                resolve(result.split(',')[1]);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          } catch {
+            throw new Error('Could not read the uploaded file. Please try again.');
+          }
+        }
       }
 
       let extractedData = { biomarkers: [], supplements: [], herbs: [], priorityActions: [] } as z.infer<typeof labExtractionSchema>;
@@ -331,48 +416,44 @@ Also provide:
 
 Be thorough and extract every biomarker visible in the document.`;
 
-      // PDFs can't be sent as images to the AI — they need to be handled differently.
-      // The AI vision model only accepts actual images (PNG, JPG, etc.).
-      // For PDFs: try sending the base64 as a document, and if the model rejects it,
-      // prompt the user to take a photo/screenshot of their lab results instead.
+      let openaiFileId: string | null = null;
+
       if (isPdf) {
-        console.log('[Labs] PDF detected — sending to OpenAI gpt-5-mini as file');
+        console.log('[Labs] PDF detected — uploading directly to OpenAI Files API');
         try {
-          const { object } = await aiGenerateObject({
-            model: openaiGateway(OPENAI_MODEL_ID),
-            schema: labExtractionSchema,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: extractionPrompt },
-                  {
-                    type: 'file',
-                    data: base64Content,
-                    mediaType: 'application/pdf',
-                    filename: 'lab-results.pdf',
-                  },
-                ],
-              },
-            ],
-          });
-          extractedData = object;
+          openaiFileId = await uploadPdfToOpenAI(fileUri, fileName ?? 'lab-results.pdf');
+        } catch (uploadErr) {
+          const msg = uploadErr instanceof Error ? uploadErr.message : '';
+          console.log('[Labs] OpenAI PDF upload failed:', msg);
+          throw new Error(
+            'Could not upload this PDF for analysis. Please check your connection and try again.'
+          );
+        }
+
+        try {
+          const jsonText = await callOpenAIWithFile(
+            openaiFileId,
+            `${extractionPrompt}\n\nReturn ONLY valid JSON with this exact shape:\n{\n  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],\n  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "priorityActions": [string]\n}`,
+            true
+          );
+          const parsed = JSON.parse(jsonText) as unknown;
+          extractedData = labExtractionSchema.parse(parsed);
+          console.log('[Labs] OpenAI direct PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
 
           if (extractedData.biomarkers.length === 0) {
             throw new Error('PDF_UNREADABLE');
           }
-
-          console.log('[Labs] OpenAI PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
         } catch (pdfError) {
           const msg = pdfError instanceof Error ? pdfError.message : '';
+          if (openaiFileId) void deleteOpenAIFile(openaiFileId);
           if (msg === 'PDF_UNREADABLE') {
             throw new Error(
-              'We couldn\'t extract biomarkers from this PDF. Try uploading a clearer version, or take a screenshot of the results page and upload the image.'
+              'We couldn\'t extract biomarkers from this PDF. The file may be a scan without selectable text — try uploading a digital PDF or screenshots of the results pages.'
             );
           }
-          console.log('[Labs] OpenAI PDF extraction failed:', msg);
+          console.log('[Labs] OpenAI direct PDF extraction failed:', msg);
           throw new Error(
-            'Failed to analyze this PDF. Please try again, or take a photo/screenshot of your lab results and upload the image.'
+            'Failed to analyze this PDF. Please try again or upload screenshots of the results pages.'
           );
         }
       } else {
@@ -409,8 +490,52 @@ Be thorough and extract every biomarker visible in the document.`;
         throw new Error('Unable to read lab results from the document. Please try uploading a clearer image or PDF.');
       }
 
-      const imageDataUrl = isPdf ? '' : `data:${mimeType};base64,${base64Content}`;
       let analysisText = '';
+
+      if (isPdf && openaiFileId) {
+        console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
+        try {
+          analysisText = await callOpenAIWithFile(openaiFileId, labAnalysisPrompt, false);
+        } catch (e) {
+          console.log('[Labs] PDF analysis generation failed:', e);
+          analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
+        }
+        void deleteOpenAIFile(openaiFileId);
+        openaiFileId = null;
+
+        const biomarkers: Biomarker[] = extractedData.biomarkers.map((b, index) => ({
+          id: `bio_${Date.now()}_${index}`,
+          name: b.name,
+          value: b.value,
+          unit: b.unit,
+          referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
+          functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
+          status: b.status,
+          date: new Date().toISOString(),
+        }));
+        const supplementsWithLinks: SupplementRecommendation[] = extractedData.supplements.map(supp => ({
+          ...supp,
+          affiliateLink: findAffiliateLink(supp.name),
+        }));
+        const herbsWithLinks: SupplementRecommendation[] = extractedData.herbs.map(herb => ({
+          ...herb,
+          affiliateLink: findAffiliateLink(herb.name),
+        }));
+        const analysis: LabAnalysis = {
+          id: `analysis_${Date.now()}`,
+          panelId: panelId || '',
+          date: new Date().toISOString(),
+          summary: analysisText,
+          status: 'completed',
+        };
+        return {
+          analysis,
+          biomarkers,
+          supplements: supplementsWithLinks,
+          herbs: herbsWithLinks,
+          priorityActions: extractedData.priorityActions,
+        };
+      }
 
       const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
 
@@ -455,30 +580,18 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
       console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
 
+      const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
+
       try {
-        type ContentPart =
-          | { type: 'text'; text: string }
-          | { type: 'image'; image: string }
-          | { type: 'file'; data: string; mediaType: string; filename?: string };
-        const analysisContent: ContentPart[] = [
-          { type: 'text', text: labAnalysisPrompt },
-        ];
-        if (isPdf) {
-          analysisContent.push({
-            type: 'file',
-            data: base64Content,
-            mediaType: 'application/pdf',
-            filename: 'lab-results.pdf',
-          });
-        } else if (imageDataUrl) {
-          analysisContent.push({ type: 'image', image: imageDataUrl });
-        }
         const { text } = await aiGenerateText({
           model: openaiGateway(OPENAI_MODEL_ID),
           messages: [
             {
               role: 'user',
-              content: analysisContent,
+              content: [
+                { type: 'text', text: labAnalysisPrompt },
+                { type: 'image', image: imageDataUrl },
+              ],
             },
           ],
         });
