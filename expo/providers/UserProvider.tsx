@@ -520,7 +520,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [userProfile, saveUserMutation]);
 
   const isLoading = userQuery.isLoading || lifestyleQuery.isLoading || 
-    contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading;
+    contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading ||
+    supabaseProfileQuery.isLoading;
 
   return useMemo(() => ({
     userProfile,
