@@ -29,6 +29,7 @@ import {
   Sparkles,
   Loader,
   ExternalLink,
+  Images,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 
@@ -60,8 +61,10 @@ export default function LabsScreen() {
     getBiomarkerTrend,
     isLoading,
     pickLabDocument,
+    pickLabImages,
     addLabPanel,
     analyzeLab,
+    analyzeLabImages,
     isAnalyzing,
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
@@ -76,6 +79,8 @@ export default function LabsScreen() {
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<LabAnalysisResult | null>(null);
   const [pendingPanelId, setPendingPanelId] = useState<string | null>(null);
+  const [uploadedImages, setUploadedImages] = useState<{ uri: string; name: string; mimeType: string }[]>([]);
+  const [analysisProgress, setAnalysisProgress] = useState<string>('');
 
   const toggleCategory = (category: string) => {
     setExpandedCategories(prev =>
@@ -89,6 +94,7 @@ export default function LabsScreen() {
     const doc = await pickLabDocument();
     if (doc) {
       setUploadedDocument(doc);
+      setUploadedImages([]);
       if (!labName.trim()) {
         const nameWithoutExt = doc.name.replace(/\.[^/.]+$/, '');
         setLabName(nameWithoutExt);
@@ -97,6 +103,54 @@ export default function LabsScreen() {
         userProfile?.id || 'anonymous',
         userProfile?.email || '',
       );
+    }
+  };
+
+  const handleUploadImages = async () => {
+    const imgs = await pickLabImages();
+    if (imgs.length > 0) {
+      setUploadedImages(imgs);
+      setUploadedDocument(null);
+      if (!labName.trim()) {
+        setLabName(`Lab Results ${new Date().toLocaleDateString()}`);
+      }
+      sendLabUploadStartedWebhook(
+        userProfile?.id || 'anonymous',
+        userProfile?.email || '',
+      );
+    }
+  };
+
+  const handleAnalyzeImages = async () => {
+    if (uploadedImages.length === 0) {
+      Alert.alert('No Images', 'Please select lab screenshots first.');
+      return;
+    }
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      console.log('[Labs UI] Starting multi-image analysis with', uploadedImages.length);
+      setAnalysisProgress(`Reading ${uploadedImages.length} images...`);
+      const result = await analyzeLabImages({
+        images: uploadedImages.map(i => ({ uri: i.uri, mimeType: i.mimeType })),
+        panelId: pendingPanelId || undefined,
+        onProgress: (msg: string) => setAnalysisProgress(msg),
+      });
+      setAnalysisProgress('');
+      setAnalysisResult(result);
+      if (result.biomarkers.length > 0) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setShowAnalysisModal(true);
+      } else {
+        Alert.alert('No Biomarkers Found', 'We could not extract biomarkers. Try clearer screenshots.');
+      }
+    } catch (error) {
+      setAnalysisProgress('');
+      const msg = error instanceof Error ? error.message : 'Failed to analyze images.';
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Analysis Failed', msg, [
+        { text: 'Try Again', onPress: handleAnalyzeImages },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
     }
   };
 
@@ -177,6 +231,8 @@ export default function LabsScreen() {
     setShowUploadModal(false);
     setShowAnalysisModal(false);
     setUploadedDocument(null);
+    setUploadedImages([]);
+    setAnalysisProgress('');
     setLabName('');
     setLabDate(new Date().toISOString().split('T')[0]);
     setAnalysisResult(null);
@@ -301,7 +357,29 @@ export default function LabsScreen() {
             placeholderTextColor={Colors.textTertiary}
           />
 
-          <Text style={styles.inputLabel}>Lab Report (PDF or Image)</Text>
+          <Text style={styles.inputLabel}>Upload Method</Text>
+
+          <TouchableOpacity
+            style={styles.imageUploadArea}
+            onPress={handleUploadImages}
+            testID="upload-screenshots-btn"
+          >
+            {uploadedImages.length > 0 ? (
+              <View style={styles.imageUploaded}>
+                <CheckCircle color={Colors.success} size={32} />
+                <Text style={styles.imageUploadedText}>{uploadedImages.length} Screenshots Selected</Text>
+                <Text style={styles.imageUploadedHint}>Tap to change</Text>
+              </View>
+            ) : (
+              <View style={styles.imageUploadPlaceholder}>
+                <Images color={Colors.primary} size={40} />
+                <Text style={styles.imageUploadText}>Upload Screenshots (Recommended)</Text>
+                <Text style={styles.imageUploadHint}>Best for multi-page labs. Select up to 30 images.</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <Text style={[styles.inputLabel, { marginTop: 16 }]}>Or upload a PDF / single image</Text>
           <TouchableOpacity
             style={styles.imageUploadArea}
             onPress={handleUploadDocument}
@@ -317,12 +395,30 @@ export default function LabsScreen() {
               <View style={styles.imageUploadPlaceholder}>
                 <FileText color={Colors.textTertiary} size={40} />
                 <Text style={styles.imageUploadText}>Tap to select file</Text>
-                <Text style={styles.imageUploadHint}>PDF files or images of lab results</Text>
+                <Text style={styles.imageUploadHint}>PDF or single image</Text>
               </View>
             )}
           </TouchableOpacity>
 
-          {uploadedDocument && (
+          {uploadedImages.length > 0 && (
+            <TouchableOpacity
+              style={[styles.analyzeButton, isAnalyzing && styles.analyzeButtonDisabled]}
+              onPress={handleAnalyzeImages}
+              disabled={isAnalyzing}
+              testID="analyze-images-btn"
+            >
+              {isAnalyzing ? (
+                <Loader color={Colors.textInverse} size={20} />
+              ) : (
+                <Sparkles color={Colors.textInverse} size={20} />
+              )}
+              <Text style={styles.analyzeButtonText}>
+                {isAnalyzing ? (analysisProgress || 'Analyzing...') : `Analyze ${uploadedImages.length} Screenshots`}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {uploadedDocument && uploadedImages.length === 0 && (
             <TouchableOpacity
               style={[styles.analyzeButton, isAnalyzing && styles.analyzeButtonDisabled]}
               onPress={handleAnalyzeLab}
@@ -337,6 +433,13 @@ export default function LabsScreen() {
                 {isAnalyzing ? 'Analyzing...' : 'Analyze with AI'}
               </Text>
             </TouchableOpacity>
+          )}
+
+          {isAnalyzing && analysisProgress.length > 0 && (
+            <View style={styles.progressCard}>
+              <Loader color={Colors.primary} size={16} />
+              <Text style={styles.progressText}>{analysisProgress}</Text>
+            </View>
           )}
 
           <View style={styles.infoCard}>
@@ -1159,6 +1262,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginTop: 24,
+  },
+  progressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: `${Colors.primary}10`,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  progressText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text,
   },
   infoText: {
     flex: 1,

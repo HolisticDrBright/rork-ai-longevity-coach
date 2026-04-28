@@ -2,6 +2,7 @@ import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
@@ -212,6 +213,35 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     const updated = [...labPanels, panel];
     saveLabsMutation.mutate(updated);
   }, [labPanels, saveLabsMutation]);
+
+  const pickLabImages = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string }[]> => {
+    try {
+      if (Platform.OS !== 'web') {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          console.log('[Labs] Media library permission denied');
+          return [];
+        }
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        quality: 0.8,
+        base64: false,
+      });
+      if (result.canceled || !result.assets || result.assets.length === 0) return [];
+      console.log('[Labs] Picked', result.assets.length, 'images');
+      return result.assets.map((a, i) => ({
+        uri: a.uri,
+        name: a.fileName || `lab-image-${i + 1}.jpg`,
+        mimeType: a.mimeType || 'image/jpeg',
+      }));
+    } catch (e) {
+      console.log('[Labs] Error picking images:', e);
+      return [];
+    }
+  }, []);
 
   const pickLabDocument = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string } | null> => {
     try {
@@ -546,6 +576,162 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     });
   }, []);
 
+  const analyzeLabImagesMutation = useMutation({
+    mutationFn: async (params: { images: { uri: string; mimeType: string }[]; panelId?: string; onProgress?: (msg: string) => void }): Promise<LabAnalysisResult> => {
+      const { images, panelId, onProgress } = params;
+      console.log('[Labs] Starting multi-image analysis with', images.length, 'images');
+      onProgress?.(`Reading ${images.length} images...`);
+
+      const readImage = async (img: { uri: string; mimeType: string }): Promise<string> => {
+        if (Platform.OS !== 'web') {
+          const b64 = await FileSystem.readAsStringAsync(img.uri, { encoding: 'base64' });
+          return `data:${img.mimeType};base64,${b64}`;
+        }
+        const response = await fetch(img.uri);
+        const blob = await response.blob();
+        return await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      };
+
+      const dataUrls: string[] = [];
+      for (const img of images) {
+        try {
+          dataUrls.push(await readImage(img));
+        } catch (e) {
+          console.log('[Labs] Failed to read image:', e);
+        }
+      }
+      if (dataUrls.length === 0) throw new Error('Could not read any of the uploaded images.');
+
+      const extractionPrompt = `You are analyzing pages from a lab report. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\nAlso provide:\n- supplements: Recommended supplements with dose, timing, reason, mechanism\n- herbs: Recommended herbs with dose, timing, reason, mechanism\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.`;
+
+      const BATCH = 4;
+      const batches: string[][] = [];
+      for (let i = 0; i < dataUrls.length; i += BATCH) batches.push(dataUrls.slice(i, i + BATCH));
+
+      const allBiomarkers: z.infer<typeof biomarkerSchema>[] = [];
+      const allSupps: z.infer<typeof supplementSchema>[] = [];
+      const allHerbs: z.infer<typeof supplementSchema>[] = [];
+      const allActions: string[] = [];
+
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        onProgress?.(`Extracting biomarkers from pages ${i * BATCH + 1}-${i * BATCH + batch.length} of ${dataUrls.length}...`);
+        console.log(`[Labs] Batch ${i + 1}/${batches.length} with ${batch.length} images`);
+        try {
+          const { object } = await aiGenerateObject({
+            model: openaiGateway(OPENAI_MODEL_ID),
+            schema: labExtractionSchema,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: extractionPrompt },
+                  ...batch.map((url) => ({ type: 'image' as const, image: url })),
+                ],
+              },
+            ],
+          });
+          allBiomarkers.push(...object.biomarkers);
+          allSupps.push(...object.supplements);
+          allHerbs.push(...object.herbs);
+          allActions.push(...object.priorityActions);
+        } catch (e) {
+          console.log('[Labs] Batch failed:', e);
+        }
+      }
+
+      if (allBiomarkers.length === 0) {
+        throw new Error('We could not read biomarkers from these screenshots. Please make sure the values and labels are clearly visible.');
+      }
+
+      const seen = new Set<string>();
+      const dedupedBiomarkers = allBiomarkers.filter(b => {
+        const key = b.name.toLowerCase().trim();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      const seenSupp = new Set<string>();
+      const dedupedSupps = allSupps.filter(s => {
+        const k = s.name.toLowerCase().trim();
+        if (seenSupp.has(k)) return false;
+        seenSupp.add(k);
+        return true;
+      });
+
+      const seenHerb = new Set<string>();
+      const dedupedHerbs = allHerbs.filter(h => {
+        const k = h.name.toLowerCase().trim();
+        if (seenHerb.has(k)) return false;
+        seenHerb.add(k);
+        return true;
+      });
+
+      onProgress?.('Generating functional medicine analysis...');
+      console.log('[Labs] Generating final analysis from', dedupedBiomarkers.length, 'biomarkers');
+
+      const summary = dedupedBiomarkers
+        .map(b => `${b.name}: ${b.value} ${b.unit} (status: ${b.status}${b.referenceMin != null ? `, ref ${b.referenceMin}-${b.referenceMax}` : ''})`)
+        .join('\n');
+
+      const labAnalysisPrompt = `You are a world-class functional medicine and longevity physician.\n\nHere are the extracted biomarkers from the patient's lab panel:\n\n${summary}\n\nProvide a comprehensive functional analysis including:\n1. Big-picture summary (top priorities)\n2. Pattern recognition (mitochondrial, insulin resistance, thyroid, HPA axis, etc.)\n3. Marker-by-marker analysis for abnormal markers\n4. Functional optimal targets\n5. Root-cause action plan (diet, lifestyle, supplements, detox/gut)\n6. Longevity interpretation\n7. Patient-friendly explanation\n8. Top 3 priorities\n\nTone: clear, precise, educational, no fear-mongering.`;
+
+      let analysisText = '';
+      try {
+        const { text } = await aiGenerateText({
+          model: openaiGateway(OPENAI_MODEL_ID),
+          messages: [{ role: 'user', content: [{ type: 'text', text: labAnalysisPrompt }] }],
+        });
+        analysisText = text;
+      } catch (e) {
+        console.log('[Labs] Final analysis failed, using fallback');
+        analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
+      }
+
+      const biomarkers: Biomarker[] = dedupedBiomarkers.map((b, index) => ({
+        id: `bio_${Date.now()}_${index}`,
+        name: b.name,
+        value: b.value,
+        unit: b.unit,
+        referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
+        functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
+        status: b.status,
+        date: new Date().toISOString(),
+      }));
+
+      const supplementsWithLinks: SupplementRecommendation[] = dedupedSupps.map(s => ({
+        ...s,
+        affiliateLink: findAffiliateLink(s.name),
+      }));
+      const herbsWithLinks: SupplementRecommendation[] = dedupedHerbs.map(h => ({
+        ...h,
+        affiliateLink: findAffiliateLink(h.name),
+      }));
+
+      const analysis: LabAnalysis = {
+        id: `analysis_${Date.now()}`,
+        panelId: panelId || '',
+        date: new Date().toISOString(),
+        summary: analysisText,
+        status: 'completed',
+      };
+
+      return {
+        analysis,
+        biomarkers,
+        supplements: supplementsWithLinks,
+        herbs: herbsWithLinks,
+        priorityActions: Array.from(new Set(allActions)).slice(0, 5),
+      };
+    },
+  });
+
   return useMemo(() => ({
     labPanels,
     latestPanel,
@@ -557,10 +743,12 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     getBiomarkerTrend,
     addLabPanel,
     pickLabDocument,
+    pickLabImages,
     createManualLabPanel,
     analyzeLab: analyzeLabMutation.mutateAsync,
-    isAnalyzing: analyzeLabMutation.isPending,
-    analysisError: analyzeLabMutation.error,
+    analyzeLabImages: analyzeLabImagesMutation.mutateAsync,
+    isAnalyzing: analyzeLabMutation.isPending || analyzeLabImagesMutation.isPending,
+    analysisError: analyzeLabMutation.error || analyzeLabImagesMutation.error,
     updateLabPanelBiomarkers,
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
@@ -576,10 +764,14 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     getBiomarkerTrend,
     addLabPanel,
     pickLabDocument,
+    pickLabImages,
     createManualLabPanel,
     analyzeLabMutation.mutateAsync,
+    analyzeLabImagesMutation.mutateAsync,
     analyzeLabMutation.isPending,
+    analyzeLabImagesMutation.isPending,
     analyzeLabMutation.error,
+    analyzeLabImagesMutation.error,
     updateLabPanelBiomarkers,
     sendLabUploadStartedWebhook,
   ]);
