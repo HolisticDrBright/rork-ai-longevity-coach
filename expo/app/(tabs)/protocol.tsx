@@ -521,22 +521,6 @@ export default function ProtocolScreen() {
             </View>
           )}
         </View>
-
-        <View style={styles.fullscriptBanner}>
-          <View style={styles.fullscriptContent}>
-            <Text style={styles.fullscriptTitle}>Shop Supplements</Text>
-            <Text style={styles.fullscriptText}>
-              Get practitioner pricing on Fullscript
-            </Text>
-          </View>
-          <TouchableOpacity 
-            style={styles.fullscriptButton}
-            onPress={() => openLink(FULLSCRIPT_URL)}
-          >
-            <Text style={styles.fullscriptButtonText}>Shop</Text>
-            <ExternalLink size={14} color="#fff" />
-          </TouchableOpacity>
-        </View>
       </ScrollView>
 
       <PeptideCalculatorModal
