@@ -156,30 +156,37 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [queryClient]);
 
   useEffect(() => {
+    if (userQuery.isLoading) {
+      console.log('[UserProvider] Skipping remote merge — local profile not hydrated yet');
+      return;
+    }
     const remote = supabaseProfileQuery.data;
     if (!remote) return;
+
+    const localBase = userQuery.data ?? userProfile;
 
     if (remote.profile) {
       const r = remote.profile;
       const merged: UserProfile = {
         ...defaultUserProfile,
-        ...userProfile,
-        id: r.id || userProfile.id,
-        email: r.email ?? userProfile.email,
-        firstName: r.first_name ?? userProfile.firstName,
-        lastName: r.last_name ?? userProfile.lastName,
-        sex: (r.sex as UserProfile['sex']) ?? userProfile.sex,
-        dateOfBirth: r.birth_date ?? userProfile.dateOfBirth,
-        height: r.height ?? userProfile.height,
-        weight: r.weight ?? userProfile.weight,
-        goals: r.goals ?? userProfile.goals,
-        onboardingCompleted: r.onboarding_completed || userProfile.onboardingCompleted,
+        ...localBase,
+        id: r.id || localBase.id,
+        email: r.email ?? localBase.email,
+        firstName: r.first_name ?? localBase.firstName,
+        lastName: r.last_name ?? localBase.lastName,
+        sex: (r.sex as UserProfile['sex']) ?? localBase.sex,
+        dateOfBirth: r.birth_date ?? localBase.dateOfBirth,
+        height: r.height ?? localBase.height,
+        weight: r.weight ?? localBase.weight,
+        goals: r.goals ?? localBase.goals,
+        // Never downgrade onboarding once it's been completed locally or remotely.
+        onboardingCompleted: Boolean(r.onboarding_completed) || Boolean(localBase.onboardingCompleted),
       };
       const changed =
-        merged.onboardingCompleted !== userProfile.onboardingCompleted ||
-        merged.id !== userProfile.id ||
-        merged.email !== userProfile.email ||
-        merged.firstName !== userProfile.firstName;
+        merged.onboardingCompleted !== localBase.onboardingCompleted ||
+        merged.id !== localBase.id ||
+        merged.email !== localBase.email ||
+        merged.firstName !== localBase.firstName;
       if (changed) {
         console.log('[UserProvider] Applying remote profile (onboardingCompleted=' + merged.onboardingCompleted + ')');
         setUserProfile(merged);
@@ -226,7 +233,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
       setQuestionnaireResponses(responses);
       void secureSetJSON(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, responses);
     }
-  }, [supabaseProfileQuery.data]);
+  }, [supabaseProfileQuery.data, userQuery.isLoading, userQuery.data]);
 
   useEffect(() => {
     if (userQuery.isLoading || pendingRoleAppliedRef.current) return;
