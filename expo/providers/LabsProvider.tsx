@@ -5,7 +5,20 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
+import { createGateway, generateText as aiGenerateText, generateObject as aiGenerateObject } from 'ai';
 import { z } from 'zod';
+
+const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL;
+const SECRET_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY;
+
+const openaiGateway = createGateway({
+  baseURL: `${TOOLKIT_URL}/v2/vercel/v3/ai`,
+  apiKey: SECRET_KEY,
+});
+
+const OPENAI_MODEL_ID = 'openai/gpt-5-mini' as const;
+void generateText;
+void generateObject;
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
@@ -293,47 +306,33 @@ Be thorough and extract every biomarker visible in the document.`;
       // For PDFs: try sending the base64 as a document, and if the model rejects it,
       // prompt the user to take a photo/screenshot of their lab results instead.
       if (isPdf) {
-        console.log('[Labs] PDF detected — sending as document to AI');
+        console.log('[Labs] PDF detected — sending to OpenAI gpt-5-mini as file');
         try {
-          // Send PDF as a file attachment. The @rork-ai/toolkit-sdk's generateObject
-          // supports file content via the 'file' content type for document analysis.
-          // We send the base64 PDF and let the model extract text from it.
-          extractedData = await generateObject({
+          const { object } = await aiGenerateObject({
+            model: openaiGateway(OPENAI_MODEL_ID),
+            schema: labExtractionSchema,
             messages: [
               {
                 role: 'user',
                 content: [
                   { type: 'text', text: extractionPrompt },
-                  { type: 'file', data: base64Content, mimeType: 'application/pdf' },
+                  {
+                    type: 'file',
+                    data: base64Content,
+                    mediaType: 'application/pdf',
+                    filename: 'lab-results.pdf',
+                  },
                 ],
               },
             ],
-            schema: labExtractionSchema,
           });
-
-          if (extractedData.biomarkers.length === 0) {
-            // Model couldn't extract — try sending as image in case it's a scanned PDF
-            console.log('[Labs] No biomarkers from PDF file mode, trying as image...');
-            const pdfImageUrl = `data:application/pdf;base64,${base64Content}`;
-            extractedData = await generateObject({
-              messages: [
-                {
-                  role: 'user',
-                  content: [
-                    { type: 'text', text: extractionPrompt },
-                    { type: 'image', image: pdfImageUrl },
-                  ],
-                },
-              ],
-              schema: labExtractionSchema,
-            });
-          }
+          extractedData = object;
 
           if (extractedData.biomarkers.length === 0) {
             throw new Error('PDF_UNREADABLE');
           }
 
-          console.log('[Labs] PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
+          console.log('[Labs] OpenAI PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
         } catch (pdfError) {
           const msg = pdfError instanceof Error ? pdfError.message : '';
           if (msg === 'PDF_UNREADABLE') {
@@ -341,41 +340,38 @@ Be thorough and extract every biomarker visible in the document.`;
               'We couldn\'t extract biomarkers from this PDF. Try uploading a clearer version, or take a screenshot of the results page and upload the image.'
             );
           }
-          console.log('[Labs] PDF extraction failed:', msg);
+          console.log('[Labs] OpenAI PDF extraction failed:', msg);
           throw new Error(
             'Failed to analyze this PDF. Please try again, or take a photo/screenshot of your lab results and upload the image.'
           );
         }
       } else {
-        // Image file — send directly to AI vision
+        // Image file — send directly to OpenAI vision
         const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
 
-      console.log('[Labs] Extracting biomarkers from image...');
+        console.log('[Labs] Extracting biomarkers from image via OpenAI gpt-5-mini...');
 
-      try {
-        console.log('[Labs] Starting biomarker extraction...');
-        extractedData = await generateObject({
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: extractionPrompt },
-                { type: 'image', image: imageDataUrl },
-              ],
-            },
-          ],
-          schema: labExtractionSchema,
-        });
-        console.log('[Labs] Extraction complete');
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.log('[Labs] Extraction error occurred');
-        extractionError = errorMessage;
-
-        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
-          console.log('[Labs] Network error detected, will try text analysis...');
+        try {
+          const { object } = await aiGenerateObject({
+            model: openaiGateway(OPENAI_MODEL_ID),
+            schema: labExtractionSchema,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: extractionPrompt },
+                  { type: 'image', image: imageDataUrl },
+                ],
+              },
+            ],
+          });
+          extractedData = object;
+          console.log('[Labs] Image extraction complete');
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.log('[Labs] Extraction error occurred:', errorMessage);
+          extractionError = errorMessage;
         }
-      }
       }
 
       if (extractedData.biomarkers.length === 0 && extractionError) {
@@ -427,16 +423,28 @@ If You Do Nothing Else, Do These 3 Things
 
 Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
-      console.log('[Labs] Generating analysis...');
-      
+      console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
+
       try {
-        const analysisContent: Array<Record<string, string>> = [
+        type ContentPart =
+          | { type: 'text'; text: string }
+          | { type: 'image'; image: string }
+          | { type: 'file'; data: string; mediaType: string; filename?: string };
+        const analysisContent: ContentPart[] = [
           { type: 'text', text: labAnalysisPrompt },
         ];
-        if (imageDataUrl) {
+        if (isPdf) {
+          analysisContent.push({
+            type: 'file',
+            data: base64Content,
+            mediaType: 'application/pdf',
+            filename: 'lab-results.pdf',
+          });
+        } else if (imageDataUrl) {
           analysisContent.push({ type: 'image', image: imageDataUrl });
         }
-        analysisText = await generateText({
+        const { text } = await aiGenerateText({
+          model: openaiGateway(OPENAI_MODEL_ID),
           messages: [
             {
               role: 'user',
@@ -444,6 +452,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
             },
           ],
         });
+        analysisText = text;
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.log('[Labs] Analysis generation error');
