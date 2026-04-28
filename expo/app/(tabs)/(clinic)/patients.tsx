@@ -22,7 +22,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
-import { mockClinicPatients } from '@/mocks/clinicMockData';
 
 type PatientStatus = 'active' | 'inactive' | 'archived';
 
@@ -118,7 +117,7 @@ export default function PatientsScreen() {
   });
 
   const realPatients = patientsQuery.data || [];
-  const patients = realPatients.length > 0 ? realPatients : (mockClinicPatients as unknown as typeof realPatients);
+  const patients = realPatients;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -36,7 +36,8 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useLabs, LabAnalysisResult } from '@/providers/LabsProvider';
 import { useUser } from '@/providers/UserProvider';
-import { Biomarker } from '@/types';
+import { useProtocol } from '@/providers/ProtocolProvider';
+import { Biomarker, Supplement } from '@/types';
 
 const statusColors = {
   optimal: Colors.success,
@@ -71,6 +72,25 @@ export default function LabsScreen() {
     saveLatestAnalysis,
   } = useLabs();
   const { userProfile } = useUser();
+  const { addSupplementToProtocol, activeProtocol } = useProtocol();
+
+  const handleAddToProtocol = useCallback((supp: { name: string; dose: string; timing: string; reason: string }) => {
+    const supplement: Supplement = {
+      id: `supp_lab_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      name: supp.name,
+      dose: supp.dose,
+      frequency: 'daily',
+      timing: supp.timing.toLowerCase().includes('morning') ? 'morning'
+        : supp.timing.toLowerCase().includes('evening') ? 'evening'
+        : supp.timing.toLowerCase().includes('bed') ? 'before_bed'
+        : supp.timing.toLowerCase().includes('meal') ? 'with_meals'
+        : 'morning',
+      notes: supp.reason,
+    };
+    addSupplementToProtocol(supplement);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Added to Protocol', `${supp.name} has been added to your active protocol.`);
+  }, [addSupplementToProtocol]);
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>(['Metabolic', 'Inflammation']);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -161,21 +181,21 @@ export default function LabsScreen() {
       return;
     }
 
-    if (!uploadedDocument) {
-      Alert.alert('Error', 'Please upload a lab document first');
+    if (!uploadedDocument && uploadedImages.length === 0) {
+      Alert.alert('Error', 'Please upload a lab document or images first');
       return;
     }
 
     const biomarkers = analysisResult?.biomarkers || [];
-    
+
     if (biomarkers.length === 0) {
       Alert.alert(
         'No Biomarkers',
         'No biomarkers have been extracted. Would you like to analyze the document with AI first?',
         [
-          { text: 'Analyze First', onPress: handleAnalyzeLab },
-          { 
-            text: 'Save Anyway', 
+          { text: 'Analyze First', onPress: uploadedImages.length > 0 ? handleAnalyzeImages : handleAnalyzeLab },
+          {
+            text: 'Save Anyway',
             style: 'destructive',
             onPress: () => saveLabWithoutBiomarkers()
           },
@@ -211,21 +231,26 @@ export default function LabsScreen() {
   const saveLabWithBiomarkers = (biomarkers: Biomarker[]) => {
     console.log('[Labs UI] Saving lab with', biomarkers.length, 'biomarkers');
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
+
     const panelId = `panel_${Date.now()}`;
-    
+    const sourceName = uploadedDocument?.name
+      ?? (uploadedImages.length > 0 ? `${uploadedImages.length} image(s)` : 'AI analysis');
+
     addLabPanel({
       id: panelId,
-      name: labName,
+      name: labName || `Lab Results ${new Date().toLocaleDateString()}`,
       date: labDate,
       source: 'upload',
-      fileUrl: uploadedDocument?.uri || undefined,
+      fileUrl: uploadedDocument?.uri || uploadedImages[0]?.uri || undefined,
       biomarkers: biomarkers,
-      notes: `Uploaded: ${uploadedDocument?.name || 'No file'}`,
+      notes: `Uploaded: ${sourceName}`,
     });
 
     resetUploadState();
-    Alert.alert('Lab Uploaded', `Your lab has been uploaded with ${biomarkers.length} biomarkers extracted.`);
+    Alert.alert(
+      'Lab Saved',
+      `${biomarkers.length} biomarkers extracted and saved. Your protocol recommendations will update automatically.`,
+    );
   };
 
   const resetUploadState = () => {
@@ -546,15 +571,24 @@ export default function LabsScreen() {
                           <Text style={styles.supplementDoseClean}>{supp.dose}</Text>
                         </View>
                         <Text style={styles.supplementTimingClean}>{supp.timing}</Text>
-                        {supp.affiliateLink && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          {supp.affiliateLink && (
+                            <TouchableOpacity
+                              style={styles.shopButtonClean}
+                              onPress={() => Linking.openURL(supp.affiliateLink!.url)}
+                            >
+                              <ExternalLink color="#fff" size={12} />
+                              <Text style={styles.shopButtonText}>Shop</Text>
+                            </TouchableOpacity>
+                          )}
                           <TouchableOpacity
-                            style={styles.shopButtonClean}
-                            onPress={() => Linking.openURL(supp.affiliateLink!.url)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
+                            onPress={() => handleAddToProtocol(supp)}
                           >
-                            <ExternalLink color="#fff" size={12} />
-                            <Text style={styles.shopButtonText}>Shop</Text>
+                            <Plus color="#fff" size={12} />
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
                           </TouchableOpacity>
-                        )}
+                        </View>
                       </View>
                     ))}
 
@@ -565,15 +599,24 @@ export default function LabsScreen() {
                           <Text style={styles.supplementDoseClean}>{herb.dose}</Text>
                         </View>
                         <Text style={styles.supplementTimingClean}>{herb.timing}</Text>
-                        {herb.affiliateLink && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          {herb.affiliateLink && (
+                            <TouchableOpacity
+                              style={styles.shopButtonClean}
+                              onPress={() => Linking.openURL(herb.affiliateLink!.url)}
+                            >
+                              <ExternalLink color="#fff" size={12} />
+                              <Text style={styles.shopButtonText}>Shop</Text>
+                            </TouchableOpacity>
+                          )}
                           <TouchableOpacity
-                            style={styles.shopButtonClean}
-                            onPress={() => Linking.openURL(herb.affiliateLink!.url)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
+                            onPress={() => handleAddToProtocol(herb)}
                           >
-                            <ExternalLink color="#fff" size={12} />
-                            <Text style={styles.shopButtonText}>Shop</Text>
+                            <Plus color="#fff" size={12} />
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
                           </TouchableOpacity>
-                        )}
+                        </View>
                       </View>
                     ))}
                   </View>
@@ -788,15 +831,24 @@ export default function LabsScreen() {
                           <Text style={styles.supplementDoseClean}>{supp.dose}</Text>
                         </View>
                         <Text style={styles.supplementTimingClean}>{supp.timing}</Text>
-                        {supp.affiliateLink && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          {supp.affiliateLink && (
+                            <TouchableOpacity
+                              style={styles.shopButtonClean}
+                              onPress={() => Linking.openURL(supp.affiliateLink!.url)}
+                            >
+                              <ExternalLink color="#fff" size={12} />
+                              <Text style={styles.shopButtonText}>Shop</Text>
+                            </TouchableOpacity>
+                          )}
                           <TouchableOpacity
-                            style={styles.shopButtonClean}
-                            onPress={() => Linking.openURL(supp.affiliateLink!.url)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
+                            onPress={() => handleAddToProtocol(supp)}
                           >
-                            <ExternalLink color="#fff" size={12} />
-                            <Text style={styles.shopButtonText}>Shop</Text>
+                            <Plus color="#fff" size={12} />
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
                           </TouchableOpacity>
-                        )}
+                        </View>
                       </View>
                     ))}
 
@@ -807,15 +859,24 @@ export default function LabsScreen() {
                           <Text style={styles.supplementDoseClean}>{herb.dose}</Text>
                         </View>
                         <Text style={styles.supplementTimingClean}>{herb.timing}</Text>
-                        {herb.affiliateLink && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          {herb.affiliateLink && (
+                            <TouchableOpacity
+                              style={styles.shopButtonClean}
+                              onPress={() => Linking.openURL(herb.affiliateLink!.url)}
+                            >
+                              <ExternalLink color="#fff" size={12} />
+                              <Text style={styles.shopButtonText}>Shop</Text>
+                            </TouchableOpacity>
+                          )}
                           <TouchableOpacity
-                            style={styles.shopButtonClean}
-                            onPress={() => Linking.openURL(herb.affiliateLink!.url)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
+                            onPress={() => handleAddToProtocol(herb)}
                           >
-                            <ExternalLink color="#fff" size={12} />
-                            <Text style={styles.shopButtonText}>Shop</Text>
+                            <Plus color="#fff" size={12} />
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
                           </TouchableOpacity>
-                        )}
+                        </View>
                       </View>
                     ))}
                   </View>
