@@ -116,7 +116,8 @@ export default function PatientsScreen() {
     limit: 100,
   });
 
-  const patients = patientsQuery.data || [];
+  const realPatients = patientsQuery.data || [];
+  const patients = realPatients;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

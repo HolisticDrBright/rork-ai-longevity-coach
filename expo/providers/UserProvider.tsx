@@ -1,6 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
@@ -28,6 +29,8 @@ const STORAGE_KEYS = {
   QUESTIONNAIRE_RESPONSES: 'longevity_questionnaire_responses',
   CLINICAL_INTAKE: 'longevity_clinical_intake',
 };
+
+const PENDING_ROLE_KEY = 'longevity_pending_role';
 
 const defaultUserProfile: UserProfile = {
   id: '',
@@ -112,9 +115,160 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
   });
 
+  const pendingRoleAppliedRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (userQuery.data) setUserProfile(userQuery.data);
   }, [userQuery.data]);
+
+  const supabaseProfileQuery = useQuery({
+    queryKey: ['supabaseProfile'],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+      console.log('[UserProvider] Hydrating profile from Supabase...');
+      const [profileRes, lifestyleRes, contraRes, questionnaireRes] = await Promise.all([
+        profileService.get(),
+        lifestyleService.get(),
+        contraindicationService.get(),
+        supabase.from('questionnaire_responses').select('*').eq('user_id', session.user.id),
+      ]);
+      return {
+        profile: profileRes.data,
+        lifestyle: lifestyleRes.data,
+        contraindications: contraRes.data,
+        questionnaire: questionnaireRes.data,
+      };
+    },
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+        void queryClient.invalidateQueries({ queryKey: ['supabaseProfile'] });
+      }
+      if (event === 'SIGNED_OUT') {
+        void queryClient.invalidateQueries({ queryKey: ['supabaseProfile'] });
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (userQuery.isLoading) {
+      console.log('[UserProvider] Skipping remote merge — local profile not hydrated yet');
+      return;
+    }
+    const remote = supabaseProfileQuery.data;
+    if (!remote) return;
+
+    const localBase = userQuery.data ?? userProfile;
+
+    if (remote.profile) {
+      const r = remote.profile;
+      const merged: UserProfile = {
+        ...defaultUserProfile,
+        ...localBase,
+        id: r.id || localBase.id,
+        email: r.email ?? localBase.email,
+        firstName: r.first_name ?? localBase.firstName,
+        lastName: r.last_name ?? localBase.lastName,
+        sex: (r.sex as UserProfile['sex']) ?? localBase.sex,
+        dateOfBirth: r.birth_date ?? localBase.dateOfBirth,
+        height: r.height ?? localBase.height,
+        weight: r.weight ?? localBase.weight,
+        goals: r.goals ?? localBase.goals,
+        // Never downgrade onboarding once it's been completed locally or remotely.
+        onboardingCompleted: Boolean(r.onboarding_completed) || Boolean(localBase.onboardingCompleted),
+      };
+      const changed =
+        merged.onboardingCompleted !== localBase.onboardingCompleted ||
+        merged.id !== localBase.id ||
+        merged.email !== localBase.email ||
+        merged.firstName !== localBase.firstName;
+      if (changed) {
+        console.log('[UserProvider] Applying remote profile (onboardingCompleted=' + merged.onboardingCompleted + ')');
+        setUserProfile(merged);
+        void secureSetJSON(STORAGE_KEYS.USER_PROFILE, merged);
+      }
+    }
+
+    if (remote.lifestyle) {
+      const l = remote.lifestyle;
+      const mergedLifestyle: LifestyleProfile = {
+        sleepHours: l.sleep_hours ?? defaultLifestyleProfile.sleepHours,
+        sleepQuality: l.sleep_quality ?? defaultLifestyleProfile.sleepQuality,
+        stressLevel: l.stress_level ?? defaultLifestyleProfile.stressLevel,
+        dietType: (l.diet_type as LifestyleProfile['dietType']) ?? defaultLifestyleProfile.dietType,
+        cookingSkill: (l.cooking_skill as LifestyleProfile['cookingSkill']) ?? defaultLifestyleProfile.cookingSkill,
+        shoppingCadence: (l.shopping_cadence as LifestyleProfile['shoppingCadence']) ?? defaultLifestyleProfile.shoppingCadence,
+        exerciseFrequency: l.exercise_frequency ?? defaultLifestyleProfile.exerciseFrequency,
+        exerciseTypes: l.exercise_types ?? [],
+      };
+      setLifestyleProfile(mergedLifestyle);
+      void secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, mergedLifestyle);
+    }
+
+    if (remote.contraindications) {
+      const c = remote.contraindications;
+      const mergedContra: Contraindication = {
+        pregnant: c.pregnant ?? false,
+        nursing: c.nursing ?? false,
+        medications: c.medications ?? [],
+        allergies: c.allergies ?? [],
+        conditions: c.conditions ?? [],
+      };
+      setContraindications(mergedContra);
+      void secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, mergedContra);
+    }
+
+    if (remote.questionnaire && remote.questionnaire.length > 0) {
+      const responses: QuestionnaireResponse[] = remote.questionnaire.map((row: { question_id: string; category_id: string; severity: number; timestamp: string }) => ({
+        questionId: row.question_id,
+        categoryId: row.category_id,
+        severity: row.severity as 0 | 1 | 2 | 3 | 4,
+        timestamp: row.timestamp,
+      }));
+      setQuestionnaireResponses(responses);
+      void secureSetJSON(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, responses);
+    }
+  }, [supabaseProfileQuery.data, userQuery.isLoading, userQuery.data]);
+
+  useEffect(() => {
+    if (userQuery.isLoading || pendingRoleAppliedRef.current) return;
+    (async () => {
+      try {
+        const pendingRole = await AsyncStorage.getItem(PENDING_ROLE_KEY);
+        if (!pendingRole) return;
+        pendingRoleAppliedRef.current = true;
+        const current = userQuery.data ?? defaultUserProfile;
+        if (pendingRole === 'clinician') {
+          if (current.role !== 'clinician' || !current.onboardingCompleted) {
+            const id = current.id || `clinician_${Date.now()}`;
+            const updated: UserProfile = {
+              ...current,
+              id,
+              role: 'clinician',
+              onboardingCompleted: true,
+            };
+            await secureSetJSON(STORAGE_KEYS.USER_PROFILE, updated);
+            setUserProfile(updated);
+            void queryClient.invalidateQueries({ queryKey: ['userProfile'] });
+            console.log('[UserProvider] Applied pending clinician role');
+          }
+        } else if (pendingRole === 'patient' && current.role !== 'patient') {
+          const updated: UserProfile = { ...current, role: 'patient' };
+          await secureSetJSON(STORAGE_KEYS.USER_PROFILE, updated);
+          setUserProfile(updated);
+          void queryClient.invalidateQueries({ queryKey: ['userProfile'] });
+        }
+        await AsyncStorage.removeItem(PENDING_ROLE_KEY);
+      } catch (e) {
+        console.log('[UserProvider] pending role apply failed', e);
+      }
+    })();
+  }, [userQuery.isLoading, userQuery.data, queryClient]);
 
   useEffect(() => {
     if (lifestyleQuery.data) setLifestyleProfile(lifestyleQuery.data);
@@ -373,7 +527,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [userProfile, saveUserMutation]);
 
   const isLoading = userQuery.isLoading || lifestyleQuery.isLoading || 
-    contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading;
+    contraindicationsQuery.isLoading || responsesQuery.isLoading || clinicalIntakeQuery.isLoading ||
+    supabaseProfileQuery.isLoading;
 
   return useMemo(() => ({
     userProfile,

@@ -50,9 +50,21 @@ export default function ConnectionsScreen() {
 
   const handleConnect = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const result = await connectMutation.mutateAsync();
-    if (result.success && result.newProvider) {
-      Alert.alert('Connected', `${result.newProvider} is now connected. Data will start syncing shortly.`);
+    try {
+      const result = await connectMutation.mutateAsync();
+      if (result.success && result.newProvider) {
+        Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
+      } else if (result.success && !result.newProvider) {
+        Alert.alert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
+      } else {
+        Alert.alert(
+          'Wearables not available',
+          'Device connections require a custom build with the Vital SDK installed. This preview/Expo Go build cannot connect to wearables. Once a development build is created and EXPO_PUBLIC_VITAL_API_KEY is configured, this button will open the provider picker.'
+        );
+      }
+    } catch (err) {
+      console.error('[Connections] connect failed', err);
+      Alert.alert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
     }
   }, [connectMutation]);
 

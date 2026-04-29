@@ -156,7 +156,7 @@ export default function ClinicDashboardScreen() {
   const activities = activityQuery.data || [];
   const reviews = reviewsQuery.data || [];
 
-  const isLoading = statsQuery.isLoading || activityQuery.isLoading;
+  const isLoading = statsQuery.isLoading && activityQuery.isLoading;
 
   if (isLoading && !refreshing) {
     return (

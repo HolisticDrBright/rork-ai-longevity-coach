@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 
 import {
   Protocol,
+  Supplement,
   DailyAdherence,
   WeeklyCheckIn,
   TodayAction,
@@ -477,6 +478,39 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     savePeptideAckMutation.mutate(true);
   }, [savePeptideAckMutation]);
 
+  const addSupplementToProtocol = useCallback((supplement: Supplement) => {
+    if (!activeProtocol) {
+      // Create a new protocol if none exists
+      const newProtocol: Protocol = {
+        id: `proto_${Date.now()}`,
+        name: 'My Protocol',
+        description: 'Auto-created from lab recommendations',
+        startDate: getTodayDate(),
+        status: 'active',
+        version: 1,
+        supplements: [supplement],
+        peptides: [],
+        lifestyleTasks: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      _saveProtocolsMutation.mutate([...protocols, newProtocol]);
+    } else {
+      // Check if supplement already exists
+      const exists = activeProtocol.supplements.some(
+        s => s.name.toLowerCase() === supplement.name.toLowerCase()
+      );
+      if (exists) return;
+
+      const updated = protocols.map(p =>
+        p.id === activeProtocol.id
+          ? { ...p, supplements: [...p.supplements, supplement], updatedAt: new Date().toISOString() }
+          : p
+      );
+      _saveProtocolsMutation.mutate(updated);
+    }
+  }, [activeProtocol, protocols, _saveProtocolsMutation]);
+
   return useMemo(() => ({
     protocols,
     activeProtocol,
@@ -488,6 +522,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     weeklyAdherenceStats,
     conditionProtocols,
     isLoading,
+    addSupplementToProtocol,
     toggleActionComplete,
     updateDailySymptoms,
     saveWeeklyCheckIn,
@@ -508,7 +543,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
   }), [
     protocols, activeProtocol, todayActions, todayAdherence, dailyAdherence,
     weeklyCheckIns, adherencePercentage, weeklyAdherenceStats, conditionProtocols,
-    isLoading, toggleActionComplete, updateDailySymptoms, saveWeeklyCheckIn,
+    isLoading, addSupplementToProtocol, toggleActionComplete, updateDailySymptoms, saveWeeklyCheckIn,
     peptideDatabase, dosingGuidance, peptideEvidence, peptideProtocols,
     userPeptidePlans, peptideAcknowledged, getPeptideRecommendations,
     getPeptideById, getDosingForPeptide, getEvidenceForPeptide,

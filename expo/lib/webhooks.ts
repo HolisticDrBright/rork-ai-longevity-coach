@@ -1,4 +1,4 @@
-const WEBHOOK_BASE_URL = 'https://137.184.84.143:3001/api/webhooks';
+const WEBHOOK_BASE_URL = process.env.EXPO_PUBLIC_WEBHOOK_URL || '';
 
 const getWebhookSecret = (): string => {
   return process.env.EXPO_PUBLIC_WEBHOOK_SECRET || '';
@@ -14,8 +14,8 @@ interface WebhookPayload {
 
 async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<boolean> {
   const secret = getWebhookSecret();
-  if (!secret) {
-    console.log('[Webhooks] No webhook secret configured, skipping webhook:', endpoint);
+  if (!secret || !WEBHOOK_BASE_URL) {
+    // No webhook configured — skip silently
     return false;
   }
 

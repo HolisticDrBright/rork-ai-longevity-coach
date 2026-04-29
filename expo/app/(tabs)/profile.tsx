@@ -390,27 +390,51 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Clinician Mode</Text>
-          <TouchableOpacity 
+          <Text style={styles.sectionTitle}>Practitioners Portal</Text>
+          <TouchableOpacity
             style={styles.clinicianToggle}
             onPress={() => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              setUserRole(isClinician ? 'patient' : 'clinician');
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push('/practitioner' as any);
             }}
+            testID="open-practitioner-portal"
           >
-            <View style={[styles.menuIcon, { backgroundColor: isClinician ? `${Colors.primary}15` : `${Colors.textTertiary}15` }]}>
-              <Stethoscope color={isClinician ? Colors.primary : Colors.textTertiary} size={18} />
+            <View style={[styles.menuIcon, { backgroundColor: isClinician ? `${Colors.primary}15` : `${Colors.accent}15` }]}>
+              <Stethoscope color={isClinician ? Colors.primary : Colors.accent} size={18} />
             </View>
             <View style={styles.clinicianToggleContent}>
-              <Text style={styles.menuText}>Clinician Portal</Text>
+              <Text style={styles.menuText}>
+                {isClinician ? 'Open Practitioners Portal' : 'For Healthcare Providers'}
+              </Text>
               <Text style={styles.clinicianToggleDesc}>
-                {isClinician ? 'Access enabled - Clinic tab visible' : 'Enable to access patient management'}
+                {isClinician
+                  ? 'Access patient management, alerts, and protocols'
+                  : 'Apply for verified clinician access'}
               </Text>
             </View>
-            <View style={[styles.toggleSwitch, isClinician && styles.toggleSwitchActive]}>
-              <View style={[styles.toggleKnob, isClinician && styles.toggleKnobActive]} />
-            </View>
+            <ChevronRight color={Colors.textTertiary} size={20} />
           </TouchableOpacity>
+          {isClinician && (
+            <TouchableOpacity
+              style={styles.disablePractitioner}
+              onPress={() => {
+                Alert.alert(
+                  'Disable Clinician Mode',
+                  'This will hide the clinic tab. You can reactivate by re-applying.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Disable',
+                      style: 'destructive',
+                      onPress: () => setUserRole('patient'),
+                    },
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.disablePractitionerText}>Disable clinician mode</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.disclaimerCard}>
@@ -701,6 +725,17 @@ const styles = StyleSheet.create({
   },
   toggleKnobActive: {
     alignSelf: 'flex-end',
+  },
+  disablePractitioner: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  disablePractitionerText: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    fontWeight: '500' as const,
+    textDecorationLine: 'underline' as const,
   },
   breachCard: {
     flexDirection: 'row',

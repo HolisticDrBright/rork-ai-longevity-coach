@@ -151,7 +151,9 @@ export default function AlertsScreen() {
     },
   });
 
-  const alerts = alertsQuery.data?.alerts || [];
+  const realAlerts = alertsQuery.data?.alerts || [];
+  const baseAlerts = realAlerts;
+  const alerts = severityFilter ? baseAlerts.filter((a) => a.severity === severityFilter) : baseAlerts;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
