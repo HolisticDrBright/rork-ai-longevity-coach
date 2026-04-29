@@ -1,4 +1,9 @@
-app = 'ai-longevity-pro'
+# fly.toml app configuration file generated for rork-ai-longevity-coach on 2026-04-29T16:58:39Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'rork-ai-longevity-coach'
 primary_region = 'iad'
 
 [build]
@@ -12,11 +17,11 @@ primary_region = 'iad'
 
 [checks]
   [checks.health]
-    type = 'http'
     port = 3000
-    path = '/health'
+    type = 'http'
     interval = '30s'
     timeout = '5s'
+    path = '/health'
 
 [[vm]]
   size = 'shared-cpu-1x'
