@@ -1,3 +1,18 @@
-node_modules
+# node_modules
+# .env
+# .expo
+
+
+# Node modules
+node_modules/
+
+# Environment variables
 .env
-.expo
+.env.*
+
+# Expo files
+.expo/
+.expo-shared/
+
+# EAS config (if you don't want to track it)
+eas.json
