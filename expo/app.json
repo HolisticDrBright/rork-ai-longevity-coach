@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.ailongevitypro",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "infoPlist": {
         "NSHealthShareUsageDescription": "AI Longevity Pro reads your health data to provide personalized longevity insights and recommendations.",
         "NSHealthUpdateUsageDescription": "AI Longevity Pro writes workout and nutrition summaries back to Apple Health.",
