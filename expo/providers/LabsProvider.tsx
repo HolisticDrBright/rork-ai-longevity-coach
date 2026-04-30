@@ -334,9 +334,17 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return categories;
   }, [latestPanel]);
 
-  const addLabPanel = useCallback((panel: LabPanel) => {
+  const addLabPanel = useCallback(async (panel: LabPanel): Promise<LabPanel> => {
+    console.log('[Labs] addLabPanel called for', panel.name, 'with', panel.biomarkers.length, 'biomarkers');
     const updated = [...labPanels, panel];
-    saveLabsMutation.mutate(updated);
+    try {
+      await saveLabsMutation.mutateAsync(updated);
+      console.log('[Labs] addLabPanel persisted successfully');
+    } catch (err) {
+      console.log('[Labs] addLabPanel failed:', err);
+      throw err;
+    }
+    return panel;
   }, [labPanels, saveLabsMutation]);
 
   const pickLabImages = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string }[]> => {
@@ -929,8 +937,15 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     },
   });
 
-  const saveLatestAnalysis = useCallback((analysis: StoredLabAnalysis) => {
-    saveLatestAnalysisMutation.mutate(analysis);
+  const saveLatestAnalysis = useCallback(async (analysis: StoredLabAnalysis): Promise<void> => {
+    console.log('[Labs] saveLatestAnalysis called with', analysis.supplements.length, 'supplements');
+    try {
+      await saveLatestAnalysisMutation.mutateAsync(analysis);
+      console.log('[Labs] saveLatestAnalysis persisted successfully');
+    } catch (err) {
+      console.log('[Labs] saveLatestAnalysis failed:', err);
+      throw err;
+    }
   }, [saveLatestAnalysisMutation]);
 
   return useMemo(() => ({

@@ -205,52 +205,63 @@ export default function LabsScreen() {
       return;
     }
 
-    saveLabWithBiomarkers(biomarkers);
+    void saveLabWithBiomarkers(biomarkers).then((id) => {
+      if (id) {
+        resetUploadState();
+        Alert.alert('Lab Saved', `${biomarkers.length} biomarkers saved.`);
+      }
+    });
   };
 
-  const saveLabWithoutBiomarkers = () => {
+  const saveLabWithoutBiomarkers = async () => {
     console.log('[Labs UI] Saving lab without biomarkers');
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    
-    const panelId = `panel_${Date.now()}`;
-    
-    addLabPanel({
-      id: panelId,
-      name: labName,
-      date: labDate,
-      source: 'upload',
-      fileUrl: uploadedDocument?.uri || undefined,
-      biomarkers: [],
-      notes: `Uploaded: ${uploadedDocument?.name || 'No file'} (not analyzed)`,
-    });
 
-    resetUploadState();
-    Alert.alert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
+    const panelId = `panel_${Date.now()}`;
+
+    try {
+      await addLabPanel({
+        id: panelId,
+        name: labName,
+        date: labDate,
+        source: 'upload',
+        fileUrl: uploadedDocument?.uri || undefined,
+        biomarkers: [],
+        notes: `Uploaded: ${uploadedDocument?.name || 'No file'} (not analyzed)`,
+      });
+      resetUploadState();
+      Alert.alert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
+    } catch (err) {
+      console.log('[Labs UI] saveLabWithoutBiomarkers failed:', err);
+      Alert.alert('Save Failed', 'Could not save the lab. Please try again.');
+    }
   };
 
-  const saveLabWithBiomarkers = (biomarkers: Biomarker[]) => {
+  const saveLabWithBiomarkers = async (biomarkers: Biomarker[]): Promise<string | null> => {
     console.log('[Labs UI] Saving lab with', biomarkers.length, 'biomarkers');
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     const panelId = `panel_${Date.now()}`;
     const sourceName = uploadedDocument?.name
       ?? (uploadedImages.length > 0 ? `${uploadedImages.length} image(s)` : 'AI analysis');
 
-    addLabPanel({
-      id: panelId,
-      name: labName || `Lab Results ${new Date().toLocaleDateString()}`,
-      date: labDate,
-      source: 'upload',
-      fileUrl: uploadedDocument?.uri || uploadedImages[0]?.uri || undefined,
-      biomarkers: biomarkers,
-      notes: `Uploaded: ${sourceName}`,
-    });
-
-    resetUploadState();
-    Alert.alert(
-      'Lab Saved',
-      `${biomarkers.length} biomarkers extracted and saved. Your protocol recommendations will update automatically.`,
-    );
+    try {
+      await addLabPanel({
+        id: panelId,
+        name: labName || `Lab Results ${new Date().toLocaleDateString()}`,
+        date: labDate,
+        source: 'upload',
+        fileUrl: uploadedDocument?.uri || uploadedImages[0]?.uri || undefined,
+        biomarkers: biomarkers,
+        notes: `Uploaded: ${sourceName}`,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return panelId;
+    } catch (err) {
+      console.log('[Labs UI] saveLabWithBiomarkers failed:', err);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Save Failed', 'Could not save the lab panel. Please try again.');
+      return null;
+    }
   };
 
   const resetUploadState = () => {
@@ -317,7 +328,7 @@ export default function LabsScreen() {
     }
   };
 
-  const handleSaveAnalysisResults = () => {
+  const handleSaveAnalysisResults = async () => {
     if (!analysisResult || analysisResult.biomarkers.length === 0) {
       Alert.alert('No Results', 'No biomarkers were extracted. Please try again with a clearer image.');
       return;
@@ -325,28 +336,44 @@ export default function LabsScreen() {
 
     const panelName = labName.trim() || `Lab Results ${new Date().toLocaleDateString()}`;
     setLabName(panelName);
-    
-    console.log('[Labs UI] Saving analysis results with', analysisResult.biomarkers.length, 'biomarkers');
-    saveLabWithBiomarkers(analysisResult.biomarkers);
+    const snapshot = analysisResult;
 
-    if (analysisResult.supplements.length > 0 || analysisResult.herbs.length > 0) {
+    console.log('[Labs UI] Saving analysis results with', snapshot.biomarkers.length, 'biomarkers');
+
+    const savedPanelId = await saveLabWithBiomarkers(snapshot.biomarkers);
+    if (!savedPanelId) {
+      return;
+    }
+
+    try {
+      await saveLatestAnalysis({
+        panelId: savedPanelId,
+        generatedAt: new Date().toISOString(),
+        supplements: snapshot.supplements,
+        herbs: snapshot.herbs,
+        priorityActions: snapshot.priorityActions,
+        flaggedBiomarkerNames: snapshot.biomarkers
+          .filter(b => b.status === 'suboptimal' || b.status === 'critical')
+          .map(b => b.name),
+      });
+    } catch (err) {
+      console.log('[Labs UI] Failed to save latest analysis:', err);
+    }
+
+    if (snapshot.supplements.length > 0 || snapshot.herbs.length > 0) {
       sendLabsWebhook(
         userProfile?.id || 'unknown',
         userProfile?.email || '',
         'comprehensive_panel',
-        [...analysisResult.supplements, ...analysisResult.herbs],
+        [...snapshot.supplements, ...snapshot.herbs],
       );
     }
 
-    saveLatestAnalysis({
-      generatedAt: new Date().toISOString(),
-      supplements: analysisResult.supplements,
-      herbs: analysisResult.herbs,
-      priorityActions: analysisResult.priorityActions,
-      flaggedBiomarkerNames: analysisResult.biomarkers
-        .filter(b => b.status === 'suboptimal' || b.status === 'critical')
-        .map(b => b.name),
-    });
+    resetUploadState();
+    Alert.alert(
+      'Lab Saved',
+      `${snapshot.biomarkers.length} biomarkers saved. ${snapshot.supplements.length + snapshot.herbs.length} supplements added to your protocol recommendations.`,
+    );
   };
 
   if (isLoading) {
