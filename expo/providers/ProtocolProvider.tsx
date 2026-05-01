@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
-import { protocolService, adherenceService } from '@/lib/supabaseService';
+import { protocolService, adherenceService, symptomLogService } from '@/lib/supabaseService';
 import { supabase } from '@/lib/supabase';
 
 import {
@@ -324,7 +324,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     saveAdherenceMutation.mutate([...otherAdherence, newAdherence]);
   }, [activeProtocol, dailyAdherence, saveAdherenceMutation]);
 
-  const updateDailySymptoms = useCallback((symptoms: DailySymptoms) => {
+  const updateDailySymptoms = useCallback(async (symptoms: DailySymptoms) => {
     if (!activeProtocol) return;
 
     const today = getTodayDate();
@@ -347,9 +347,48 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
     const otherAdherence = dailyAdherence.filter(a => a.date !== today);
     saveAdherenceMutation.mutate([...otherAdherence, currentAdherence]);
+
+    // ── Persist to Supabase for AI historical analysis ──────────
+    // These are APPEND-ONLY — never overwritten. Each check-in creates
+    // individual symptom_logs rows + a daily_subjective_rollups upsert.
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // 1. Write individual symptom_logs (append-only — one row per metric per day)
+      const symptomEntries = [
+        { symptom_name: 'energy', severity: symptoms.energy },
+        { symptom_name: 'sleep_quality', severity: symptoms.sleep },
+        { symptom_name: 'mood', severity: symptoms.mood },
+        { symptom_name: 'digestion', severity: symptoms.digestion },
+        { symptom_name: 'focus', severity: symptoms.focus },
+      ];
+      for (const entry of symptomEntries) {
+        await symptomLogService.insert({
+          symptom_name: entry.symptom_name,
+          severity: entry.severity,
+          logged_at: new Date().toISOString(),
+          notes: symptoms.notes || null,
+        });
+      }
+
+      // 2. Upsert daily_subjective_rollups (one row per day, updated if re-checked-in)
+      await supabase.from('daily_subjective_rollups').upsert({
+        user_id: session.user.id,
+        date: today,
+        energy_avg: symptoms.energy,
+        stress_avg: 10 - symptoms.mood, // invert: high mood = low stress
+        mood_avg: symptoms.mood,
+        checkin_completion_score: 100, // they completed it
+      }, { onConflict: 'user_id,date' });
+
+      console.log('[Protocol] Symptom history saved to Supabase');
+    } catch (e) {
+      console.log('[Protocol] Supabase symptom sync failed (non-blocking):', e);
+    }
   }, [activeProtocol, dailyAdherence, saveAdherenceMutation]);
 
-  const saveWeeklyCheckIn = useCallback((checkIn: Omit<WeeklyCheckIn, 'id' | 'date'>) => {
+  const saveWeeklyCheckIn = useCallback(async (checkIn: Omit<WeeklyCheckIn, 'id' | 'date'>) => {
     const today = getTodayDate();
     const newCheckIn: WeeklyCheckIn = {
       ...checkIn,
@@ -359,6 +398,57 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
     const otherCheckIns = weeklyCheckIns.filter(c => c.date !== today);
     saveCheckInsMutation.mutate([...otherCheckIns, newCheckIn]);
+
+    // ── Persist weekly check-in to Supabase (append-only) ────────
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Log weight, resting HR, sleep score as symptom_logs for trend tracking
+      if (checkIn.weight) {
+        await symptomLogService.insert({
+          symptom_name: 'weight',
+          severity: checkIn.weight,
+          logged_at: new Date().toISOString(),
+          notes: `Weekly check-in: ${checkIn.wins || ''}`,
+        });
+      }
+      if (checkIn.restingHeartRate) {
+        await symptomLogService.insert({
+          symptom_name: 'resting_heart_rate',
+          severity: checkIn.restingHeartRate,
+          logged_at: new Date().toISOString(),
+        });
+      }
+      if (checkIn.sleepScore) {
+        await symptomLogService.insert({
+          symptom_name: 'sleep_score_checkin',
+          severity: checkIn.sleepScore,
+          logged_at: new Date().toISOString(),
+        });
+      }
+
+      // Store the full check-in as a webhook event for practitioner visibility
+      await supabase.from('webhook_events').insert({
+        user_id: session.user.id,
+        email: session.user.email,
+        event_type: 'weekly_checkin',
+        payload: {
+          date: today,
+          weight: checkIn.weight,
+          waistCircumference: checkIn.waistCircumference,
+          restingHeartRate: checkIn.restingHeartRate,
+          sleepScore: checkIn.sleepScore,
+          wins: checkIn.wins,
+          challenges: checkIn.challenges,
+          notes: checkIn.notes,
+        },
+      });
+
+      console.log('[Protocol] Weekly check-in saved to Supabase');
+    } catch (e) {
+      console.log('[Protocol] Supabase weekly check-in sync failed (non-blocking):', e);
+    }
   }, [weeklyCheckIns, saveCheckInsMutation]);
 
   const adherencePercentage = useMemo(() => {
