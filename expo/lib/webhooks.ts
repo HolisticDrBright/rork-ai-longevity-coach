@@ -1,4 +1,22 @@
-const WEBHOOK_BASE_URL = process.env.EXPO_PUBLIC_WEBHOOK_URL || '';
+/**
+ * Webhook client — sends app events to a Supabase Edge Function.
+ *
+ * Events: assessment_complete, labs_analyzed, lab_upload_started,
+ * coaching_interest, supplement_purchased, coaching_enrolled.
+ *
+ * All events are stored in the `webhook_events` table via the
+ * `app-webhooks` Supabase Edge Function. No external server needed.
+ */
+
+const getWebhookUrl = (): string => {
+  // Auto-detect from Supabase URL — no separate config needed
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+  if (supabaseUrl) {
+    return `${supabaseUrl}/functions/v1/app-webhooks`;
+  }
+  // Fallback to explicit webhook URL if set
+  return process.env.EXPO_PUBLIC_WEBHOOK_URL || '';
+};
 
 const getWebhookSecret = (): string => {
   return process.env.EXPO_PUBLIC_WEBHOOK_SECRET || '';
@@ -13,34 +31,30 @@ interface WebhookPayload {
 }
 
 async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<boolean> {
-  const secret = getWebhookSecret();
-  if (!secret || !WEBHOOK_BASE_URL) {
-    // No webhook configured — skip silently
-    return false;
-  }
-
-  const url = `${WEBHOOK_BASE_URL}/${endpoint}`;
-  console.log('[Webhooks] Sending webhook, event:', payload.eventType);
+  const url = getWebhookUrl();
+  if (!url) return false;
 
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const secret = getWebhookSecret();
+    if (secret) {
+      headers['X-Webhook-Secret'] = secret;
+    }
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Secret': secret,
-      },
+      headers,
       body: JSON.stringify(payload),
     });
 
     if (response.ok) {
-      console.log('[Webhooks] Success:', endpoint);
       return true;
     }
-
-    console.log('[Webhooks] Failed:', endpoint, 'status:', response.status);
     return false;
-  } catch (error) {
-    console.log('[Webhooks] Error sending webhook:', endpoint, error instanceof Error ? error.message : String(error));
+  } catch {
+    // Network error — fail silently, don't block the user
     return false;
   }
 }
@@ -65,16 +79,14 @@ export interface AssessmentCompletePayload {
 }
 
 export function sendAssessmentComplete(data: AssessmentCompletePayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('assessment-complete', {
     eventType: 'assessment_complete',
     userId: data.userId,
     email: data.email,
     assessmentScore: data.assessmentScore,
     recommendedLabs: data.recommendedLabs,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('assessment-complete', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export interface SupplementRecommended {
@@ -91,16 +103,14 @@ export interface LabsAnalyzedPayload {
 }
 
 export function sendLabsAnalyzed(data: LabsAnalyzedPayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('labs-analyzed', {
     eventType: 'labs_analyzed',
     userId: data.userId,
     email: data.email,
     labType: data.labType,
     supplementsRecommended: data.supplementsRecommended,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('labs-analyzed', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export interface LabUploadStartedPayload {
@@ -109,14 +119,12 @@ export interface LabUploadStartedPayload {
 }
 
 export function sendLabUploadStarted(data: LabUploadStartedPayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('lab-upload-started', {
     eventType: 'lab_upload_started',
     userId: data.userId,
     email: data.email,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('lab-upload-started', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export type CoachingInterest = 'peptide_program' | 'longevity_program' | 'practitioner_portal';
@@ -128,15 +136,13 @@ export interface CoachingInterestPayload {
 }
 
 export function sendCoachingInterest(data: CoachingInterestPayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('coaching-interest', {
     eventType: 'coaching_interest',
     userId: data.userId,
     email: data.email,
     interestedIn: data.interestedIn,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('coaching-interest', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export interface SupplementPurchasedPayload {
@@ -150,7 +156,7 @@ export interface SupplementPurchasedPayload {
 }
 
 export function sendSupplementPurchased(data: SupplementPurchasedPayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('supplement-purchased', {
     eventType: 'supplement_purchased',
     userId: data.userId,
     email: data.email,
@@ -160,9 +166,7 @@ export function sendSupplementPurchased(data: SupplementPurchasedPayload): void 
     purchaseAmount: data.purchaseAmount,
     commissionRate: data.commissionRate,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('supplement-purchased', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export type CoachingProgramTier = 'peptide_program' | 'longevity_program' | 'practitioner_portal';
@@ -176,7 +180,7 @@ export interface CoachingEnrolledPayload {
 }
 
 export function sendCoachingEnrolled(data: CoachingEnrolledPayload): void {
-  const payload: WebhookPayload = {
+  sendWebhook('coaching-enrolled', {
     eventType: 'coaching_enrolled',
     userId: data.userId,
     email: data.email,
@@ -184,38 +188,30 @@ export function sendCoachingEnrolled(data: CoachingEnrolledPayload): void {
     programCost: data.programCost,
     enrollmentDate: data.enrollmentDate,
     timestamp: new Date().toISOString(),
-  };
-
-  sendWebhook('coaching-enrolled', payload).catch(() => {});
+  }).catch(() => {});
 }
 
 export async function testWebhookConnection(): Promise<boolean> {
-  const secret = getWebhookSecret();
-  if (!secret) {
-    console.log('[Webhooks] No webhook secret configured');
-    return false;
-  }
+  const url = getWebhookUrl();
+  if (!url) return false;
 
   try {
-    const response = await fetch(`${WEBHOOK_BASE_URL}/test`, {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const secret = getWebhookSecret();
+    if (secret) headers['X-Webhook-Secret'] = secret;
+
+    const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Secret': secret,
-      },
-      body: JSON.stringify({ test: true }),
+      headers,
+      body: JSON.stringify({ eventType: 'test', userId: 'test', email: 'test', timestamp: new Date().toISOString(), test: true }),
     });
 
     if (response.ok) {
       const result = await response.json();
-      console.log('[Webhooks] Test successful');
       return result.success === true;
     }
-
-    console.log('[Webhooks] Test failed, status:', response.status);
     return false;
-  } catch (error) {
-    console.log('[Webhooks] Test error:', error instanceof Error ? error.message : String(error));
+  } catch {
     return false;
   }
 }

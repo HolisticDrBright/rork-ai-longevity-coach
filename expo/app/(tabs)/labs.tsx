@@ -55,10 +55,14 @@ const statusLabels = {
 
 export default function LabsScreen() {
   const {
+    labPanels,
     latestPanel,
     biomarkersByCategory,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     getBiomarkerTrend,
     isLoading,
     pickLabDocument,
@@ -205,52 +209,63 @@ export default function LabsScreen() {
       return;
     }
 
-    saveLabWithBiomarkers(biomarkers);
+    void saveLabWithBiomarkers(biomarkers).then((id) => {
+      if (id) {
+        resetUploadState();
+        Alert.alert('Lab Saved', `${biomarkers.length} biomarkers saved.`);
+      }
+    });
   };
 
-  const saveLabWithoutBiomarkers = () => {
+  const saveLabWithoutBiomarkers = async () => {
     console.log('[Labs UI] Saving lab without biomarkers');
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    
-    const panelId = `panel_${Date.now()}`;
-    
-    addLabPanel({
-      id: panelId,
-      name: labName,
-      date: labDate,
-      source: 'upload',
-      fileUrl: uploadedDocument?.uri || undefined,
-      biomarkers: [],
-      notes: `Uploaded: ${uploadedDocument?.name || 'No file'} (not analyzed)`,
-    });
 
-    resetUploadState();
-    Alert.alert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
+    const panelId = `panel_${Date.now()}`;
+
+    try {
+      await addLabPanel({
+        id: panelId,
+        name: labName,
+        date: labDate,
+        source: 'upload',
+        fileUrl: uploadedDocument?.uri || undefined,
+        biomarkers: [],
+        notes: `Uploaded: ${uploadedDocument?.name || 'No file'} (not analyzed)`,
+      });
+      resetUploadState();
+      Alert.alert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
+    } catch (err) {
+      console.log('[Labs UI] saveLabWithoutBiomarkers failed:', err);
+      Alert.alert('Save Failed', 'Could not save the lab. Please try again.');
+    }
   };
 
-  const saveLabWithBiomarkers = (biomarkers: Biomarker[]) => {
+  const saveLabWithBiomarkers = async (biomarkers: Biomarker[]): Promise<string | null> => {
     console.log('[Labs UI] Saving lab with', biomarkers.length, 'biomarkers');
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     const panelId = `panel_${Date.now()}`;
     const sourceName = uploadedDocument?.name
       ?? (uploadedImages.length > 0 ? `${uploadedImages.length} image(s)` : 'AI analysis');
 
-    addLabPanel({
-      id: panelId,
-      name: labName || `Lab Results ${new Date().toLocaleDateString()}`,
-      date: labDate,
-      source: 'upload',
-      fileUrl: uploadedDocument?.uri || uploadedImages[0]?.uri || undefined,
-      biomarkers: biomarkers,
-      notes: `Uploaded: ${sourceName}`,
-    });
-
-    resetUploadState();
-    Alert.alert(
-      'Lab Saved',
-      `${biomarkers.length} biomarkers extracted and saved. Your protocol recommendations will update automatically.`,
-    );
+    try {
+      await addLabPanel({
+        id: panelId,
+        name: labName || `Lab Results ${new Date().toLocaleDateString()}`,
+        date: labDate,
+        source: 'upload',
+        fileUrl: uploadedDocument?.uri || uploadedImages[0]?.uri || undefined,
+        biomarkers: biomarkers,
+        notes: `Uploaded: ${sourceName}`,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return panelId;
+    } catch (err) {
+      console.log('[Labs UI] saveLabWithBiomarkers failed:', err);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Save Failed', 'Could not save the lab panel. Please try again.');
+      return null;
+    }
   };
 
   const resetUploadState = () => {
@@ -317,7 +332,7 @@ export default function LabsScreen() {
     }
   };
 
-  const handleSaveAnalysisResults = () => {
+  const handleSaveAnalysisResults = async () => {
     if (!analysisResult || analysisResult.biomarkers.length === 0) {
       Alert.alert('No Results', 'No biomarkers were extracted. Please try again with a clearer image.');
       return;
@@ -325,28 +340,60 @@ export default function LabsScreen() {
 
     const panelName = labName.trim() || `Lab Results ${new Date().toLocaleDateString()}`;
     setLabName(panelName);
-    
-    console.log('[Labs UI] Saving analysis results with', analysisResult.biomarkers.length, 'biomarkers');
-    saveLabWithBiomarkers(analysisResult.biomarkers);
+    const snapshot = analysisResult;
 
-    if (analysisResult.supplements.length > 0 || analysisResult.herbs.length > 0) {
+    console.log('[Labs UI] Saving analysis results with', snapshot.biomarkers.length, 'biomarkers');
+
+    const savedPanelId = await saveLabWithBiomarkers(snapshot.biomarkers);
+    if (!savedPanelId) {
+      return;
+    }
+
+    try {
+      await saveLatestAnalysis({
+        panelId: savedPanelId,
+        generatedAt: new Date().toISOString(),
+        supplements: snapshot.supplements,
+        herbs: snapshot.herbs,
+        priorityActions: snapshot.priorityActions,
+        flaggedBiomarkerNames: snapshot.biomarkers
+          .filter(b => b.status === 'suboptimal' || b.status === 'critical')
+          .map(b => b.name),
+      });
+    } catch (err) {
+      console.log('[Labs UI] Failed to save latest analysis:', err);
+    }
+
+    if (snapshot.supplements.length > 0 || snapshot.herbs.length > 0) {
       sendLabsWebhook(
         userProfile?.id || 'unknown',
         userProfile?.email || '',
         'comprehensive_panel',
-        [...analysisResult.supplements, ...analysisResult.herbs],
+        [...snapshot.supplements, ...snapshot.herbs],
       );
     }
 
-    saveLatestAnalysis({
-      generatedAt: new Date().toISOString(),
-      supplements: analysisResult.supplements,
-      herbs: analysisResult.herbs,
-      priorityActions: analysisResult.priorityActions,
-      flaggedBiomarkerNames: analysisResult.biomarkers
-        .filter(b => b.status === 'suboptimal' || b.status === 'critical')
-        .map(b => b.name),
-    });
+    resetUploadState();
+
+    // Auto-trigger cross-lab synthesis if user has multiple panels
+    const totalPanels = labPanels.length + 1; // +1 for the one we just saved
+    if (totalPanels >= 2) {
+      Alert.alert(
+        'Lab Saved',
+        `${snapshot.biomarkers.length} biomarkers saved. You now have ${totalPanels} lab panels — running cross-lab pattern analysis...`,
+      );
+      // Run synthesis in background
+      runCrossLabSynthesis().then(() => {
+        Alert.alert('Cross-Lab Analysis Complete', 'Your protocol has been updated with insights from all your labs combined.');
+      }).catch(() => {
+        // Non-blocking — individual lab results are still saved
+      });
+    } else {
+      Alert.alert(
+        'Lab Saved',
+        `${snapshot.biomarkers.length} biomarkers saved. Upload more lab types (DUTCH, Gut Zoomer, TruAge, etc.) to unlock cross-lab pattern detection.`,
+      );
+    }
   };
 
   if (isLoading) {
@@ -728,6 +775,62 @@ export default function LabsScreen() {
                 highlighted
               />
             ))}
+          </View>
+        )}
+
+        {/* Lab Panels Summary */}
+        {labPanels.length > 1 && (
+          <View style={{ backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: Colors.border }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 8 }}>
+              Your Lab Panels ({labPanels.length})
+            </Text>
+            {labPanels.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((panel, idx) => (
+              <View key={panel.id || idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: idx < labPanels.length - 1 ? 1 : 0, borderBottomColor: Colors.borderLight }}>
+                <View>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.text }}>{panel.name}</Text>
+                  <Text style={{ fontSize: 11, color: Colors.textTertiary }}>{new Date(panel.date).toLocaleDateString()} · {panel.biomarkers.length} biomarkers</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  {panel.biomarkers.filter(b => b.status === 'critical').length > 0 && (
+                    <View style={{ backgroundColor: Colors.danger + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.danger }}>{panel.biomarkers.filter(b => b.status === 'critical').length} critical</Text>
+                    </View>
+                  )}
+                  {panel.biomarkers.filter(b => b.status === 'suboptimal').length > 0 && (
+                    <View style={{ backgroundColor: Colors.warning + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.warning }}>{panel.biomarkers.filter(b => b.status === 'suboptimal').length} suboptimal</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ))}
+            <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 8, fontStyle: 'italic' }}>
+              Showing {allBiomarkers.length} unique biomarkers across all panels
+            </Text>
+          </View>
+        )}
+
+        {/* Cross-Lab Patterns */}
+        {crossLabSynthesis && crossLabSynthesis.patterns.length > 0 && (
+          <View style={{ backgroundColor: Colors.primary + '08', borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: Colors.primary + '30' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <Sparkles color={Colors.primary} size={18} />
+              <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.primary }}>Cross-Lab Patterns Detected</Text>
+            </View>
+            {crossLabSynthesis.patterns.map((pattern, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                <AlertTriangle color={Colors.warning} size={14} style={{ marginTop: 2 }} />
+                <Text style={{ flex: 1, fontSize: 13, color: Colors.text, lineHeight: 18 }}>{pattern}</Text>
+              </View>
+            ))}
+            {crossLabSynthesis.narrative ? (
+              <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.primary + '20' }}>
+                <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>{crossLabSynthesis.narrative}</Text>
+              </View>
+            ) : null}
+            <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 8 }}>
+              Based on {crossLabSynthesis.panelCount} panels · Generated {new Date(crossLabSynthesis.generatedAt).toLocaleDateString()}
+            </Text>
           </View>
         )}
 

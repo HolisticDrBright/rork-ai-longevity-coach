@@ -427,11 +427,14 @@ export default function ProtocolScreen() {
           </View>
         )}
 
-        <SupplementsRecommendations
-          patientId={userProfile?.id}
-          labDeficiencies={labDeficiencies}
-          labSupplementHints={labSupplementHints}
-        />
+        {/* Only show curated supplement recommendations when user has lab data */}
+        {(labDeficiencies.length > 0 || labSupplementHints.length > 0) && (
+          <SupplementsRecommendations
+            patientId={userProfile?.id}
+            labDeficiencies={labDeficiencies}
+            labSupplementHints={labSupplementHints}
+          />
+        )}
 
         <View style={styles.peptideSectionCard}>
           <TouchableOpacity
