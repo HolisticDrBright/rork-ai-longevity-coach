@@ -26,21 +26,49 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
 
   if (Platform.OS !== 'web') {
-    const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: 'application/pdf',
-      parameters: { purpose: 'user_data' },
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    // const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
+    //   httpMethod: 'POST',
+    //   uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+    //   fieldName: 'file',
+    //   mimeType: 'application/pdf',
+    //   parameters: { purpose: 'user_data' },
+    //   headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    // });
+    // if (result.status < 200 || result.status >= 300) {
+    //   console.log('[Labs] OpenAI upload failed:', result.status, result.body);
+    //   throw new Error(`OpenAI file upload failed (${result.status}).`);
+    // }
+    // const json = JSON.parse(result.body) as { id: string };
+    // console.log('[Labs] OpenAI file uploaded, id:', json.id);
+    // return json.id;
+    const formData = new FormData();
+
+    formData.append('file', {
+      uri: fileUri,
+      name: 'file.pdf',
+      type: 'application/pdf',
     });
-    if (result.status < 200 || result.status >= 300) {
-      console.log('[Labs] OpenAI upload failed:', result.status, result.body);
-      throw new Error(`OpenAI file upload failed (${result.status}).`);
+
+    formData.append('purpose', 'user_data');
+
+    const response = await fetch('https://api.openai.com/v1/files', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'multipart/form-data',
+      },
+      body: formData,
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.log('Upload failed:', result);
+      throw new Error('Upload failed');
     }
-    const json = JSON.parse(result.body) as { id: string };
-    console.log('[Labs] OpenAI file uploaded, id:', json.id);
-    return json.id;
+
+    console.log('Uploaded file ID:', result.id);
+    return result.id;
   }
 
   const response = await fetch(fileUri);
@@ -262,14 +290,14 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
   const latestPanel = useMemo(() => {
     if (labPanels.length === 0) return null;
-    return [...labPanels].sort((a, b) => 
+    return [...labPanels].sort((a, b) =>
       new Date(b.date).getTime() - new Date(a.date).getTime()
     )[0];
   }, [labPanels]);
 
   const previousPanel = useMemo(() => {
     if (labPanels.length < 2) return null;
-    const sorted = [...labPanels].sort((a, b) => 
+    const sorted = [...labPanels].sort((a, b) =>
       new Date(b.date).getTime() - new Date(a.date).getTime()
     );
     return sorted[1];
@@ -277,7 +305,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
   const flaggedBiomarkers = useMemo(() => {
     if (!latestPanel) return [];
-    return latestPanel.biomarkers.filter(b => 
+    return latestPanel.biomarkers.filter(b =>
       b.status === 'suboptimal' || b.status === 'critical'
     );
   }, [latestPanel]);
@@ -290,7 +318,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
     if (!latestPanel || !previousPanel) return null;
 
-    const currentBio = latestPanel.biomarkers.find(b => b.name === 
+    const currentBio = latestPanel.biomarkers.find(b => b.name ===
       latestPanel.biomarkers.find(lb => lb.id === biomarkerId)?.name
     );
     const previousBio = previousPanel.biomarkers.find(b => b.name === currentBio?.name);
@@ -365,7 +393,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
             resolve(results);
           };
           input.oncancel = () => {
-            try { document.body.removeChild(input); } catch {}
+            try { document.body.removeChild(input); } catch { }
             resolve([]);
           };
           document.body.appendChild(input);
@@ -683,7 +711,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.log('[Labs] Analysis generation error');
-        
+
         if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
           if (extractedData.biomarkers.length === 0) {
             throw new Error('Network connection issue. Please check your internet connection and try again.');
@@ -736,9 +764,9 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
   });
 
   const updateLabPanelBiomarkers = useCallback((panelId: string, biomarkers: Biomarker[]) => {
-    const updated = labPanels.map(panel => 
-      panel.id === panelId 
-        ? { ...panel, biomarkers } 
+    const updated = labPanels.map(panel =>
+      panel.id === panelId
+        ? { ...panel, biomarkers }
         : panel
     );
     saveLabsMutation.mutate(updated);
@@ -955,7 +983,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
     saveLatestAnalysis,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [
     labPanels,
     latestPanel,

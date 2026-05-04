@@ -25,6 +25,15 @@
     "@ai-sdk/provider-utils" "3.0.23"
     "@vercel/oidc" "3.1.0"
 
+"@ai-sdk/gateway@3.0.105":
+  version "3.0.105"
+  resolved "https://registry.yarnpkg.com/@ai-sdk/gateway/-/gateway-3.0.105.tgz#9fb410f344a4dcdeafcd0cd0f301ca683bf17608"
+  integrity sha512-XpERadvLMHkYGJO4hz1Sw7Y9J705Iex48TmdZLdZdaPiFFtVgiA9qhXugLUWGAxdlXU/2N6ipoPSOwfnULZbXw==
+  dependencies:
+    "@ai-sdk/provider" "3.0.9"
+    "@ai-sdk/provider-utils" "4.0.24"
+    "@vercel/oidc" "3.2.0"
+
 "@ai-sdk/provider-utils@3.0.19":
   version "3.0.19"
   resolved "https://registry.yarnpkg.com/@ai-sdk/provider-utils/-/provider-utils-3.0.19.tgz#065e4ffe287ec536b882fdcdff0bd38c250a4873"
@@ -43,6 +52,15 @@
     "@standard-schema/spec" "^1.0.0"
     eventsource-parser "^3.0.6"
 
+"@ai-sdk/provider-utils@4.0.24":
+  version "4.0.24"
+  resolved "https://registry.yarnpkg.com/@ai-sdk/provider-utils/-/provider-utils-4.0.24.tgz#e8655e1da35da38f7062f8c560df5e4fa3e061c7"
+  integrity sha512-oXIw1oLmuBILuvHgSj6w5LOV8oSnFRouPSv0MGkG9sRMeukZ9JnMF17kldaRQaRq8lSJIxo6aS3NzWlVmSb+4Q==
+  dependencies:
+    "@ai-sdk/provider" "3.0.9"
+    "@standard-schema/spec" "^1.1.0"
+    eventsource-parser "^3.0.8"
+
 "@ai-sdk/provider@2.0.0":
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/@ai-sdk/provider/-/provider-2.0.0.tgz#b853c739d523b33675bc74b6c506b2c690bc602b"
@@ -54,6 +72,13 @@
   version "2.0.1"
   resolved "https://registry.yarnpkg.com/@ai-sdk/provider/-/provider-2.0.1.tgz#4aba415f1815da33a7a81e5f41a0219af53278c0"
   integrity sha512-KCUwswvsC5VsW2PWFqF8eJgSCu5Ysj7m1TxiHTVA6g7k360bk0RNQENT8KTMAYEs+8fWPD3Uu4dEmzGHc+jGng==
+  dependencies:
+    json-schema "^0.4.0"
+
+"@ai-sdk/provider@3.0.9":
+  version "3.0.9"
+  resolved "https://registry.yarnpkg.com/@ai-sdk/provider/-/provider-3.0.9.tgz#f7fec210cb5711380051ced7ac93bcfce387c152"
+  integrity sha512-/ngMKqKdL9dSlY/eQ3NFDzzFyw0Hix+cbFFlyuKEKcOgpHdBt/spKUvX/i0wGrDLFPYJeVvv3N0j92LxWRL7yQ==
   dependencies:
     json-schema "^0.4.0"
 
@@ -2770,6 +2795,11 @@
   resolved "https://registry.yarnpkg.com/@vercel/oidc/-/oidc-3.1.0.tgz#066caee449b84079f33c7445fc862464fe10ec32"
   integrity sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w==
 
+"@vercel/oidc@3.2.0":
+  version "3.2.0"
+  resolved "https://registry.yarnpkg.com/@vercel/oidc/-/oidc-3.2.0.tgz#5782a4d4904443f015808705b5537cf9c3b68528"
+  integrity sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==
+
 "@vitest/expect@4.1.5":
   version "4.1.5"
   resolved "https://registry.yarnpkg.com/@vitest/expect/-/expect-4.1.5.tgz#5caab19535cfb04fbc37087c5608d46e74dc9292"
@@ -2903,6 +2933,16 @@ ai@5.0.179:
     "@ai-sdk/gateway" "2.0.82"
     "@ai-sdk/provider" "2.0.1"
     "@ai-sdk/provider-utils" "3.0.23"
+    "@opentelemetry/api" "1.9.0"
+
+ai@^6.0.168:
+  version "6.0.170"
+  resolved "https://registry.yarnpkg.com/ai/-/ai-6.0.170.tgz#a26b9bb041678002955ac95afae63f983dce36a1"
+  integrity sha512-FWTKeGGDRcYJtPWIrdZDSuvOW5LCjI2NZUJmaml8OTOaPEsXnFdFvmawCXbT+wTGxyWKJTgZ9sZtCjbJsmjM2Q==
+  dependencies:
+    "@ai-sdk/gateway" "3.0.105"
+    "@ai-sdk/provider" "3.0.9"
+    "@ai-sdk/provider-utils" "4.0.24"
     "@opentelemetry/api" "1.9.0"
 
 ajv@^6.14.0:
@@ -4349,7 +4389,7 @@ event-target-shim@^5.0.0:
   resolved "https://registry.yarnpkg.com/event-target-shim/-/event-target-shim-5.0.1.tgz#5d4d3ebdf9583d63a5333ce2deb7480ab2b05789"
   integrity sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==
 
-eventsource-parser@^3.0.6:
+eventsource-parser@^3.0.6, eventsource-parser@^3.0.8:
   version "3.0.8"
   resolved "https://registry.yarnpkg.com/eventsource-parser/-/eventsource-parser-3.0.8.tgz#1c792503e4080455d00701bb1f7a1d60734d0e58"
   integrity sha512-70QWGkr4snxr0OXLRWsFLeRBIRPuQOvt4s8QYjmUlmlkyTZkRqS7EDVRZtzU3TiyDbXSzaOeF0XUKy8PchzukQ==
@@ -4366,6 +4406,11 @@ expo-asset@~12.0.12:
   dependencies:
     "@expo/image-utils" "^0.8.8"
     expo-constants "~18.0.12"
+
+expo-audio@~1.1.1:
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/expo-audio/-/expo-audio-1.1.1.tgz#7b9763118e321c5dfbf2771cd4a5b6790ce4fc8d"
+  integrity sha512-CPCpJ+0AEHdzWROc0f00Zh6e+irLSl2ALos/LPvxEeIcJw1APfBa4DuHPkL4CQCWsVe7EnUjFpdwpqsEUWcP0g==
 
 expo-blur@~15.0.8:
   version "15.0.8"
