@@ -791,12 +791,12 @@ export default function LabsScreen() {
                   <Text style={{ fontSize: 11, color: Colors.textTertiary }}>{new Date(panel.date).toLocaleDateString()} · {panel.biomarkers.length} biomarkers</Text>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 4 }}>
-                  {panel.biomarkers.filter(b => b.status === 'critical').length > 0 && (
+                  {panel?.biomarkers?.filter(b => b.status === 'critical').length > 0 && (
                     <View style={{ backgroundColor: Colors.danger + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                       <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.danger }}>{panel.biomarkers.filter(b => b.status === 'critical').length} critical</Text>
                     </View>
                   )}
-                  {panel.biomarkers.filter(b => b.status === 'suboptimal').length > 0 && (
+                  {panel?.biomarkers?.filter(b => b.status === 'suboptimal').length > 0 && (
                     <View style={{ backgroundColor: Colors.warning + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                       <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.warning }}>{panel.biomarkers.filter(b => b.status === 'suboptimal').length} suboptimal</Text>
                     </View>
@@ -805,7 +805,7 @@ export default function LabsScreen() {
               </View>
             ))}
             <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 8, fontStyle: 'italic' }}>
-              Showing {allBiomarkers.length} unique biomarkers across all panels
+              Showing {allBiomarkers?.length} unique biomarkers across all panels
             </Text>
           </View>
         )}

@@ -3,13 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
 import { createGateway, generateText as aiGenerateText, generateObject as aiGenerateObject } from 'ai';
 import { z } from 'zod';
+import axios from "axios";
 
-const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL;
+const TOOLKIT_URL = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 const SECRET_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY;
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 
@@ -31,7 +32,7 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
     //   uploadType: FileSystem.FileSystemUploadType.MULTIPART,
     //   fieldName: 'file',
     //   mimeType: 'application/pdf',
-    //   parameters: { purpose: 'user_data' },
+    //   parameters: { purpose: 'assistants' },
     //   headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     // });
     // if (result.status < 200 || result.status >= 300) {
@@ -41,41 +42,85 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
     // const json = JSON.parse(result.body) as { id: string };
     // console.log('[Labs] OpenAI file uploaded, id:', json.id);
     // return json.id;
-    const formData = new FormData();
+    // const formData = new FormData();
 
-    formData.append('file', {
-      uri: fileUri,
-      name: 'file.pdf',
-      type: 'application/pdf',
-    });
+    // formData.append('file', {
+    //   uri: fileUri,
+    //   name: 'file.pdf',
+    //   type: 'application/pdf',
+    // });
 
-    formData.append('purpose', 'user_data');
+    // formData.append('purpose', 'user_data');
 
-    const response = await fetch('https://api.openai.com/v1/files', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'multipart/form-data',
-      },
-      body: formData,
-    });
+    // const response = await fetch('https://api.openai.com/v1/files', {
+    //   method: 'POST',
+    //   headers: {
+    //     Authorization: `Bearer ${OPENAI_API_KEY}`,
+    //     // 'Content-Type': 'multipart/form-data',
+    //   },
+    //   body: formData,
+    // });
 
-    const result = await response.json();
+    // const result = await response.json();
 
-    if (!response.ok) {
-      console.log('Upload failed:', result);
-      throw new Error('Upload failed');
+    // if (!response.ok) {
+    //   console.log('Upload failed:', result);
+    //   throw new Error('Upload failed');
+    // }
+
+    // console.log('Uploaded file ID:', result.id);
+    // return result.id;
+
+    try {
+
+      const info = await FileSystem.getInfoAsync(fileUri);
+      console.log("✅ File exists. Size:", info.exists, "bytes");
+      // STEP 1: Convert file → blob (CRITICAL FIX)
+
+
+      // STEP 2: Create form data
+
+      console.log(fileUri)
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri,
+        name: 'file.pdf',
+        type: 'application/pdf',
+      });
+
+
+      formData.append("purpose", "user_data");
+
+      // STEP 3: Upload
+      const response = await fetch("https://api.openai.com/v1/files", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.log("Upload failed:", result);
+        throw new Error("Upload failed");
+      }
+
+      console.log("Uploaded file ID:", result.id);
+      return result.id;
+    } catch (err) {
+      console.log("ERROR:", err);
+      throw err;
     }
-
-    console.log('Uploaded file ID:', result.id);
-    return result.id;
   }
 
   const response = await fetch(fileUri);
   const blob = await response.blob();
   const formData = new FormData();
   formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
-  formData.append('purpose', 'user_data');
+  // formData.append('purpose', 'user_data');
+  formData.append('purpose', 'assistants');
   const res = await fetch('https://api.openai.com/v1/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
@@ -91,38 +136,102 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   return json.id;
 }
 
+// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+//   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
+//   const body: Record<string, unknown> = {
+//     model: OPENAI_DIRECT_MODEL,
+//     messages: [
+//       {
+//         role: 'user',
+//         content: [
+//           { type: 'file', file: { file_id: fileId } },
+//           { type: 'text', text: prompt },
+//         ],
+//       },
+//     ],
+//   };
+//   if (expectJson) {
+//     body.response_format = { type: 'json_object' };
+//   }
+//   const res = await fetch('https://api.openai.com/v1/chat/completions', {
+//     method: 'POST',
+//     headers: {
+//       'Content-Type': 'application/json',
+//       Authorization: `Bearer ${OPENAI_API_KEY}`,
+//     },
+//     body: JSON.stringify(body),
+//   });
+//   if (!res.ok) {
+//     const t = await res.text();
+//     console.log('[Labs] OpenAI chat call failed:', res.status, t);
+//     throw new Error(`OpenAI request failed (${res.status}).`);
+//   }
+//   const json = (await res.json()) as { choices: { message: { content: string } }[] };
+//   return json.choices[0]?.message?.content ?? '';
+// }
+
+// async function callOpenAIWithFile(fileId: string, prompt: string) {
+//   const res = await fetch('https://api.openai.com/v1/responses', {
+//     method: 'POST',
+//     headers: {
+//       'Content-Type': 'application/json',
+//       Authorization: `Bearer ${OPENAI_API_KEY}`,
+//     },
+//     body: JSON.stringify({
+//       model: 'gpt-4.1',
+//       input: [
+//         {
+//           role: 'user',
+//           content: [
+//             { type: 'input_file', file_id: fileId },
+//             { type: 'input_text', text: prompt },
+//           ],
+//         },
+//       ],
+//     }),
+//   });
+
+//   const json = await res.json();
+
+//   if (!res.ok) {
+//     throw new Error(json.error?.message || 'OpenAI request failed');
+//   }
+
+//   return json.output?.[0]?.content?.[0]?.text ?? '';
+// }
+
 async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
   const body: Record<string, unknown> = {
     model: OPENAI_DIRECT_MODEL,
     messages: [
       {
-        role: 'user',
-        content: [
-          { type: 'file', file: { file_id: fileId } },
-          { type: 'text', text: prompt },
-        ],
-      },
+        role: "user",
+        content: `File ID: ${fileId}\n\n${prompt}`
+      }
     ],
   };
+
   if (expectJson) {
-    body.response_format = { type: 'json_object' };
+    body.response_format = { type: "json_object" };
   }
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify(body),
   });
+
   if (!res.ok) {
     const t = await res.text();
-    console.log('[Labs] OpenAI chat call failed:', res.status, t);
+    console.log("[Labs] OpenAI chat call failed:", res.status, t);
     throw new Error(`OpenAI request failed (${res.status}).`);
   }
-  const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  return json.choices[0]?.message?.content ?? '';
+
+  const json = await res.json();
+  return json.choices?.[0]?.message?.content ?? "";
 }
 
 async function deleteOpenAIFile(fileId: string): Promise<void> {
@@ -303,34 +412,17 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return sorted[1];
   }, [labPanels]);
 
-  // Aggregate biomarkers from ALL panels — not just the latest.
-  // When the same biomarker appears in multiple panels, use the most recent value.
-  const allBiomarkers = useMemo(() => {
-    if (labPanels.length === 0) return [];
-    const sorted = [...labPanels].sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-    const seen = new Map<string, Biomarker & { panelName?: string; panelDate?: string }>();
-    for (const panel of sorted) {
-      for (const bio of panel.biomarkers) {
-        const key = bio.name.toLowerCase();
-        if (!seen.has(key)) {
-          seen.set(key, { ...bio, panelName: panel.name, panelDate: panel.date });
-        }
-      }
-    }
-    return Array.from(seen.values());
-  }, [labPanels]);
-
   const flaggedBiomarkers = useMemo(() => {
-    return allBiomarkers.filter(b =>
+    if (!latestPanel) return [];
+    return latestPanel.biomarkers.filter(b =>
       b.status === 'suboptimal' || b.status === 'critical'
     );
-  }, [allBiomarkers]);
+  }, [latestPanel]);
 
   const optimalBiomarkers = useMemo(() => {
-    return allBiomarkers.filter(b => b.status === 'optimal');
-  }, [allBiomarkers]);
+    if (!latestPanel) return [];
+    return latestPanel.biomarkers.filter(b => b.status === 'optimal');
+  }, [latestPanel]);
 
   const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
     if (!latestPanel || !previousPanel) return null;
@@ -348,9 +440,8 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return percentChange > 0 ? 'up' : 'down';
   }, [latestPanel, previousPanel]);
 
-  // Categories now read from ALL panels combined — not just the latest.
   const biomarkersByCategory = useMemo(() => {
-    if (allBiomarkers.length === 0) return {};
+    if (!latestPanel) return {};
 
     const categories: Record<string, Biomarker[]> = {
       'Metabolic': [],
@@ -358,55 +449,31 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
       'Thyroid': [],
       'Inflammation': [],
       'Hormones': [],
-      'Gut Health': [],
-      'Epigenetic Age': [],
-      'Adrenal / Cortisol': [],
       'Nutrients': [],
-      'Other': [],
     };
 
-    allBiomarkers.forEach(bio => {
-      const name = bio.name.toLowerCase();
-      if (['fasting glucose', 'hba1c', 'fasting insulin', 'insulin', 'glucose', 'hemoglobin a1c'].some(k => name.includes(k))) {
+    latestPanel.biomarkers.forEach(bio => {
+      if (['Fasting Glucose', 'HbA1c', 'Fasting Insulin'].includes(bio.name)) {
         categories['Metabolic'].push(bio);
-      } else if (['cholesterol', 'hdl', 'ldl', 'triglycerides', 'vldl', 'apob', 'lp(a)', 'lipoprotein'].some(k => name.includes(k))) {
+      } else if (['Total Cholesterol', 'HDL', 'LDL', 'Triglycerides'].includes(bio.name)) {
         categories['Lipids'].push(bio);
-      } else if (['tsh', 'free t3', 'free t4', 't3', 't4', 'thyroid', 'tpo', 'thyroglobulin', 'reverse t3'].some(k => name.includes(k))) {
+      } else if (['TSH', 'Free T3'].includes(bio.name)) {
         categories['Thyroid'].push(bio);
-      } else if (['crp', 'hs-crp', 'homocysteine', 'esr', 'ferritin', 'il-6', 'tnf', 'fibrinogen'].some(k => name.includes(k))) {
+      } else if (['hs-CRP', 'Homocysteine'].includes(bio.name)) {
         categories['Inflammation'].push(bio);
-      } else if (['testosterone', 'dhea', 'estradiol', 'progesterone', 'shbg', 'lh', 'fsh', 'prolactin', 'igf-1', 'cortisol'].some(k => name.includes(k))) {
-        if (name.includes('cortisol') || name.includes('dhea')) {
-          categories['Adrenal / Cortisol'].push(bio);
-        } else {
-          categories['Hormones'].push(bio);
-        }
-      } else if (['zonulin', 'calprotectin', 'siga', 'dysbiosis', 'h. pylori', 'candida', 'elastase', 'lactoferrin', 'occult blood'].some(k => name.includes(k))) {
-        categories['Gut Health'].push(bio);
-      } else if (['biological age', 'truage', 'epigenetic', 'telomere', 'dnam', 'pace of aging', 'grimage'].some(k => name.includes(k))) {
-        categories['Epigenetic Age'].push(bio);
-      } else if (['vitamin', 'b12', 'folate', 'iron', 'zinc', 'selenium', 'magnesium', 'copper', 'iodine', 'omega'].some(k => name.includes(k))) {
-        categories['Nutrients'].push(bio);
+      } else if (['Testosterone (Total)', 'DHEA-S'].includes(bio.name)) {
+        categories['Hormones'].push(bio);
       } else {
-        categories['Other'].push(bio);
+        categories['Nutrients'].push(bio);
       }
     });
 
-    // Remove empty categories
-    return Object.fromEntries(Object.entries(categories).filter(([, v]) => v.length > 0));
-  }, [allBiomarkers]);
+    return categories;
+  }, [latestPanel]);
 
-  const addLabPanel = useCallback(async (panel: LabPanel): Promise<LabPanel> => {
-    console.log('[Labs] addLabPanel called for', panel.name, 'with', panel.biomarkers.length, 'biomarkers');
+  const addLabPanel = useCallback((panel: LabPanel) => {
     const updated = [...labPanels, panel];
-    try {
-      await saveLabsMutation.mutateAsync(updated);
-      console.log('[Labs] addLabPanel persisted successfully');
-    } catch (err) {
-      console.log('[Labs] addLabPanel failed:', err);
-      throw err;
-    }
-    return panel;
+    saveLabsMutation.mutate(updated);
   }, [labPanels, saveLabsMutation]);
 
   const pickLabImages = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string }[]> => {
@@ -590,6 +657,7 @@ Be thorough and extract every biomarker visible in the document. Base ALL recomm
             `${extractionPrompt}\n\nReturn ONLY valid JSON with this exact shape:\n{\n  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],\n  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "priorityActions": [string]\n}`,
             true
           );
+          console.log(jsonText)
           const parsed = JSON.parse(jsonText) as unknown;
           extractedData = labExtractionSchema.parse(parsed);
           console.log('[Labs] OpenAI direct PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
@@ -999,157 +1067,9 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     },
   });
 
-  const saveLatestAnalysis = useCallback(async (analysis: StoredLabAnalysis): Promise<void> => {
-    console.log('[Labs] saveLatestAnalysis called with', analysis.supplements.length, 'supplements');
-    try {
-      await saveLatestAnalysisMutation.mutateAsync(analysis);
-      console.log('[Labs] saveLatestAnalysis persisted successfully');
-    } catch (err) {
-      console.log('[Labs] saveLatestAnalysis failed:', err);
-      throw err;
-    }
+  const saveLatestAnalysis = useCallback((analysis: StoredLabAnalysis) => {
+    saveLatestAnalysisMutation.mutate(analysis);
   }, [saveLatestAnalysisMutation]);
-
-  // ── Cross-lab synthesis: reads ALL panels, finds patterns, unifies protocol ──
-
-  const [crossLabSynthesis, setCrossLabSynthesis] = useState<{
-    patterns: string[];
-    unifiedRecommendations: SupplementRecommendation[];
-    unifiedHerbs: SupplementRecommendation[];
-    priorityActions: string[];
-    narrative: string;
-    generatedAt: string;
-    panelCount: number;
-  } | null>(null);
-
-  const crossLabSynthesisQuery = useQuery({
-    queryKey: ['crossLabSynthesis'],
-    queryFn: async () => {
-      const stored = await secureGetJSON<typeof crossLabSynthesis>('longevity_cross_lab_synthesis');
-      return stored ?? null;
-    },
-  });
-
-  useEffect(() => {
-    if (crossLabSynthesisQuery.data !== undefined) setCrossLabSynthesis(crossLabSynthesisQuery.data);
-  }, [crossLabSynthesisQuery.data]);
-
-  const runCrossLabSynthesis = useCallback(async () => {
-    if (labPanels.length < 1) return null;
-
-    const panelSummaries = labPanels.map(panel => ({
-      name: panel.name,
-      date: panel.date,
-      biomarkerCount: panel.biomarkers.length,
-      biomarkers: panel.biomarkers.map(b => ({
-        name: b.name,
-        value: b.value,
-        unit: b.unit,
-        status: b.status,
-        referenceRange: b.referenceRange,
-        functionalRange: b.functionalRange,
-      })),
-    }));
-
-    const synthesisPrompt = `You are a world-class functional medicine physician analyzing MULTIPLE lab panels from the same patient. Cross-reference the findings across all panels to identify hidden patterns, root causes, and connections that wouldn't be visible from any single panel alone.
-
-PATIENT'S LAB PANELS:
-${JSON.stringify(panelSummaries, null, 2)}
-
-INSTRUCTIONS:
-1. CROSS-LAB PATTERNS: Identify connections across different lab types. Examples:
-   - Elevated zonulin (Gut Zoomer) + elevated CRP (blood panel) = gut-driven systemic inflammation
-   - Disrupted cortisol rhythm (DUTCH) + poor sleep metrics + elevated HbA1c = HPA-metabolic connection
-   - Accelerated biological age (TruAge) + low NAD+ + mitochondrial markers = accelerated aging pattern
-   - Elevated mercury (heavy metals) + liver enzyme elevation + low glutathione = detox pathway overload
-
-2. ROOT CAUSE ANALYSIS: For each pattern, identify the likely root cause and which system is the primary driver.
-
-3. UNIFIED SUPPLEMENT PROTOCOL: Based on ALL panels together, recommend a PRIORITIZED supplement protocol. Use these specific products when the condition matches:
-   - ProOmega 2000 (Nordic Naturals) — omega-3, cardiovascular
-   - GlucoPrime (Healthgevity) — blood sugar, insulin resistance
-   - Protect+ 10 (Healthgevity) — foundational multi
-   - Liver Sauce (Quicksilver Scientific) — liver support, detox
-   - Liposomal Glutathione (Quicksilver Scientific) — glutathione, oxidative stress
-   - MitoCore (Orthomolecular) — mitochondrial support, energy
-   - NAC 900+ (Healthgevity) — liver, glutathione precursor
-   - Gut Shield (Healthgevity) — gut repair
-   - ProBiota HistaminX (Seeking Health) — probiotics, histamine
-   - Sleep Deep (Healthgevity) — sleep support
-   - Magnesium Glycinate 300 (Healthgevity) — magnesium
-   - Methyl B Complex (Healthgevity) — B vitamins, methylation
-   - D3+K2 5000 (Healthgevity) — vitamin D
-   - Adrenal Restore (Healthgevity) — adrenal, cortisol
-
-4. PRIORITY ACTIONS: Top 5 things this patient should address first, based on the combined picture.
-
-Return ONLY valid JSON:
-{
-  "patterns": ["pattern description 1", "pattern description 2", ...],
-  "supplements": [{"name": "exact product name", "dose": "dosing", "timing": "when to take", "reason": "why — referencing specific biomarker values from their labs", "mechanism": "how it works"}],
-  "herbs": [{"name": "herb name", "dose": "dosing", "timing": "when", "reason": "why", "mechanism": "how"}],
-  "priorityActions": ["action 1", "action 2", ...],
-  "narrative": "2-3 paragraph clinical narrative connecting all the findings across labs, written directly to the patient in plain language"
-}`;
-
-    try {
-      const OPENAI_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-      if (!OPENAI_KEY) throw new Error('OpenAI API key not configured');
-
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4.1',
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'user', content: synthesisPrompt },
-          ],
-        }),
-      });
-
-      if (!res.ok) throw new Error(`OpenAI request failed (${res.status})`);
-      const json = await res.json() as { choices: { message: { content: string } }[] };
-      const content = json.choices[0]?.message?.content ?? '{}';
-      const parsed = JSON.parse(content);
-
-      const result = {
-        patterns: parsed.patterns ?? [],
-        unifiedRecommendations: (parsed.supplements ?? []).map((s: any) => ({
-          ...s,
-          affiliateLink: findAffiliateLink(s.name),
-        })),
-        unifiedHerbs: (parsed.herbs ?? []).map((h: any) => ({
-          ...h,
-          affiliateLink: findAffiliateLink(h.name),
-        })),
-        priorityActions: parsed.priorityActions ?? [],
-        narrative: parsed.narrative ?? '',
-        generatedAt: new Date().toISOString(),
-        panelCount: labPanels.length,
-      };
-
-      setCrossLabSynthesis(result);
-      await secureSetJSON('longevity_cross_lab_synthesis', result);
-
-      // Also save as the latest analysis so protocol page picks it up
-      await saveLatestAnalysisMutation.mutateAsync({
-        generatedAt: result.generatedAt,
-        supplements: result.unifiedRecommendations,
-        herbs: result.unifiedHerbs,
-        priorityActions: result.priorityActions,
-        flaggedBiomarkerNames: flaggedBiomarkers.map(b => b.name),
-      });
-
-      return result;
-    } catch (e) {
-      console.log('[Labs] Cross-lab synthesis failed:', e);
-      throw e;
-    }
-  }, [labPanels, flaggedBiomarkers, saveLatestAnalysisMutation]);
 
   return useMemo(() => ({
     labPanels,
@@ -1170,9 +1090,6 @@ Return ONLY valid JSON:
     isAnalyzing: analyzeLabMutation.isPending || analyzeLabImagesMutation.isPending,
     analysisError: analyzeLabMutation.error || analyzeLabImagesMutation.error,
     updateLabPanelBiomarkers,
-    allBiomarkers,
-    crossLabSynthesis,
-    runCrossLabSynthesis,
     sendLabsWebhook,
     sendLabUploadStartedWebhook,
     saveLatestAnalysis,
@@ -1200,8 +1117,5 @@ Return ONLY valid JSON:
     updateLabPanelBiomarkers,
     sendLabUploadStartedWebhook,
     saveLatestAnalysis,
-    allBiomarkers,
-    crossLabSynthesis,
-    runCrossLabSynthesis,
   ]);
 });

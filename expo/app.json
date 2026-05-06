@@ -41,7 +41,9 @@
         "android.permission.health.READ_BODY_TEMPERATURE",
         "android.permission.health.READ_SLEEP",
         "android.permission.health.READ_WEIGHT",
-        "android.permission.health.READ_BODY_FAT"
+        "android.permission.health.READ_BODY_FAT",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "package": "app.rork.ai_longevity_pro",
       "versionCode": 1
@@ -71,6 +73,7 @@
       "eas": {
         "projectId": "06badb53-baa2-4717-8654-9f4d665b1c6d"
       }
-    }
+    },
+    "owner": "holisticdrbright"
   }
 }
