@@ -9,15 +9,18 @@
     "start-web-dev": "DEBUG=expo* bunx rork start -p mw7mguqqnf6d1vg2tpt8o --web --tunnel",
     "lint": "expo lint",
     "ios": "expo run:ios",
-    "android": "expo run:android"
+    "android": "expo run:android",
+    "start:backend": "bun run backend/server.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@hono/node-server": "^2.0.1",
     "@hono/trpc-server": "^0.4.2",
     "@nkzw/create-context-hook": "^1.1.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "5.0.1",
     "@rork-ai/toolkit-sdk": "^0.2.51",
+    "@sentry/node": "^10.52.0",
     "@sentry/react-native": "~7.2.0",
     "@stardazed/streams-text-encoding": "^1.0.2",
     "@supabase/supabase-js": "^2.99.1",
@@ -72,6 +75,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@expo/ngrok": "^4.1.0",
+    "@flydotio/dockerfile": "^0.7.10",
     "@types/react": "~19.1.10",
     "eslint": "^9.31.0",
     "eslint-config-expo": "~10.0.0",

@@ -1,4 +1,5 @@
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import * as Sentry from "@sentry/node";
 import type { Context, Next } from 'hono';
 
 const PHI_KEYS = new Set([

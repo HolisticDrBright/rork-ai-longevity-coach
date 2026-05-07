@@ -235,7 +235,7 @@ export default function NutritionDashboard() {
       </ScrollView>
 
       <TouchableOpacity
-        style={[styles.fab, { bottom: insets.bottom + 90 }]}
+        style={[styles.fab, { bottom: insets.bottom + 5 }]}
         onPress={() => router.push('/(tabs)/(nutrition)/new' as any)}
         activeOpacity={0.9}
       >
