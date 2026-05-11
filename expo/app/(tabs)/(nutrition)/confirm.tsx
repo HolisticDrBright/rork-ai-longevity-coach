@@ -38,6 +38,7 @@ export default function ConfirmFoods() {
   const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
 
   const calculateMutation = trpc.nutrition.calculateNutrition.useMutation({
+
     onSuccess: (data) => {
       console.log('Calculation successful:', data.foodLogId);
 
@@ -67,13 +68,13 @@ export default function ConfirmFoods() {
       console.error('Calculation failed:', error);
 
       console.log("MESSAGE:", error.message);
-  console.log("SHAPE:", error.shape);
-  console.log("DATA:", error.data);
+      console.log("SHAPE:", error.shape);
+      console.log("DATA:", error.data);
 
-  if ((error as any).meta?.response) {
-    (error as any).meta.response.text().then(console.log);
-  }
-    
+      if ((error as any).meta?.response) {
+        (error as any).meta.response.text().then(console.log);
+      }
+
       Alert.alert('Error', 'Failed to calculate nutrition. Please try again.');
     },
     onSettled: () => {

@@ -17,7 +17,7 @@ const getBaseUrl = () => {
 
   return url;
 };
-
+console.log(`[tRPC] Using API base URL: ${getBaseUrl()}`);
 export const trpcClient = trpc.createClient({
   links: [
     httpLink({

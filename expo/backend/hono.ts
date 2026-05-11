@@ -34,13 +34,19 @@ app.onError((err, c) => {
 });
 
 app.use(
-  "/trpc/*",
+  // "/trpc/*",
+  "/api/trpc/*",
   trpcServer({
     endpoint: "/api/trpc",
     router: appRouter,
     createContext,
   }),
 );
+
+app.use("*", async (c, next) => {
+  console.log(`[REQ] ${c.req.method} ${c.req.url}`);
+  await next();
+});
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });

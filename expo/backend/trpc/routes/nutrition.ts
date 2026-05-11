@@ -274,6 +274,8 @@ export const nutritionRouter = createTRPCRouter({
     }))
     .mutation(async ({ input }) => {
       console.log("Calculating nutrition for", input.confirmedItems.length, "items");
+      console.log("PASSIO_API_KEY:", PASSIO_API_KEY);
+      console.log("PASSIO_API_KEY:", input);
 
       const items: Array<{
         id: string;
@@ -292,17 +294,24 @@ export const nutritionRouter = createTRPCRouter({
       }> = [];
 
       for (const item of input.confirmedItems) {
+        console.log("Before estimate");
         let nutrition = getNutritionEstimate(item.name, item.portionQty, item.portionUnit);
+
+        console.log("After estimate",nutrition);
+        console.log("Calculating nutrition for", input.confirmedItems.length, "items");
+        console.log("PASSIO_API_KEY:", PASSIO_API_KEY);
+        console.log("item.passioFoodId:", item.passioFoodId);
 
         if (item.passioFoodId && PASSIO_API_KEY) {
           try {
             const token = await getPassioToken();
+            console.log(`${PASSIO_BASE_URL}/products/${item.passioFoodId}`)
             const response = await fetch(`${PASSIO_BASE_URL}/products/${item.passioFoodId}`, {
               headers: {
                 "Authorization": `Bearer ${token}`,
               },
             });
-
+            console.log("Passio nutrition response status:", response.status);
             if (response.ok) {
               const data = await response.json();
               if (data.nutrients) {
