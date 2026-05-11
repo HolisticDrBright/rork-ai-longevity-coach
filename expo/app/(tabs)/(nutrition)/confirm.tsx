@@ -65,6 +65,15 @@ export default function ConfirmFoods() {
     },
     onError: (error) => {
       console.error('Calculation failed:', error);
+
+      console.log("MESSAGE:", error.message);
+  console.log("SHAPE:", error.shape);
+  console.log("DATA:", error.data);
+
+  if ((error as any).meta?.response) {
+    (error as any).meta.response.text().then(console.log);
+  }
+    
       Alert.alert('Error', 'Failed to calculate nutrition. Please try again.');
     },
     onSettled: () => {

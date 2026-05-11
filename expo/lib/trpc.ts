@@ -18,7 +18,6 @@ const getBaseUrl = () => {
   return url;
 };
 
-console.log(getBaseUrl())
 export const trpcClient = trpc.createClient({
   links: [
     httpLink({
@@ -28,7 +27,6 @@ export const trpcClient = trpc.createClient({
         try {
           const { data } = await supabase.auth.getSession();
           const token = data?.session?.access_token;
-          console.log('[tRPC] Adding auth token to headers:', token);
           if (token) {
             return {
               Authorization: `Bearer ${token}`,
