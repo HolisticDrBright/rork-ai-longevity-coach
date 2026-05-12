@@ -145,72 +145,58 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   return json.id;
 }
 
-// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-//   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-//   const body: Record<string, unknown> = {
-//     model: OPENAI_DIRECT_MODEL,
-//     messages: [
-//       {
-//         role: 'user',
-//         content: [
-//           { type: 'file', file: { file_id: fileId } },
-//           { type: 'text', text: prompt },
-//         ],
-//       },
-//     ],
-//   };
-//   if (expectJson) {
-//     body.response_format = { type: 'json_object' };
-//   }
-//   const res = await fetch('https://api.openai.com/v1/chat/completions', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify(body),
-//   });
-//   if (!res.ok) {
-//     const t = await res.text();
-//     console.log('[Labs] OpenAI chat call failed:', res.status, t);
-//     throw new Error(`OpenAI request failed (${res.status}).`);
-//   }
-//   const json = (await res.json()) as { choices: { message: { content: string } }[] };
-//   return json.choices[0]?.message?.content ?? '';
-// }
-
-// async function callOpenAIWithFile(fileId: string, prompt: string) {
-//   const res = await fetch('https://api.openai.com/v1/responses', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify({
-//       model: 'gpt-4.1',
-//       input: [
-//         {
-//           role: 'user',
-//           content: [
-//             { type: 'input_file', file_id: fileId },
-//             { type: 'input_text', text: prompt },
-//           ],
-//         },
-//       ],
-//     }),
-//   });
-
-//   const json = await res.json();
-
-//   if (!res.ok) {
-//     throw new Error(json.error?.message || 'OpenAI request failed');
-//   }
-
-//   return json.output?.[0]?.content?.[0]?.text ?? '';
-// }
-
 async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
+
+  try {
+    const responsesBody: Record<string, unknown> = {
+      model: OPENAI_DIRECT_MODEL,
+      temperature: 0,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+            {
+              type: 'input_text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    };
+
+    if (expectJson) {
+      responsesBody.text = { format: { type: 'json_object' } };
+    }
+
+    const res = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(responsesBody),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const text =
+        json.output_text
+        ?? json.output?.find?.((o: any) => o.type === 'message')?.content?.[0]?.text
+        ?? json.output?.[0]?.content?.[0]?.text
+        ?? '';
+      if (text) return text;
+    }
+
+    console.log('[Labs] Responses API failed or empty, falling back to Chat Completions');
+  } catch (e) {
+    console.log('[Labs] Responses API error, falling back:', e);
+  }
+
   const body: Record<string, unknown> = {
     model: OPENAI_DIRECT_MODEL,
     temperature: 0,
