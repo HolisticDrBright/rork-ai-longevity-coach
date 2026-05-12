@@ -32,7 +32,7 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
       mimeType: 'application/pdf',
-      parameters: { purpose: 'assistants' },
+      parameters: { purpose: 'user_data' },
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     });
     if (result.status < 200 || result.status >= 300) {
@@ -129,8 +129,7 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   const blob = await response.blob();
   const formData = new FormData();
   formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
-  // formData.append('purpose', 'user_data');
-  formData.append('purpose', 'assistants');
+  formData.append('purpose', 'user_data');
   const res = await fetch('https://api.openai.com/v1/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
@@ -211,25 +210,28 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
 // }
 
 async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
   const body: Record<string, unknown> = {
     model: OPENAI_DIRECT_MODEL,
     messages: [
       {
-        role: "user",
-        content: `File ID: ${fileId}\n\n${prompt}`
-
-      }
+        role: 'user',
+        content: [
+          { type: 'file', file: { file_id: fileId } },
+          { type: 'text', text: prompt },
+        ],
+      },
     ],
   };
 
   if (expectJson) {
-    body.response_format = { type: "json_object" };
+    body.response_format = { type: 'json_object' };
   }
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify(body),
@@ -237,12 +239,12 @@ async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: bo
 
   if (!res.ok) {
     const t = await res.text();
-    console.log("[Labs] OpenAI chat call failed:", res.status, t);
+    console.log('[Labs] OpenAI chat call failed:', res.status, t);
     throw new Error(`OpenAI request failed (${res.status}).`);
   }
 
-  const json = await res.json();
-  return json.choices?.[0]?.message?.content ?? "";
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return json.choices?.[0]?.message?.content ?? '';
 }
 
 async function deleteOpenAIFile(fileId: string): Promise<void> {
