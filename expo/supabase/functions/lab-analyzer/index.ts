@@ -1,16 +1,18 @@
 /**
  * Supabase Edge Function: lab-analyzer
  *
- * Replaces the client-side PDF-via-GPT extraction flow with a real
- * document-AI pipeline:
+ * Document-AI pipeline for functional lab reports (TruAge, TruHealth, normal panels, etc.):
  *
  *   1. Receive { jobId } from the client (PDF/image already in Supabase Storage)
  *   2. Verify the caller owns the job row
- *   3. Download the file from Storage
- *   4. Send to AWS Textract AnalyzeDocument with TABLES + FORMS
+ *   3. Download the file from Supabase Storage
+ *   4. Route by size/type:
+ *        - Images (JPG/PNG) → sync Textract AnalyzeDocument (1-page docs, fastest)
+ *        - PDFs            → upload to S3 → async StartDocumentAnalysis → poll → aggregate
+ *      Async path supports up to 3,000 pages / 500 MB so 30-page TruHealth reports work.
  *   5. Parse Textract output into structured biomarkers
  *   6. Call OpenAI for enrichment ONLY (status / supplements / herbs / actions / narrative)
- *      — the model never has to read the PDF, so big files no longer break it
+ *      — the model never has to read the PDF, so big files don't blow context
  *   7. Write results back to lab_analysis_jobs; realtime pushes the result to the client
  *
  * Deploy: supabase functions deploy lab-analyzer
@@ -18,33 +20,40 @@
  * Required secrets (supabase secrets set ...):
  *   - SUPABASE_URL                  (auto-injected)
  *   - SUPABASE_SERVICE_ROLE_KEY     (auto-injected)
- *   - AWS_REGION                    (e.g. us-east-1)
+ *   - AWS_REGION                    (e.g. us-east-1, must match S3 bucket region)
  *   - AWS_ACCESS_KEY_ID
  *   - AWS_SECRET_ACCESS_KEY
+ *   - AWS_S3_BUCKET                 S3 bucket for async Textract input (e.g. rork-longevity-labs)
  *   - OPENAI_API_KEY
  *   - OPENAI_MODEL                  (optional; defaults to gpt-4o-mini)
- *
- * Sync Textract supports up to 5 pages / 5 MB. Bigger files return a clear
- * "PDF too large" error so the user knows to split it. Upgrade to the async
- * StartDocumentAnalysis path when you add an S3 bucket.
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.99.1';
 import {
   TextractClient,
   AnalyzeDocumentCommand,
+  StartDocumentAnalysisCommand,
+  GetDocumentAnalysisCommand,
   type Block,
 } from 'npm:@aws-sdk/client-textract@3.515.0';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from 'npm:@aws-sdk/client-s3@3.515.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const AWS_REGION = Deno.env.get('AWS_REGION') ?? 'us-east-1';
 const AWS_ACCESS_KEY_ID = Deno.env.get('AWS_ACCESS_KEY_ID') ?? '';
 const AWS_SECRET_ACCESS_KEY = Deno.env.get('AWS_SECRET_ACCESS_KEY') ?? '';
+const AWS_S3_BUCKET = Deno.env.get('AWS_S3_BUCKET') ?? '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini';
 
-const MAX_SYNC_BYTES = 5 * 1024 * 1024; // 5 MB — Textract sync limit
+const MAX_BYTES = 50 * 1024 * 1024; // 50 MB — matches Supabase Storage bucket cap; well under Textract async 500 MB
+const ASYNC_POLL_INTERVAL_MS = 2000;
+const ASYNC_POLL_TIMEOUT_MS = 180_000; // 3 min — enough for ~30-page reports
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -132,26 +141,30 @@ async function processJob(admin: SupabaseClient, job: Record<string, unknown>) {
   if (dlErr || !fileBlob) throw new Error(`Storage download failed: ${dlErr?.message ?? 'unknown'}`);
 
   const buf = new Uint8Array(await fileBlob.arrayBuffer());
-  if (buf.byteLength > MAX_SYNC_BYTES) {
+  if (buf.byteLength > MAX_BYTES) {
     throw new Error(
-      `PDF is ${(buf.byteLength / 1024 / 1024).toFixed(1)} MB. Sync Textract is capped at 5 MB. Please split the PDF or upgrade this function to use S3 + StartDocumentAnalysis.`
+      `File is ${(buf.byteLength / 1024 / 1024).toFixed(1)} MB. Maximum supported size is ${MAX_BYTES / 1024 / 1024} MB.`
     );
   }
 
-  // ---- 2. Send to AWS Textract ----
+  // ---- 2. Run Textract (async via S3 for PDFs, sync in-memory for images) ----
   const textract = new TextractClient({
     region: AWS_REGION,
     credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
   });
 
-  const analyze = await textract.send(
-    new AnalyzeDocumentCommand({
-      Document: { Bytes: buf },
-      FeatureTypes: ['TABLES', 'FORMS'],
-    })
-  );
-
-  const blocks = (analyze.Blocks ?? []) as Block[];
+  let blocks: Block[];
+  if (fileType === 'pdf') {
+    blocks = await runAsyncTextract(textract, buf, jobId, fileType);
+  } else {
+    const analyze = await textract.send(
+      new AnalyzeDocumentCommand({
+        Document: { Bytes: buf },
+        FeatureTypes: ['TABLES', 'FORMS'],
+      })
+    );
+    blocks = (analyze.Blocks ?? []) as Block[];
+  }
   console.log(`[lab-analyzer] Textract returned ${blocks.length} blocks for job ${jobId}`);
 
   // ---- 3. Parse Textract tables into biomarker rows ----
@@ -188,6 +201,91 @@ async function processJob(admin: SupabaseClient, job: Record<string, unknown>) {
     .eq('id', jobId);
 
   console.log(`[lab-analyzer] Job ${jobId} complete`);
+}
+
+// ----------------------------------------------------------------------
+// Async Textract via S3 (for multi-page PDFs > 11 pages / > 5 MB)
+// ----------------------------------------------------------------------
+
+async function runAsyncTextract(
+  textract: TextractClient,
+  buf: Uint8Array,
+  jobId: string,
+  fileType: 'pdf' | 'jpg' | 'png',
+): Promise<Block[]> {
+  if (!AWS_S3_BUCKET) {
+    throw new Error('AWS_S3_BUCKET secret is not set. Async Textract requires an S3 bucket.');
+  }
+
+  const s3 = new S3Client({
+    region: AWS_REGION,
+    credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+  });
+
+  const s3Key = `textract-jobs/${jobId}.${fileType}`;
+  const contentType = fileType === 'pdf' ? 'application/pdf' : `image/${fileType}`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: AWS_S3_BUCKET,
+      Key: s3Key,
+      Body: buf,
+      ContentType: contentType,
+    }),
+  );
+  console.log(`[lab-analyzer] Uploaded ${buf.byteLength} bytes to s3://${AWS_S3_BUCKET}/${s3Key}`);
+
+  try {
+    const start = await textract.send(
+      new StartDocumentAnalysisCommand({
+        DocumentLocation: { S3Object: { Bucket: AWS_S3_BUCKET, Name: s3Key } },
+        FeatureTypes: ['TABLES', 'FORMS'],
+      }),
+    );
+    const textractJobId = start.JobId;
+    if (!textractJobId) throw new Error('Textract did not return a JobId');
+    console.log(`[lab-analyzer] Started Textract job ${textractJobId}`);
+
+    const blocks = await pollAsyncTextract(textract, textractJobId);
+    return blocks;
+  } finally {
+    // Clean up so the bucket doesn't accumulate files. Best-effort — don't fail the job on cleanup error.
+    s3.send(new DeleteObjectCommand({ Bucket: AWS_S3_BUCKET, Key: s3Key })).catch((e) => {
+      console.warn(`[lab-analyzer] S3 cleanup failed for ${s3Key}:`, e);
+    });
+  }
+}
+
+async function pollAsyncTextract(textract: TextractClient, textractJobId: string): Promise<Block[]> {
+  const startedAt = Date.now();
+  while (true) {
+    if (Date.now() - startedAt > ASYNC_POLL_TIMEOUT_MS) {
+      throw new Error(`Textract job ${textractJobId} did not complete within ${ASYNC_POLL_TIMEOUT_MS / 1000}s`);
+    }
+    await new Promise((r) => setTimeout(r, ASYNC_POLL_INTERVAL_MS));
+
+    const first = await textract.send(new GetDocumentAnalysisCommand({ JobId: textractJobId }));
+    const status = first.JobStatus;
+    if (status === 'IN_PROGRESS') continue;
+    if (status === 'FAILED' || status === 'PARTIAL_SUCCESS') {
+      throw new Error(`Textract job ${textractJobId} ${status}: ${first.StatusMessage ?? 'no message'}`);
+    }
+    if (status !== 'SUCCEEDED') {
+      throw new Error(`Textract job ${textractJobId} returned unexpected status ${status}`);
+    }
+
+    // Aggregate paginated results
+    const allBlocks: Block[] = [...((first.Blocks ?? []) as Block[])];
+    let nextToken = first.NextToken;
+    while (nextToken) {
+      const page = await textract.send(
+        new GetDocumentAnalysisCommand({ JobId: textractJobId, NextToken: nextToken }),
+      );
+      allBlocks.push(...((page.Blocks ?? []) as Block[]));
+      nextToken = page.NextToken;
+    }
+    return allBlocks;
+  }
 }
 
 // ----------------------------------------------------------------------
