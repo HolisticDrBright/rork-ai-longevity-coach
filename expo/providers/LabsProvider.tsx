@@ -27,21 +27,22 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
 
   if (Platform.OS !== 'web') {
-    // const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
-    //   httpMethod: 'POST',
-    //   uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-    //   fieldName: 'file',
-    //   mimeType: 'application/pdf',
-    //   parameters: { purpose: 'assistants' },
-    //   headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    // });
-    // if (result.status < 200 || result.status >= 300) {
-    //   console.log('[Labs] OpenAI upload failed:', result.status, result.body);
-    //   throw new Error(`OpenAI file upload failed (${result.status}).`);
-    // }
-    // const json = JSON.parse(result.body) as { id: string };
-    // console.log('[Labs] OpenAI file uploaded, id:', json.id);
-    // return json.id;
+    const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'application/pdf',
+      parameters: { purpose: 'assistants' },
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    });
+    if (result.status < 200 || result.status >= 300) {
+      console.log('[Labs] OpenAI upload failed:', result.status, result.body);
+      throw new Error(`OpenAI file upload failed (${result.status}).`);
+    }
+    console.log('[Labs] OpenAI upload response:', result.body);
+    const json = JSON.parse(result.body) as { id: string };
+    console.log('[Labs] OpenAI file uploaded, id:', json.id);
+    return json.id;
     // const formData = new FormData();
 
     // formData.append('file', {
@@ -71,48 +72,57 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
     // console.log('Uploaded file ID:', result.id);
     // return result.id;
 
-    try {
+    // try {
 
-      const info = await FileSystem.getInfoAsync(fileUri);
-      console.log("✅ File exists. Size:", info.exists, "bytes");
-      // STEP 1: Convert file → blob (CRITICAL FIX)
-
-
-      // STEP 2: Create form data
-
-      console.log(fileUri)
-      const formData = new FormData();
-      formData.append('file', {
-        uri: fileUri,
-        name: 'file.pdf',
-        type: 'application/pdf',
-      });
+    //   const info = await FileSystem.getInfoAsync(fileUri);
+    //   console.log("✅ File exists. Size:", info.exists, "bytes");
+    //   // STEP 1: Convert file → blob (CRITICAL FIX)
 
 
-      formData.append("purpose", "user_data");
+    //   // STEP 2: Create form data
 
-      // STEP 3: Upload
-      const response = await fetch("https://api.openai.com/v1/files", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: formData,
-      });
+    //   console.log(fileUri)
+    //   const formdata = new FormData();
+    //   formdata.append('file', {
+    //     uri: fileUri,
+    //     name: 'file.pdf',
+    //     type: 'application/pdf',
+    //   });
 
-      const result = await response.json();
 
-      if (!response.ok) {
-        console.log("Upload failed:", result);
-        throw new Error("Upload failed");
-      }
+    //   formdata.append("purpose", "user_data");
 
-      console.log("Uploaded file ID:", result.id);
-      return result.id;
-    } catch (err) {
-      console.log("ERROR:", err);
-      throw err;
-    }
+    //   // STEP 3: Upload
+    //   const response = await fetch("https://api.openai.com/v1/files", {
+    //     method: "POST",
+    //     headers: {
+          
+    //       Authorization: `Bearer ${OPENAI_API_KEY}`,
+    //       "Content-Type": 'multipart/form-data',
+    //     },
+    //     body: formdata,
+    //   });
+
+    //   const result = await response.json();
+
+    //   if (!response.ok) {
+    //     console.log("Upload failed:", result);
+    //     throw new Error("Upload failed");
+    //   }
+
+    //   console.log("Uploaded file ID:", result.id);
+    //   return result.id;
+    // } catch (err) {
+    //   console.log("ERROR:", err);
+    //   console.log("❌ UPLOAD FAILED FULL ERROR:");
+    //   console.log("Message:", err?.message);
+    //   console.log("Stack:", err?.stack);
+    //   console.log("Raw:", err);
+    //   throw err;
+    // }
+
+
+
   }
 
   const response = await fetch(fileUri);
@@ -207,6 +217,7 @@ async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: bo
       {
         role: "user",
         content: `File ID: ${fileId}\n\n${prompt}`
+
       }
     ],
   };
@@ -644,6 +655,7 @@ Be thorough and extract every biomarker visible in the document. Base ALL recomm
         try {
           openaiFileId = await uploadPdfToOpenAI(fileUri, fileName ?? 'lab-results.pdf');
         } catch (uploadErr) {
+          console.log(uploadErr)
           const msg = uploadErr instanceof Error ? uploadErr.message : '';
           console.log('[Labs] OpenAI PDF upload failed:', msg);
           throw new Error(

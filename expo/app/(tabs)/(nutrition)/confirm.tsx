@@ -9,6 +9,10 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Plus, Trash2, ChevronDown, Search, Check, AlertCircle, X } from 'lucide-react-native';
@@ -321,41 +325,48 @@ export default function ConfirmFoods() {
         animationType="slide"
         onRequestClose={() => setShowAddModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Food Item</Text>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
-                <X size={24} color={Colors.text} />
-              </TouchableOpacity>
-            </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalOverlay}>
+              <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Add Food Item</Text>
+                  <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                    <X size={24} color={Colors.text} />
+                  </TouchableOpacity>
+                </View>
 
-            <View style={styles.searchContainer}>
-              <Search size={20} color={Colors.textTertiary} />
-              <TextInput
-                style={styles.searchInput}
-                value={newItemName}
-                onChangeText={setNewItemName}
-                placeholder="Search or type food name..."
-                placeholderTextColor={Colors.textTertiary}
-                autoFocus
-              />
-            </View>
+                <View style={styles.searchContainer}>
+                  <Search size={20} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.searchInput}
+                    value={newItemName}
+                    onChangeText={setNewItemName}
+                    placeholder="Search or type food name..."
+                    placeholderTextColor={Colors.textTertiary}
+                    autoFocus
+                  />
+                </View>
 
-            <TouchableOpacity
-              style={[
-                styles.addModalButton,
-                !newItemName.trim() && styles.addModalButtonDisabled,
-              ]}
-              onPress={handleAddItem}
-              disabled={!newItemName.trim()}
-              activeOpacity={0.8}
-            >
-              <Plus size={20} color={Colors.textInverse} />
-              <Text style={styles.addModalButtonText}>Add "{newItemName || '...'}"</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+                <TouchableOpacity
+                  style={[
+                    styles.addModalButton,
+                    !newItemName.trim() && styles.addModalButtonDisabled,
+                  ]}
+                  onPress={handleAddItem}
+                  disabled={!newItemName.trim()}
+                  activeOpacity={0.8}
+                >
+                  <Plus size={20} color={Colors.textInverse} />
+                  <Text style={styles.addModalButtonText}>Add "{newItemName || '...'}"</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
