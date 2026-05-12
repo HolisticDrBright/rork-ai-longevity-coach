@@ -97,6 +97,55 @@ export const labsRouter = createTRPCRouter({
       return mapDbToLabDocument(data);
     }),
 
+  // Kicks off the AWS Textract + GPT enrichment pipeline for a previously
+  // uploaded document. The file must already exist in the `lab-pdfs`
+  // Supabase Storage bucket at the given storage_path.
+  triggerLabAnalysis: protectedProcedure
+    .input(z.object({ documentId: z.string() }))
+    .mutation(async ({ ctx, input }): Promise<{ jobId: string }> => {
+      console.log('[Labs] Triggering lab analysis for document', input.documentId);
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      const { data: doc, error: docErr } = await sb
+        .from('clinic_lab_documents')
+        .select('id, patient_id, storage_path, file_name, file_type')
+        .eq('id', input.documentId)
+        .single();
+      if (docErr || !doc) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+      }
+
+      const { data: job, error: jobErr } = await sb
+        .from('lab_analysis_jobs')
+        .insert({
+          user_id: ctx.user.id,
+          clinic_document_id: doc.id,
+          storage_path: doc.storage_path,
+          file_name: doc.file_name,
+          file_type: doc.file_type,
+          status: 'pending',
+        })
+        .select('id')
+        .single();
+      if (jobErr || !job) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create analysis job' });
+      }
+
+      await sb
+        .from('clinic_lab_documents')
+        .update({ processing_status: 'processing' })
+        .eq('id', doc.id);
+
+      const { error: invokeErr } = await sb.functions.invoke('lab-analyzer', {
+        body: { jobId: job.id },
+      });
+      if (invokeErr) {
+        console.log('[Labs] Edge function invoke failed (will still poll job row):', invokeErr.message);
+      }
+
+      return { jobId: job.id as string };
+    }),
+
   getDocumentDownloadUrl: protectedProcedure
     .input(z.object({ documentId: z.string() }))
     .query(async ({ ctx, input }): Promise<{ url: string; expiresAt: string }> => {
