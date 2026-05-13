@@ -139,19 +139,19 @@ export default function NewMealCapture() {
 
       const result = useCamera
         ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 0.8,
-            base64: true,
-          })
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          aspect: [4, 3],
+          quality: 0.8,
+          base64: true,
+        })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 0.8,
-            base64: true,
-          });
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          aspect: [4, 3],
+          quality: 0.8,
+          base64: true,
+        });
 
       if (!result.canceled && result.assets[0]) {
         setPhotoUri(result.assets[0].uri);
@@ -189,6 +189,7 @@ export default function NewMealCapture() {
         mealType: selectedMeal!,
         photoBase64: null,
       });
+     
       router.push('/(tabs)/(nutrition)/confirm' as any);
     },
     [selectedMeal, setPendingMealAnalysis, router]
