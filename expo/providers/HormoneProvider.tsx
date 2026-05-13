@@ -70,25 +70,36 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
   }, [entriesQuery.data]);
 
   const saveEntriesMutation = useMutation({
-    mutationFn: async (newEntries: HormoneEntry[]) => {
+    mutationFn: async (args: { entries: HormoneEntry[]; newlyAdded?: HormoneEntry }) => {
+      const { entries: newEntries, newlyAdded } = args;
       await secureSetJSON(STORAGE_KEY, newEntries);
       await writeAuditLog('PHI_UPDATE', 'hormone_entries', 'user');
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session && newEntries.length > 0) {
-          const latest = newEntries[0];
-          console.log('[HormoneProvider] Syncing hormone entry to Supabase...');
+        // Only sync to Supabase when there's a specific entry being added.
+        // Update/delete operations rewrite the same array but shouldn't
+        // duplicate symptom_logs rows or re-upsert the most-recent entry.
+        if (session && newlyAdded) {
+          console.log('[HormoneProvider] Syncing new hormone entry to Supabase...');
           await hormoneEntryService.upsert({
-            date: latest.date,
-            cycle_day: latest.cycleDay ?? null,
-            symptoms_json: latest.symptoms as unknown as Record<string, unknown>[],
-            notes: latest.notes ?? null,
-            current_supplements_json: latest.currentSupplements as unknown as Record<string, unknown>[] ?? null,
+            date: newlyAdded.date,
+            cycle_day: newlyAdded.cycleDay ?? null,
+            symptoms_json: newlyAdded.symptoms as unknown as Record<string, unknown>[],
+            notes: newlyAdded.notes ?? null,
+            current_supplements_json: newlyAdded.currentSupplements as unknown as Record<string, unknown>[] ?? null,
           });
 
-          const loggedAt = `${latest.date}T${new Date().toISOString().slice(11)}`;
-          const nonZeroSymptoms = latest.symptoms.filter(s => s.severity > 0);
+          // For today's entries, use the actual current timestamp. For
+          // backdated entries, anchor to midday on the chosen date so the
+          // logs sort correctly without smearing today's time across an
+          // unrelated date.
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const loggedAt = newlyAdded.date === todayStr
+            ? new Date().toISOString()
+            : `${newlyAdded.date}T12:00:00.000Z`;
+
+          const nonZeroSymptoms = newlyAdded.symptoms.filter(s => s.severity > 0);
           if (nonZeroSymptoms.length > 0) {
             console.log('[HormoneProvider] Writing', nonZeroSymptoms.length, 'symptom_logs rows');
           }
@@ -124,17 +135,17 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
       id: `hormone_${Date.now()}`,
     };
     const updated = [newEntry, ...entries];
-    saveEntriesMutation.mutate(updated);
+    saveEntriesMutation.mutate({ entries: updated, newlyAdded: newEntry });
   }, [entries, saveEntriesMutation]);
 
   const updateEntry = useCallback((id: string, updates: Partial<HormoneEntry>) => {
     const updated = entries.map(e => e.id === id ? { ...e, ...updates } : e);
-    saveEntriesMutation.mutate(updated);
+    saveEntriesMutation.mutate({ entries: updated });
   }, [entries, saveEntriesMutation]);
 
   const deleteEntry = useCallback((id: string) => {
     const updated = entries.filter(e => e.id !== id);
-    saveEntriesMutation.mutate(updated);
+    saveEntriesMutation.mutate({ entries: updated });
   }, [entries, saveEntriesMutation]);
 
   const getGuidance = useCallback((entry: HormoneEntry): HormoneGuidance[] => {

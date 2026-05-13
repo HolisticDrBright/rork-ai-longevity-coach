@@ -516,7 +516,7 @@ export default function NewMealCapture() {
                   testID={`mode-${opt.mode}`}
                 >
                   <View style={styles.modeTabIcon}>
-                    {React.cloneElement(opt.icon as React.ReactElement, {
+                    {React.cloneElement(opt.icon as React.ReactElement<{ color?: string }>, {
                       color: active ? Colors.primary : Colors.textSecondary,
                     })}
                   </View>

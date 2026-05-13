@@ -32,8 +32,7 @@ import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useLabs } from '@/providers/LabsProvider';
-import { TodayAction } from '@/types';
-import { CategoryScore } from '@/types';
+import { TodayAction , CategoryScore } from '@/types';
 import { fetchOrGenerateDailyCoach, type DailyCoachResult } from '@/lib/dailyCoachClient';
 
 const getGreeting = () => {

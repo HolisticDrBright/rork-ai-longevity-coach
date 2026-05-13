@@ -209,7 +209,13 @@ function evaluateRule(rule: RuleRow, ctx: SafetyContext): GateHit | null {
       if (!name || threshold == null) return null;
       if (ruleSex && ctx.profile.sex && ruleSex !== ctx.profile.sex.toLowerCase()) return null;
 
-      const reading = ctx.latestLabs.find(l => l.marker_name.toLowerCase().includes(name));
+      // Prefer exact match (case-insensitive) before falling back to substring.
+      // Substring-only matching picked up the wrong marker when the user had
+      // e.g. both "Free Testosterone" and "Testosterone (Total)" rows.
+      const lowered = ctx.latestLabs.map(l => ({ ...l, lname: l.marker_name.toLowerCase() }));
+      const reading = lowered.find(l => l.lname === name)
+        ?? lowered.find(l => l.lname.startsWith(name))
+        ?? lowered.find(l => l.lname.includes(name));
       if (!reading) return null;
 
       const triggered = rule.rule_type === 'biomarker_high'
@@ -329,14 +335,24 @@ function textractClient(): AwsClient {
   });
 }
 
+// Encode each path segment individually so '/' stays as '/' in the URL.
+// encodeURIComponent('a/b') -> 'a%2Fb' would change the S3 key entirely.
+function encodeS3Key(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/');
+}
+
 async function s3PutObject(key: string, body: Uint8Array, contentType: string): Promise<void> {
   if (!AWS_S3_BUCKET) throw new Error('AWS_S3_BUCKET not set');
   const aws = awsClient();
-  const url = `https://${AWS_S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${encodeURIComponent(key)}`;
+  const url = `https://${AWS_S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${encodeS3Key(key)}`;
   const res = await aws.fetch(url, {
     method: 'PUT',
     body,
-    headers: { 'Content-Type': contentType },
+    headers: {
+      'Content-Type': contentType,
+      // Server-side encryption at rest. Required for PHI.
+      'x-amz-server-side-encryption': 'AES256',
+    },
   });
   if (!res.ok) {
     const txt = await res.text();
@@ -348,7 +364,7 @@ async function s3DeleteObject(key: string): Promise<void> {
   if (!AWS_S3_BUCKET) return;
   try {
     const aws = awsClient();
-    const url = `https://${AWS_S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${encodeURIComponent(key)}`;
+    const url = `https://${AWS_S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${encodeS3Key(key)}`;
     const res = await aws.fetch(url, { method: 'DELETE' });
     if (!res.ok) {
       console.error('[lab-analyzer] S3 DELETE non-ok', res.status, await res.text());
@@ -705,10 +721,11 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
     'image/jpeg';
 
   const s3Key = `lab-analyzer-staging/${jobId}/${job.file_name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-  console.log('[lab-analyzer] Uploading to S3', s3Key, 'bytes:', bytes.byteLength);
-  await s3PutObject(s3Key, bytes, contentType);
 
   try {
+    console.log('[lab-analyzer] Uploading to S3', s3Key, 'bytes:', bytes.byteLength);
+    await s3PutObject(s3Key, bytes, contentType);
+
     console.log('[lab-analyzer] Starting Textract');
     const { blocks, jobId: textractJobId } = await runTextract(s3Key);
     console.log('[lab-analyzer] Textract done, blocks:', blocks.length, 'job:', textractJobId);
@@ -748,7 +765,19 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
     const allSkipped = [...skipped, ...herbsSkipped];
     console.log('[lab-analyzer] Gates fired - blocked:', gates.blocked.length, 'cautioned:', gates.cautioned.length);
 
-    // 4. fan out to lab_markers
+    // 4. fan out to lab_markers. Idempotent on re-run: delete any prior
+    // rows tagged with this job_id before inserting fresh ones, so a
+    // retry doesn't pollute the user's trend graphs with duplicates.
+    const markerSource = `lab_analysis_jobs/${jobId}`;
+    const { error: deletePriorErr } = await sb
+      .from('lab_markers')
+      .delete()
+      .eq('user_id', job.user_id)
+      .eq('source', markerSource);
+    if (deletePriorErr) {
+      console.error('[lab-analyzer] lab_markers delete-prior error', deletePriorErr);
+    }
+
     if (extraction.biomarkers.length > 0) {
       const now = new Date().toISOString();
       const markerRows = extraction.biomarkers.map(b => ({
@@ -761,7 +790,7 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
         optimal_range_low: b.functionalMin,
         optimal_range_high: b.functionalMax,
         collected_at: now,
-        source: `lab_analysis_jobs/${jobId}`,
+        source: markerSource,
       }));
       const { error: markerErr } = await sb.from('lab_markers').insert(markerRows);
       if (markerErr) console.error('[lab-analyzer] lab_markers insert error', markerErr);

@@ -6,8 +6,6 @@ import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { initSentry, Sentry } from '@/lib/sentry';
 
-initSentry();
-
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { HIPAAProvider, useHIPAA } from '@/providers/HIPAAProvider';
 import { SupabaseAuthProvider, useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
@@ -23,6 +21,8 @@ import { HIPAAConsentBanner, BreachAlertBanner } from '@/components/HIPAABanner'
 import AuthScreen from '@/app/auth';
 import SignInScreen from '@/app/signin';
 import Colors from '@/constants/colors';
+
+initSentry();
 
 void SplashScreen.preventAutoHideAsync();
 

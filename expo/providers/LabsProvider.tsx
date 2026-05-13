@@ -556,8 +556,6 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
       console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
 
-      const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
-
       try {
         const { text } = await aiGenerateText({
           model: openaiGateway(OPENAI_MODEL_ID),
@@ -825,12 +823,46 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     saveLatestAnalysisMutation.mutate(analysis);
   }, [saveLatestAnalysisMutation]);
 
+  // Dedup biomarkers across all panels for the "Showing N unique biomarkers"
+  // header. Keeps the most recent reading per name.
+  const allBiomarkers = useMemo<Biomarker[]>(() => {
+    const byName = new Map<string, Biomarker>();
+    const sortedPanels = [...labPanels].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    for (const panel of sortedPanels) {
+      for (const b of panel.biomarkers) {
+        const key = b.name.toLowerCase().trim();
+        if (!byName.has(key)) byName.set(key, b);
+      }
+    }
+    return Array.from(byName.values());
+  }, [labPanels]);
+
+  // Cross-lab synthesis is scaffolded in the UI (app/(tabs)/labs.tsx) but the
+  // LLM-driven pattern detection over multiple panels is not yet wired up.
+  // Stubs keep the UI type-safe until the feature lands. The `as` cast keeps
+  // the union type from collapsing to `null` once read through useMemo.
+  type CrossLabSynthesis = {
+    patterns: string[];
+    narrative: string;
+    panelCount: number;
+    generatedAt: string;
+  };
+  const crossLabSynthesis = null as CrossLabSynthesis | null;
+  const runCrossLabSynthesis = useCallback(async (): Promise<void> => {
+    console.log('[Labs] runCrossLabSynthesis: not yet implemented');
+  }, []);
+
   return useMemo(() => ({
     labPanels,
     latestPanel,
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,
     isLoading: labsQuery.isLoading,
@@ -854,6 +886,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
+    runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,
     labsQuery.isLoading,

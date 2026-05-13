@@ -255,7 +255,13 @@ function evaluateRule(rule: RuleRow, ctx: UserContext): GateHit | null {
       if (ruleSex && ctx.profile.sex && ruleSex !== ctx.profile.sex.toLowerCase()) return null;
 
       // Use the most recent reading for this marker.
-      const reading = ctx.latestLabs.find(l => l.marker_name.toLowerCase().includes(name));
+      // Prefer exact match (case-insensitive) before falling back to substring.
+      // Substring-only matching picked up the wrong marker when the user had
+      // e.g. both "Free Testosterone" and "Testosterone (Total)" rows.
+      const lowered = ctx.latestLabs.map(l => ({ ...l, lname: l.marker_name.toLowerCase() }));
+      const reading = lowered.find(l => l.lname === name)
+        ?? lowered.find(l => l.lname.startsWith(name))
+        ?? lowered.find(l => l.lname.includes(name));
       if (!reading) return null;
 
       const triggered = rule.rule_type === 'biomarker_high'
@@ -663,27 +669,44 @@ Deno.serve(async (req) => {
     console.error('[daily-coach] Failed', err);
     const errorMsg = err instanceof Error ? err.message : String(err);
 
-    if (ctx) {
-      await persistResult(
-        sb, ctx, output ?? {
-          recovery_status: 'yellow',
-          explanation_short: '',
-          explanation_long: '',
-          top_actions: [],
-          training_guidance: '',
-          nutrition_guidance: '',
-          supplement_guidance: '',
-          sleep_guidance: '',
-          stress_guidance: '',
-          supplements_to_skip_today: [],
-          escalation_flag: null,
-        },
-        blocked, cautioned, llmRaw,
-        Date.now() - startedAt,
-        output ? 'partial' : 'failed',
-        errorMsg,
-      );
-    }
+    // Always write an audit row, even when ctx aggregation itself failed.
+    // We need the failure to be observable in coach_run_logs; silent
+    // aggregator crashes are worst-case for debugging.
+    const fallbackCtx: UserContext = ctx ?? {
+      userId,
+      date,
+      profile: { sex: null, age: null, weight: null, goals: null },
+      contraindications: { pregnant: false, nursing: false, medications: [], allergies: [], conditions: [] },
+      clinicalIntake: null,
+      questionnaire: [],
+      latestLabs: [],
+      todayBiometrics: null,
+      recentBiometrics: [],
+      todayNutrition: null,
+      recentNutrition: [],
+      todayMeals: [],
+      todaySymptoms: [],
+      recentSymptoms: [],
+    };
+    await persistResult(
+      sb, fallbackCtx, output ?? {
+        recovery_status: 'yellow',
+        explanation_short: '',
+        explanation_long: '',
+        top_actions: [],
+        training_guidance: '',
+        nutrition_guidance: '',
+        supplement_guidance: '',
+        sleep_guidance: '',
+        stress_guidance: '',
+        supplements_to_skip_today: [],
+        escalation_flag: null,
+      },
+      blocked, cautioned, llmRaw,
+      Date.now() - startedAt,
+      output ? 'partial' : 'failed',
+      errorMsg,
+    );
 
     return new Response(
       JSON.stringify({ status: 'error', error: errorMsg }),

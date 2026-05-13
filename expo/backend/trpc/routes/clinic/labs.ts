@@ -448,7 +448,22 @@ export const labsRouter = createTRPCRouter({
       //        { patientId, storagePath, fileName, fileType }
       let jobId = input.jobId;
 
-      if (!jobId) {
+      if (jobId) {
+        // Re-run path: confirm the job actually belongs to this patient
+        // before invoking. Without this check, a clinician could re-trigger
+        // analysis on another patient's job and overwrite their lab_markers.
+        const { data: existingJob, error: existingErr } = await sb
+          .from('lab_analysis_jobs')
+          .select('user_id')
+          .eq('id', jobId)
+          .maybeSingle();
+        if (existingErr || !existingJob) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Analysis job not found' });
+        }
+        if ((existingJob.user_id as string) !== input.patientId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Job does not belong to that patient' });
+        }
+      } else {
         let storagePath = input.storagePath;
         let fileName = input.fileName;
         let fileType = input.fileType;
@@ -474,6 +489,16 @@ export const labsRouter = createTRPCRouter({
           throw new TRPCError({
             code: 'BAD_REQUEST',
             message: 'Provide one of: jobId, documentId, or (storagePath + fileName + fileType)',
+          });
+        }
+
+        // Direct-input path: enforce that the storage object lives under
+        // the patient's own user_id prefix in lab-pdfs/. Otherwise a
+        // caller could point at another patient's file.
+        if (!storagePath.startsWith(`${input.patientId}/`)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'storagePath must be scoped to the patient (lab-pdfs/<patientId>/...)',
           });
         }
 

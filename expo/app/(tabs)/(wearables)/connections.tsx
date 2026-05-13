@@ -22,6 +22,7 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
+import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   apple_health_kit: 'Apple Health',
@@ -40,7 +41,6 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 function displayName(slug: string): string {
   return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
 }
-import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 export default function ConnectionsScreen() {
   const { connections, hasConnections, isRefreshing } = useWearables();
