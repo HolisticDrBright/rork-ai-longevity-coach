@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
-import { hormoneEntryService } from '@/lib/supabaseService';
+import { hormoneEntryService, symptomLogService } from '@/lib/supabaseService';
 import { supabase } from '@/lib/supabase';
 
 import { HormoneEntry, HormoneSymptom, HormoneGuidance } from '@/types';
@@ -86,6 +86,25 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
             notes: latest.notes ?? null,
             current_supplements_json: latest.currentSupplements as unknown as Record<string, unknown>[] ?? null,
           });
+
+          const loggedAt = `${latest.date}T${new Date().toISOString().slice(11)}`;
+          const nonZeroSymptoms = latest.symptoms.filter(s => s.severity > 0);
+          if (nonZeroSymptoms.length > 0) {
+            console.log('[HormoneProvider] Writing', nonZeroSymptoms.length, 'symptom_logs rows');
+          }
+          await Promise.all(
+            nonZeroSymptoms.map(s => {
+              const symptom = hormoneSymptoms.find(hs => hs.id === s.symptomId);
+              if (!symptom) return Promise.resolve();
+              return symptomLogService.insert({
+                symptom_name: symptom.name,
+                severity: s.severity,
+                logged_at: loggedAt,
+                duration_minutes: null,
+                notes: `Logged from hormone tracker (${symptom.category})`,
+              });
+            }),
+          );
         }
       } catch (e) {
         console.log('[HormoneProvider] Supabase sync failed (non-blocking):', e);

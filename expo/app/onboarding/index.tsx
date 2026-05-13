@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -19,11 +19,13 @@ import { useUser } from '@/providers/UserProvider';
 import { healthGoals } from '@/mocks/questionnaire';
 
 export default function OnboardingProfileScreen() {
-  const { userProfile, updateUserProfile } = useUser();
+  const { userProfile, updateUserProfile, contraindications, updateContraindications } = useUser();
   const [firstName, setFirstName] = useState(userProfile.firstName);
   const [lastName, setLastName] = useState(userProfile.lastName);
   const [email, setEmail] = useState(userProfile.email);
   const [dateOfBirth, setDateOfBirth] = useState(userProfile.dateOfBirth);
+  const [pregnant, setPregnant] = useState(contraindications.pregnant);
+  const [nursing, setNursing] = useState(contraindications.nursing);
 
   const handleDateOfBirthChange = (text: string) => {
     const digits = text.replace(/\D/g, '');
@@ -42,6 +44,13 @@ export default function OnboardingProfileScreen() {
   const [weight, setWeight] = useState(userProfile.weight ? String(userProfile.weight) : '');
   const [selectedGoals, setSelectedGoals] = useState<string[]>(userProfile.goals);
 
+  useEffect(() => {
+    if (sex !== 'female') {
+      if (pregnant) setPregnant(false);
+      if (nursing) setNursing(false);
+    }
+  }, [sex, pregnant, nursing]);
+
   const toggleGoal = (goal: string) => {
     setSelectedGoals(prev =>
       prev.includes(goal) ? prev.filter(g => g !== goal) : [...prev, goal]
@@ -58,6 +67,10 @@ export default function OnboardingProfileScreen() {
       height: parseFloat(height) || 0,
       weight: parseFloat(weight) || 0,
       goals: selectedGoals,
+    });
+    updateContraindications({
+      pregnant: sex === 'female' ? pregnant : false,
+      nursing: sex === 'female' ? nursing : false,
     });
     router.push('/onboarding/lifestyle');
   };
@@ -155,6 +168,33 @@ export default function OnboardingProfileScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {sex === 'female' && (
+              <View style={styles.safetyToggleGroup}>
+                <Text style={styles.label}>Safety flags</Text>
+                <View style={styles.safetyToggleRow}>
+                  <TouchableOpacity
+                    style={[styles.safetyChip, pregnant && styles.safetyChipActive]}
+                    onPress={() => setPregnant(p => !p)}
+                  >
+                    <Text style={[styles.safetyChipText, pregnant && styles.safetyChipTextActive]}>
+                      Currently pregnant
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.safetyChip, nursing && styles.safetyChipActive]}
+                    onPress={() => setNursing(n => !n)}
+                  >
+                    <Text style={[styles.safetyChipText, nursing && styles.safetyChipTextActive]}>
+                      Currently nursing
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.safetyHelpText}>
+                  We use this to block supplements that aren't safe during pregnancy or breastfeeding.
+                </Text>
+              </View>
+            )}
 
             <View style={styles.row}>
               <View style={styles.inputHalf}>
@@ -347,6 +387,40 @@ const styles = StyleSheet.create({
   },
   sexTextActive: {
     color: Colors.textInverse,
+  },
+  safetyToggleGroup: {
+    marginBottom: 16,
+  },
+  safetyToggleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 8,
+  },
+  safetyChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  safetyChipActive: {
+    backgroundColor: Colors.coral,
+    borderColor: Colors.coral,
+  },
+  safetyChipText: {
+    fontSize: 13,
+    fontWeight: '500' as const,
+    color: Colors.textSecondary,
+  },
+  safetyChipTextActive: {
+    color: Colors.textInverse,
+  },
+  safetyHelpText: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    lineHeight: 16,
   },
   goalsGrid: {
     flexDirection: 'row',
