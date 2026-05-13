@@ -183,8 +183,9 @@ async function processJob(admin: SupabaseClient, job: Record<string, unknown>) {
     })
     .eq('id', jobId);
 
-  const enriched = await enrichWithGPT(verbatimBiomarkers);
-  const analysisText = await generateAnalysisNarrative(enriched.biomarkers);
+  const patientCtx = await loadPatientContext(admin, job.user_id as string);
+  const enriched = await enrichWithGPT(verbatimBiomarkers, patientCtx);
+  const analysisText = await generateAnalysisNarrative(enriched.biomarkers, patientCtx);
 
   await admin
     .from('lab_analysis_jobs')
@@ -501,10 +502,12 @@ Return ONLY valid JSON:
 
 The "biomarkers" array MUST contain exactly the same entries (same name/value/unit/referenceMin/referenceMax) as provided, in the same order, only with functionalMin/functionalMax/status added.`;
 
-async function enrichWithGPT(verbatim: VerbatimBiomarker[]): Promise<EnrichmentResult> {
+async function enrichWithGPT(verbatim: VerbatimBiomarker[], patientCtx: PatientContext): Promise<EnrichmentResult> {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY secret is not set on the edge function.');
 
-  const userMessage = `${ENRICHMENT_PROMPT}\n\nVERBATIM BIOMARKERS (do not modify):\n${JSON.stringify(verbatim, null, 2)}`;
+  const gates = computeLabSupplementGates(verbatim, patientCtx);
+  const contextBlock = formatPatientContextForPrompt(patientCtx, gates);
+  const userMessage = `${ENRICHMENT_PROMPT}\n\n${contextBlock}\n\nVERBATIM BIOMARKERS (do not modify):\n${JSON.stringify(verbatim, null, 2)}`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -552,10 +555,21 @@ async function enrichWithGPT(verbatim: VerbatimBiomarker[]): Promise<EnrichmentR
     };
   });
 
+  // Post-filter: enforce safety gates even if the model recommended something blocked.
+  const filterFn = (list: Supplement[]): Supplement[] =>
+    list.filter((s) => !gates.blockedSupplements.has((s.name ?? '').toLowerCase()))
+      .map((s) => {
+        const cautions = gates.cautionSupplements.get((s.name ?? '').toLowerCase());
+        if (cautions?.length) {
+          return { ...s, reason: `${s.reason} | CAUTION: ${cautions.join('; ')}` };
+        }
+        return s;
+      });
+
   return {
     biomarkers: parsed.biomarkers ?? [],
-    supplements: parsed.supplements ?? [],
-    herbs: parsed.herbs ?? [],
+    supplements: filterFn(parsed.supplements ?? []),
+    herbs: filterFn(parsed.herbs ?? []),
     priorityActions: parsed.priorityActions ?? [],
   };
 }
@@ -572,7 +586,7 @@ const ANALYSIS_PROMPT = `You are a world-class functional medicine and longevity
 
 Tone: clear, precise, educational, no fear-mongering.`;
 
-async function generateAnalysisNarrative(biomarkers: EnrichedBiomarker[]): Promise<string> {
+async function generateAnalysisNarrative(biomarkers: EnrichedBiomarker[], patientCtx: PatientContext): Promise<string> {
   if (!OPENAI_API_KEY) return 'Analysis temporarily unavailable.';
   const summary = biomarkers
     .map(
@@ -580,6 +594,8 @@ async function generateAnalysisNarrative(biomarkers: EnrichedBiomarker[]): Promi
         `- ${b.name}: ${b.value} ${b.unit} (ref ${b.referenceMin ?? '?'}-${b.referenceMax ?? '?'}, functional ${b.functionalMin ?? '?'}-${b.functionalMax ?? '?'}) [${b.status}]`
     )
     .join('\n');
+
+  const patientHeader = formatPatientHeaderForNarrative(patientCtx);
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -593,7 +609,7 @@ async function generateAnalysisNarrative(biomarkers: EnrichedBiomarker[]): Promi
         temperature: 0.3,
         messages: [
           { role: 'system', content: ANALYSIS_PROMPT },
-          { role: 'user', content: `Biomarkers:\n${summary}` },
+          { role: 'user', content: `${patientHeader}\n\nBiomarkers:\n${summary}` },
         ],
       }),
     });
@@ -604,4 +620,177 @@ async function generateAnalysisNarrative(biomarkers: EnrichedBiomarker[]): Promi
     console.error('[lab-analyzer] narrative generation failed', e);
     return 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
   }
+}
+
+// ----------------------------------------------------------------------
+// Patient context + contraindication-aware supplement gating
+//
+// Before recommending supplements off labs, we load the patient's profile,
+// pregnancy/nursing status, conditions, medications, and the shared
+// supplement_contraindication_rules table. The full multi-domain coach
+// (symptoms + wearables + nutrition) lives in the daily-coach function;
+// this loader is a lightweight subset so even a one-off lab upload is
+// safety-aware (e.g. won't recommend DHEA when DHEA-S is already high).
+// ----------------------------------------------------------------------
+
+interface PatientContext {
+  sex: 'male' | 'female' | 'other' | null;
+  ageYears: number | null;
+  pregnant: boolean;
+  nursing: boolean;
+  conditions: string[];
+  medications: string[];
+  allergies: string[];
+  rules: ContraindicationRule[];
+}
+
+interface ContraindicationRule {
+  id: string;
+  supplement_name: string;
+  rule_type: string;
+  rule_value: Record<string, unknown>;
+  severity: 'block' | 'caution';
+  reason: string;
+}
+
+interface LabGateOutput {
+  blockedSupplements: Set<string>;
+  cautionSupplements: Map<string, string[]>;
+  notes: string[];
+}
+
+async function loadPatientContext(admin: SupabaseClient, userId: string): Promise<PatientContext> {
+  const [profileR, contraR, rulesR] = await Promise.all([
+    admin.from('profiles').select('sex, birth_date').eq('id', userId).maybeSingle(),
+    admin.from('contraindications').select('*').eq('user_id', userId)
+      .order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.from('supplement_contraindication_rules').select('*').eq('active', true),
+  ]);
+
+  const p = profileR.data;
+  const c = contraR.data as Record<string, unknown> | null;
+  const birth = p?.birth_date as string | null;
+  const ageYears = birth
+    ? Math.floor((Date.now() - new Date(birth).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+    : null;
+
+  return {
+    sex: ((p?.sex as PatientContext['sex']) ?? null),
+    ageYears,
+    pregnant: Boolean(c?.pregnant),
+    nursing: Boolean(c?.nursing),
+    conditions: (c?.conditions as string[] | null) ?? [],
+    medications: (c?.medications as string[] | null) ?? [],
+    allergies: (c?.allergies as string[] | null) ?? [],
+    rules: (rulesR.data ?? []) as ContraindicationRule[],
+  };
+}
+
+function computeLabSupplementGates(
+  biomarkers: VerbatimBiomarker[],
+  ctx: PatientContext,
+): LabGateOutput {
+  const blocked = new Set<string>();
+  const caution = new Map<string, string[]>();
+  const notes: string[] = [];
+
+  for (const rule of ctx.rules) {
+    if (!ruleAppliesToLabContext(rule, biomarkers, ctx)) continue;
+    const key = rule.supplement_name.toLowerCase();
+    if (rule.severity === 'block') {
+      blocked.add(key);
+      notes.push(`BLOCK ${rule.supplement_name}: ${rule.reason}`);
+    } else {
+      if (!caution.has(key)) caution.set(key, []);
+      caution.get(key)!.push(rule.reason);
+      notes.push(`CAUTION ${rule.supplement_name}: ${rule.reason}`);
+    }
+  }
+
+  return { blockedSupplements: blocked, cautionSupplements: caution, notes };
+}
+
+function ruleAppliesToLabContext(
+  rule: ContraindicationRule,
+  biomarkers: VerbatimBiomarker[],
+  ctx: PatientContext,
+): boolean {
+  switch (rule.rule_type) {
+    case 'pregnancy': return ctx.pregnant;
+    case 'nursing': return ctx.nursing;
+    case 'sex': {
+      const target = String(rule.rule_value.sex ?? '').toLowerCase();
+      return ctx.sex === target;
+    }
+    case 'age': {
+      if (ctx.ageYears === null) return false;
+      const max = Number(rule.rule_value.max_age ?? Infinity);
+      const min = Number(rule.rule_value.min_age ?? 0);
+      return ctx.ageYears < max && ctx.ageYears >= min;
+    }
+    case 'condition': {
+      const target = String(rule.rule_value.condition ?? '').toLowerCase();
+      return ctx.conditions.some((c) => c.toLowerCase().includes(target));
+    }
+    case 'medication': {
+      const list = (rule.rule_value.contains as string[] | undefined) ?? [];
+      const meds = ctx.medications.map((m) => m.toLowerCase());
+      return list.some((n) => meds.some((m) => m.includes(n.toLowerCase())));
+    }
+    case 'biomarker_high': {
+      const name = String(rule.rule_value.name ?? '').toLowerCase();
+      const threshold = Number(rule.rule_value.threshold ?? Infinity);
+      const requiredSex = rule.rule_value.sex ? String(rule.rule_value.sex).toLowerCase() : null;
+      if (requiredSex && ctx.sex !== requiredSex) return false;
+      const bio = biomarkers.find((b) => b.name.toLowerCase().includes(name));
+      return bio ? bio.value > threshold : false;
+    }
+    case 'biomarker_low': {
+      const name = String(rule.rule_value.name ?? '').toLowerCase();
+      const threshold = Number(rule.rule_value.threshold ?? -Infinity);
+      const bio = biomarkers.find((b) => b.name.toLowerCase().includes(name));
+      return bio ? bio.value < threshold : false;
+    }
+    case 'symptom_pattern':
+      // Lab-only path has no symptom data — daily-coach evaluates these.
+      return false;
+    default:
+      return false;
+  }
+}
+
+function formatPatientContextForPrompt(ctx: PatientContext, gates: LabGateOutput): string {
+  const lines = [
+    'PATIENT CONTEXT (consider before recommending supplements):',
+    `- Sex: ${ctx.sex ?? 'unknown'}`,
+    `- Age: ${ctx.ageYears !== null ? `${ctx.ageYears} years` : 'unknown'}`,
+    `- Pregnant: ${ctx.pregnant ? 'YES' : 'no'}`,
+    `- Nursing: ${ctx.nursing ? 'YES' : 'no'}`,
+    `- Active conditions: ${ctx.conditions.length ? ctx.conditions.join(', ') : 'none reported'}`,
+    `- Current medications: ${ctx.medications.length ? ctx.medications.join(', ') : 'none reported'}`,
+    `- Allergies: ${ctx.allergies.length ? ctx.allergies.join(', ') : 'none reported'}`,
+  ];
+
+  if (gates.blockedSupplements.size > 0) {
+    lines.push('', 'STRICTLY BLOCKED supplements (do NOT recommend, do NOT mention positively):');
+    for (const s of gates.blockedSupplements) lines.push(`  - ${s}`);
+  }
+  if (gates.cautionSupplements.size > 0) {
+    lines.push('', 'CAUTION supplements (only with explicit warning in the reason field):');
+    for (const [s, reasons] of gates.cautionSupplements) {
+      lines.push(`  - ${s}: ${reasons.join('; ')}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function formatPatientHeaderForNarrative(ctx: PatientContext): string {
+  const parts: string[] = ['PATIENT BACKGROUND:'];
+  parts.push(`- ${ctx.sex ?? 'unknown sex'}, ${ctx.ageYears !== null ? `${ctx.ageYears} y/o` : 'age unknown'}`);
+  if (ctx.pregnant) parts.push('- PREGNANT — adjust recommendations accordingly');
+  if (ctx.nursing) parts.push('- NURSING — adjust recommendations accordingly');
+  if (ctx.conditions.length) parts.push(`- Conditions: ${ctx.conditions.join(', ')}`);
+  if (ctx.medications.length) parts.push(`- Medications: ${ctx.medications.join(', ')}`);
+  return parts.join('\n');
 }
