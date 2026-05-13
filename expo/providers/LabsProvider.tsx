@@ -5,14 +5,22 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
-import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
 import { createGateway, generateText as aiGenerateText, generateObject as aiGenerateObject } from 'ai';
 import { z } from 'zod';
-import axios from "axios";
+
+import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
+import { writeAuditLog } from '@/lib/auditLog';
+import { recordAccessPattern } from '@/lib/breachDetection';
+import { sendLabsAnalyzed, sendLabUploadStarted } from '@/lib/webhooks';
+import { labPanelService } from '@/lib/supabaseService';
+import { supabase } from '@/lib/supabase';
+import { analyzeLabFile, type LabAnalysisJobStatus } from '@/lib/labAnalyzerClient';
+
+import { LabPanel, Biomarker, LabAnalysis } from '@/types';
+import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
 
 const TOOLKIT_URL = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 const SECRET_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY;
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 
 const openaiGateway = createGateway({
   baseURL: `${TOOLKIT_URL}/v2/vercel/v3/ai`,
@@ -20,262 +28,10 @@ const openaiGateway = createGateway({
 });
 
 const OPENAI_MODEL_ID = 'openai/gpt-5-mini' as const;
-const OPENAI_DIRECT_MODEL = 'gpt-4.1' as const;
 
-async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<string> {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-  console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
-
-  if (Platform.OS !== 'web') {
-    const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: 'application/pdf',
-      parameters: { purpose: 'user_data' },
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    });
-    if (result.status < 200 || result.status >= 300) {
-      console.log('[Labs] OpenAI upload failed:', result.status, result.body);
-      throw new Error(`OpenAI file upload failed (${result.status}).`);
-    }
-    console.log('[Labs] OpenAI upload response:', result.body);
-    const json = JSON.parse(result.body) as { id: string };
-    console.log('[Labs] OpenAI file uploaded, id:', json.id);
-    return json.id;
-    // const formData = new FormData();
-
-    // formData.append('file', {
-    //   uri: fileUri,
-    //   name: 'file.pdf',
-    //   type: 'application/pdf',
-    // });
-
-    // formData.append('purpose', 'user_data');
-
-    // const response = await fetch('https://api.openai.com/v1/files', {
-    //   method: 'POST',
-    //   headers: {
-    //     Authorization: `Bearer ${OPENAI_API_KEY}`,
-    //     // 'Content-Type': 'multipart/form-data',
-    //   },
-    //   body: formData,
-    // });
-
-    // const result = await response.json();
-
-    // if (!response.ok) {
-    //   console.log('Upload failed:', result);
-    //   throw new Error('Upload failed');
-    // }
-
-    // console.log('Uploaded file ID:', result.id);
-    // return result.id;
-
-    // try {
-
-    //   const info = await FileSystem.getInfoAsync(fileUri);
-    //   console.log("✅ File exists. Size:", info.exists, "bytes");
-    //   // STEP 1: Convert file → blob (CRITICAL FIX)
-
-
-    //   // STEP 2: Create form data
-
-    //   console.log(fileUri)
-    //   const formdata = new FormData();
-    //   formdata.append('file', {
-    //     uri: fileUri,
-    //     name: 'file.pdf',
-    //     type: 'application/pdf',
-    //   });
-
-
-    //   formdata.append("purpose", "user_data");
-
-    //   // STEP 3: Upload
-    //   const response = await fetch("https://api.openai.com/v1/files", {
-    //     method: "POST",
-    //     headers: {
-          
-    //       Authorization: `Bearer ${OPENAI_API_KEY}`,
-    //       "Content-Type": 'multipart/form-data',
-    //     },
-    //     body: formdata,
-    //   });
-
-    //   const result = await response.json();
-
-    //   if (!response.ok) {
-    //     console.log("Upload failed:", result);
-    //     throw new Error("Upload failed");
-    //   }
-
-    //   console.log("Uploaded file ID:", result.id);
-    //   return result.id;
-    // } catch (err) {
-    //   console.log("ERROR:", err);
-    //   console.log("❌ UPLOAD FAILED FULL ERROR:");
-    //   console.log("Message:", err?.message);
-    //   console.log("Stack:", err?.stack);
-    //   console.log("Raw:", err);
-    //   throw err;
-    // }
-
-
-
-  }
-
-  const response = await fetch(fileUri);
-  const blob = await response.blob();
-  const formData = new FormData();
-  formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
-  formData.append('purpose', 'user_data');
-  const res = await fetch('https://api.openai.com/v1/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    console.log('[Labs] OpenAI web upload failed:', res.status, t);
-    throw new Error(`OpenAI file upload failed (${res.status}).`);
-  }
-  const json = (await res.json()) as { id: string };
-  console.log('[Labs] OpenAI file uploaded (web), id:', json.id);
-  return json.id;
-}
-
-// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-//   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-//   const body: Record<string, unknown> = {
-//     model: OPENAI_DIRECT_MODEL,
-//     messages: [
-//       {
-//         role: 'user',
-//         content: [
-//           { type: 'file', file: { file_id: fileId } },
-//           { type: 'text', text: prompt },
-//         ],
-//       },
-//     ],
-//   };
-//   if (expectJson) {
-//     body.response_format = { type: 'json_object' };
-//   }
-//   const res = await fetch('https://api.openai.com/v1/chat/completions', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify(body),
-//   });
-//   if (!res.ok) {
-//     const t = await res.text();
-//     console.log('[Labs] OpenAI chat call failed:', res.status, t);
-//     throw new Error(`OpenAI request failed (${res.status}).`);
-//   }
-//   const json = (await res.json()) as { choices: { message: { content: string } }[] };
-//   return json.choices[0]?.message?.content ?? '';
-// }
-
-// async function callOpenAIWithFile(fileId: string, prompt: string) {
-//   const res = await fetch('https://api.openai.com/v1/responses', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify({
-//       model: 'gpt-4.1',
-//       input: [
-//         {
-//           role: 'user',
-//           content: [
-//             { type: 'input_file', file_id: fileId },
-//             { type: 'input_text', text: prompt },
-//           ],
-//         },
-//       ],
-//     }),
-//   });
-
-//   const json = await res.json();
-
-//   if (!res.ok) {
-//     throw new Error(json.error?.message || 'OpenAI request failed');
-//   }
-
-//   return json.output?.[0]?.content?.[0]?.text ?? '';
-// }
-
-async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-  const body: Record<string, unknown> = {
-    model: OPENAI_DIRECT_MODEL,
-    temperature: 0,
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a meticulous medical data extractor. When reading lab PDFs you transcribe numbers VERBATIM from the document. Never round, never infer, never substitute. If a value is unclear, omit it rather than guess. Match each numeric value to the row label and unit it appears on in the PDF.',
-      },
-      {
-        role: 'user',
-        content: [
-          { type: 'file', file: { file_id: fileId } },
-          { type: 'text', text: prompt },
-        ],
-      },
-    ],
-  };
-
-  if (expectJson) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const t = await res.text();
-    console.log('[Labs] OpenAI chat call failed:', res.status, t);
-    throw new Error(`OpenAI request failed (${res.status}).`);
-  }
-
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  return json.choices?.[0]?.message?.content ?? '';
-}
-
-async function deleteOpenAIFile(fileId: string): Promise<void> {
-  if (!OPENAI_API_KEY) return;
-  try {
-    await fetch(`https://api.openai.com/v1/files/${fileId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    });
-    console.log('[Labs] Cleaned up OpenAI file:', fileId);
-  } catch (e) {
-    console.log('[Labs] Cleanup of OpenAI file failed (non-blocking):', e);
-  }
-}
-void generateText;
-void generateObject;
-import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
-import { writeAuditLog } from '@/lib/auditLog';
-import { recordAccessPattern } from '@/lib/breachDetection';
-import { sendLabsAnalyzed, sendLabUploadStarted } from '@/lib/webhooks';
-import { labPanelService } from '@/lib/supabaseService';
-import { supabase } from '@/lib/supabase';
-
-import { LabPanel, Biomarker, LabAnalysis } from '@/types';
-import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
+// PDF parsing is handled server-side by the lab-analyzer edge function
+// (AWS Textract -> OpenAI -> safety gate filtering). Image branches still
+// use OpenAI vision directly via the openaiGateway above.
 
 export interface SupplementRecommendation {
   name: string;
@@ -656,150 +412,97 @@ Also provide:
 
 Be thorough and extract every biomarker visible in the document. Base ALL recommendations on the patient's actual biomarker values — not generic advice.`;
 
-      let openaiFileId: string | null = null;
-
       if (isPdf) {
-        console.log('[Labs] PDF detected — uploading directly to OpenAI Files API');
+        // PDF path: server-side pipeline (Storage -> AWS Textract -> OpenAI ->
+        // safety-gate filtering). The edge function writes the result back
+        // to lab_analysis_jobs; the client polls until done.
+        console.log('[Labs] PDF detected — invoking lab-analyzer edge function');
         try {
-          openaiFileId = await uploadPdfToOpenAI(fileUri, fileName ?? 'lab-results.pdf');
-        } catch (uploadErr) {
-          console.log(uploadErr)
-          const msg = uploadErr instanceof Error ? uploadErr.message : '';
-          console.log('[Labs] OpenAI PDF upload failed:', msg);
-          throw new Error(
-            'Could not upload this PDF for analysis. Please check your connection and try again.'
-          );
-        }
+          const result = await analyzeLabFile({
+            fileUri,
+            fileName: fileName ?? 'lab-results.pdf',
+            mimeType: 'application/pdf',
+            onProgress: (status: LabAnalysisJobStatus) =>
+              console.log('[Labs] lab-analyzer status:', status),
+          });
 
-        try {
-          // PASS 1 — strict VERBATIM extraction of biomarker values from the PDF.
-          // No recommendations, no status inference, no catalogs — just the numbers as printed.
-          const verbatimExtractionPrompt = `You are reading a clinical lab PDF. Transcribe EVERY biomarker / analyte row VERBATIM from the document.
-
-RULES — read carefully:
-1. Copy the numeric value EXACTLY as printed in the PDF. Do NOT round. Do NOT convert units. Do NOT substitute values from memory or general knowledge.
-2. Match each value to the SAME ROW as its label and unit. Never pull a number from another row.
-3. If the PDF shows "<0.1" or ">100" treat the number after the operator as the value.
-4. Copy the reference range EXACTLY as printed (e.g. "70-99" → referenceMin 70, referenceMax 99). If only one bound is printed, set the other to null.
-5. If a value is illegible or missing, OMIT that biomarker entirely. Do NOT guess.
-6. Do NOT invent biomarkers that are not in the PDF.
-7. Use the marker name as printed (e.g. "Glucose, Fasting", "Hemoglobin A1c", "TSH, 3rd Generation").
-
-Return ONLY valid JSON with this exact shape:
-{
-  "biomarkers": [
-    {
-      "name": string,
-      "value": number,
-      "unit": string,
-      "referenceMin": number|null,
-      "referenceMax": number|null
-    }
-  ]
-}`;
-
-          const verbatimJson = await callOpenAIWithFile(openaiFileId, verbatimExtractionPrompt, true);
-          console.log('[Labs] Verbatim extraction raw:', verbatimJson.slice(0, 500));
-          const verbatimParsed = JSON.parse(verbatimJson) as {
-            biomarkers?: { name: string; value: number; unit: string; referenceMin: number | null; referenceMax: number | null }[];
-          };
-          const verbatimBiomarkers = (verbatimParsed.biomarkers ?? []).filter(
-            (b) => typeof b?.value === 'number' && Number.isFinite(b.value) && typeof b?.name === 'string' && b.name.trim().length > 0
-          );
-
-          if (verbatimBiomarkers.length === 0) {
-            throw new Error('PDF_UNREADABLE');
-          }
-
-          // PASS 2 — enrich the verbatim values with functional ranges, status, supplements, herbs.
-          // The model MUST NOT change the numeric values or reference ranges from pass 1.
-          const enrichmentPrompt = `${extractionPrompt}
-
-The biomarker values below were transcribed VERBATIM from the patient's lab PDF. You MUST preserve every value, unit, and reference range EXACTLY as given. Do not change, round, or replace any number. Only add functionalMin, functionalMax, and status — and produce the supplements / herbs / priorityActions arrays based on these values.
-
-VERBATIM BIOMARKERS (do not modify):
-${JSON.stringify(verbatimBiomarkers, null, 2)}
-
-Return ONLY valid JSON with this exact shape:
-{
-  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],
-  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
-  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
-  "priorityActions": [string]
-}
-
-The "biomarkers" array MUST contain exactly the same entries (same name/value/unit/referenceMin/referenceMax) as the verbatim list above, in the same order, only with functionalMin/functionalMax/status added.`;
-
-          const jsonText = await callOpenAIWithFile(openaiFileId, enrichmentPrompt, true);
-          console.log('[Labs] Enrichment raw length:', jsonText.length);
-          const parsed = JSON.parse(jsonText) as { biomarkers?: unknown[] } & Record<string, unknown>;
-
-          // Safety: if the enrichment pass drifted any values, force-restore the verbatim numbers.
-          if (Array.isArray(parsed.biomarkers)) {
-            const byName = new Map(verbatimBiomarkers.map((b) => [b.name.toLowerCase().trim(), b]));
-            parsed.biomarkers = (parsed.biomarkers as Record<string, unknown>[]).map((b) => {
-              const key = typeof b.name === 'string' ? b.name.toLowerCase().trim() : '';
-              const truth = byName.get(key);
-              if (truth) {
-                return {
-                  ...b,
-                  name: truth.name,
-                  value: truth.value,
-                  unit: truth.unit,
-                  referenceMin: truth.referenceMin,
-                  referenceMax: truth.referenceMax,
-                };
-              }
-              return b;
-            });
-          }
-
-          extractedData = labExtractionSchema.parse(parsed);
-          console.log('[Labs] OpenAI direct PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
-
-          if (extractedData.biomarkers.length === 0) {
-            throw new Error('PDF_UNREADABLE');
-          }
-        } catch (pdfError) {
-          const msg = pdfError instanceof Error ? pdfError.message : '';
-          if (openaiFileId) void deleteOpenAIFile(openaiFileId);
-          if (msg === 'PDF_UNREADABLE') {
+          if (result.biomarkers.length === 0) {
             throw new Error(
-              'We couldn\'t extract biomarkers from this PDF. The file may be a scan without selectable text — try uploading a digital PDF or screenshots of the results pages.'
+              "We couldn't extract biomarkers from this PDF. The file may be a scan without selectable text — try uploading a digital PDF or screenshots of the results pages."
             );
           }
-          console.log('[Labs] OpenAI direct PDF extraction failed:', msg);
+
+          const biomarkers: Biomarker[] = result.biomarkers.map((b, index) => ({
+            id: `bio_${Date.now()}_${index}`,
+            name: b.name,
+            value: b.value,
+            unit: b.unit,
+            referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
+            functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
+            status: b.status,
+            date: new Date().toISOString(),
+          }));
+          const supplementsWithLinks: SupplementRecommendation[] = result.supplements.map(supp => ({
+            ...supp,
+            affiliateLink: findAffiliateLink(supp.name),
+          }));
+          const herbsWithLinks: SupplementRecommendation[] = result.herbs.map(herb => ({
+            ...herb,
+            affiliateLink: findAffiliateLink(herb.name),
+          }));
+          const analysis: LabAnalysis = {
+            id: `analysis_${Date.now()}`,
+            panelId: panelId || '',
+            date: new Date().toISOString(),
+            summary: result.analysisText,
+            status: 'completed',
+          };
+          return {
+            analysis,
+            biomarkers,
+            supplements: supplementsWithLinks,
+            herbs: herbsWithLinks,
+            priorityActions: result.priorityActions,
+          };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.log('[Labs] lab-analyzer failed:', msg);
+          // Surface server-side error messages directly so the user sees the
+          // real reason (e.g. "Textract extracted no text" -> bad scan).
+          if (msg.includes('Textract') || msg.includes('biomarker') || msg.includes('scan')) {
+            throw new Error(msg);
+          }
           throw new Error(
             'Failed to analyze this PDF. Please try again or upload screenshots of the results pages.'
           );
         }
-      } else {
-        // Image file — send directly to OpenAI vision
-        const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
+      }
 
-        console.log('[Labs] Extracting biomarkers from image via OpenAI gpt-5-mini...');
+      // Image path — send directly to OpenAI vision
+      const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
 
-        try {
-          const { object } = await aiGenerateObject({
-            model: openaiGateway(OPENAI_MODEL_ID),
-            schema: labExtractionSchema,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: extractionPrompt },
-                  { type: 'image', image: imageDataUrl },
-                ],
-              },
-            ],
-          });
-          extractedData = object;
-          console.log('[Labs] Image extraction complete');
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log('[Labs] Extraction error occurred:', errorMessage);
-          extractionError = errorMessage;
-        }
+      console.log('[Labs] Extracting biomarkers from image via OpenAI gpt-5-mini...');
+
+      try {
+        const { object } = await aiGenerateObject({
+          model: openaiGateway(OPENAI_MODEL_ID),
+          schema: labExtractionSchema,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: extractionPrompt },
+                { type: 'image', image: imageDataUrl },
+              ],
+            },
+          ],
+        });
+        extractedData = object;
+        console.log('[Labs] Image extraction complete');
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.log('[Labs] Extraction error occurred:', errorMessage);
+        extractionError = errorMessage;
       }
 
       if (extractedData.biomarkers.length === 0 && extractionError) {
@@ -809,50 +512,6 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
 
       let analysisText = '';
 
-      if (isPdf && openaiFileId) {
-        console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
-        try {
-          analysisText = await callOpenAIWithFile(openaiFileId, labAnalysisPrompt, false);
-        } catch (e) {
-          console.log('[Labs] PDF analysis generation failed:', e);
-          analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
-        }
-        void deleteOpenAIFile(openaiFileId);
-        openaiFileId = null;
-
-        const biomarkers: Biomarker[] = extractedData.biomarkers.map((b, index) => ({
-          id: `bio_${Date.now()}_${index}`,
-          name: b.name,
-          value: b.value,
-          unit: b.unit,
-          referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
-          functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
-          status: b.status,
-          date: new Date().toISOString(),
-        }));
-        const supplementsWithLinks: SupplementRecommendation[] = extractedData.supplements.map(supp => ({
-          ...supp,
-          affiliateLink: findAffiliateLink(supp.name),
-        }));
-        const herbsWithLinks: SupplementRecommendation[] = extractedData.herbs.map(herb => ({
-          ...herb,
-          affiliateLink: findAffiliateLink(herb.name),
-        }));
-        const analysis: LabAnalysis = {
-          id: `analysis_${Date.now()}`,
-          panelId: panelId || '',
-          date: new Date().toISOString(),
-          summary: analysisText,
-          status: 'completed',
-        };
-        return {
-          analysis,
-          biomarkers,
-          supplements: supplementsWithLinks,
-          herbs: herbsWithLinks,
-          priorityActions: extractedData.priorityActions,
-        };
-      }
 
       const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
 

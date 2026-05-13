@@ -426,6 +426,88 @@ export const labsRouter = createTRPCRouter({
     return Array.from(categories).sort();
   }),
 
+  triggerLabAnalysis: protectedProcedure
+    .input(
+      z.object({
+        patientId: z.string(),
+        documentId: z.string().optional(),
+        jobId: z.string().optional(),
+        storagePath: z.string().optional(),
+        fileName: z.string().optional(),
+        fileType: z.enum(['pdf', 'jpg', 'png']).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }): Promise<{ jobId: string; status: string }> => {
+      console.log('[Labs] Triggering lab analysis');
+      const sb = createServerSupabaseClient(ctx.sessionToken);
+
+      // Three callsites:
+      //   1. Re-run an existing job:        { patientId, jobId }
+      //   2. Convert a clinic_lab_documents row to a job: { patientId, documentId }
+      //   3. Direct input (e.g. file already in lab-pdfs/<patientId>/...):
+      //        { patientId, storagePath, fileName, fileType }
+      let jobId = input.jobId;
+
+      if (!jobId) {
+        let storagePath = input.storagePath;
+        let fileName = input.fileName;
+        let fileType = input.fileType;
+
+        if (input.documentId) {
+          const { data: doc, error: docErr } = await sb
+            .from('clinic_lab_documents')
+            .select('storage_path, file_name, file_type, patient_id')
+            .eq('id', input.documentId)
+            .maybeSingle();
+          if (docErr || !doc) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Lab document not found' });
+          }
+          if ((doc.patient_id as string) !== input.patientId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Document does not belong to that patient' });
+          }
+          storagePath = doc.storage_path as string;
+          fileName = doc.file_name as string;
+          fileType = doc.file_type as 'pdf' | 'jpg' | 'png';
+        }
+
+        if (!storagePath || !fileName || !fileType) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Provide one of: jobId, documentId, or (storagePath + fileName + fileType)',
+          });
+        }
+
+        const { data: job, error: jobErr } = await sb
+          .from('lab_analysis_jobs')
+          .insert({
+            user_id: input.patientId,
+            storage_path: storagePath,
+            file_name: fileName,
+            file_type: fileType,
+            status: 'pending',
+          })
+          .select('id')
+          .single();
+
+        if (jobErr || !job) {
+          console.log('[Labs] Failed to create lab_analysis_jobs row:', jobErr?.message);
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create analysis job' });
+        }
+        jobId = job.id as string;
+      }
+
+      // Fire-and-forget the edge function. The job row is the source of truth;
+      // the clinic UI polls lab_analysis_jobs the same way the patient app does.
+      const { error: invokeErr } = await sb.functions.invoke('lab-analyzer', {
+        body: { job_id: jobId },
+      });
+      if (invokeErr) {
+        console.log('[Labs] lab-analyzer invoke returned error (job may still complete):', invokeErr.message);
+      }
+
+      return { jobId: jobId!, status: 'invoked' };
+    }),
+
   getPatientLabSummary: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(
