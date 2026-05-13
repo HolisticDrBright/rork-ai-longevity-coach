@@ -62,8 +62,13 @@ create policy "coach_run_logs_owner_select"
 -- ============================================================
 -- 3. Indexes the daily-coach aggregator depends on
 -- ============================================================
--- Note: lab_analysis_jobs index removed - table does not exist in current schema.
--- Add it back once that table is created.
+-- Labs are stored in lab_markers (per-biomarker) and lab_panels (per-upload),
+-- not lab_analysis_jobs. Index both for "latest labs per user" lookups.
+create index if not exists lab_markers_user_collected_idx
+  on public.lab_markers(user_id, collected_at desc);
+
+create index if not exists lab_panels_user_date_idx
+  on public.lab_panels(user_id, date desc);
 
 create index if not exists symptom_logs_user_logged_idx
   on public.symptom_logs(user_id, logged_at desc);
