@@ -257,6 +257,18 @@ Deno.serve(async (req) => {
 
   console.log(`[Rollup] ${userId}/${date}: ${events.length} events → merged (quality=${dataQualityScore}%)`);
 
+  // Fan out the analytical pipeline. Fire-and-forget so this response
+  // doesn't block on downstream cold starts. Each function logs its own
+  // errors and persists its own audit data.
+  void fetch(`${SUPABASE_URL}/functions/v1/compute-baselines`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ userId, date }),
+  }).catch(e => console.error('[Rollup] compute-baselines fan-out failed', e));
+
   return new Response(
     JSON.stringify({
       status: 'ok',

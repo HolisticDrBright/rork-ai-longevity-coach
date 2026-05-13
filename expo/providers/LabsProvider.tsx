@@ -839,19 +839,39 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     return Array.from(byName.values());
   }, [labPanels]);
 
-  // Cross-lab synthesis is scaffolded in the UI (app/(tabs)/labs.tsx) but the
-  // LLM-driven pattern detection over multiple panels is not yet wired up.
-  // Stubs keep the UI type-safe until the feature lands. The `as` cast keeps
-  // the union type from collapsing to `null` once read through useMemo.
+  // Cross-lab synthesis: invokes the cross-lab-synthesis edge function which
+  // groups all of the user's lab_markers by panel, asks an LLM to spot
+  // cross-test patterns (HPA dysregulation, gut-systemic inflammation, etc.),
+  // and returns patterns + narrative. Cached client-side; re-run on demand.
   type CrossLabSynthesis = {
     patterns: string[];
     narrative: string;
     panelCount: number;
     generatedAt: string;
   };
-  const crossLabSynthesis = null as CrossLabSynthesis | null;
+  const [crossLabSynthesis, setCrossLabSynthesis] = useState<CrossLabSynthesis | null>(null);
   const runCrossLabSynthesis = useCallback(async (): Promise<void> => {
-    console.log('[Labs] runCrossLabSynthesis: not yet implemented');
+    console.log('[Labs] Invoking cross-lab-synthesis edge function');
+    try {
+      const { data, error } = await supabase.functions.invoke('cross-lab-synthesis', { body: {} });
+      if (error) {
+        console.log('[Labs] cross-lab-synthesis invoke error:', error.message);
+        return;
+      }
+      const result = data as { status?: string; panelCount?: number; patterns?: string[]; narrative?: string; generatedAt?: string } | null;
+      if (!result || result.status !== 'ok') {
+        console.log('[Labs] cross-lab-synthesis returned non-ok status:', result?.status);
+        return;
+      }
+      setCrossLabSynthesis({
+        patterns: result.patterns ?? [],
+        narrative: result.narrative ?? '',
+        panelCount: result.panelCount ?? 0,
+        generatedAt: result.generatedAt ?? new Date().toISOString(),
+      });
+    } catch (e) {
+      console.log('[Labs] cross-lab-synthesis call failed:', e);
+    }
   }, []);
 
   return useMemo(() => ({

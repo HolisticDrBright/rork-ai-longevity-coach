@@ -504,6 +504,47 @@ function flattenTextract(blocks: TextractBlock[]): { text: string; tables: strin
 // OpenAI enrichment
 // ────────────────────────────────────────────────────────────
 
+interface PriorMarker {
+  marker_name: string;
+  marker_value: number;
+  unit: string;
+  collected_at: string;
+}
+
+async function fetchPriorMarkers(
+  sb: ReturnType<typeof createClient>,
+  userId: string,
+  currentJobId: string,
+): Promise<PriorMarker[]> {
+  // Pull the user's last 200 lab markers from prior uploads (anything not
+  // sourced from this job). For each marker_name we keep the most recent
+  // reading so the LLM sees a clean "prior value" baseline to compare against.
+  const { data, error } = await sb
+    .from('lab_markers')
+    .select('marker_name, marker_value, unit, collected_at, source')
+    .eq('user_id', userId)
+    .neq('source', `lab_analysis_jobs/${currentJobId}`)
+    .order('collected_at', { ascending: false })
+    .limit(200);
+  if (error) {
+    console.error('[lab-analyzer] fetchPriorMarkers failed', error);
+    return [];
+  }
+  const byName = new Map<string, PriorMarker>();
+  for (const r of (data as Array<{ marker_name: string; marker_value: number; unit: string; collected_at: string }>) ?? []) {
+    const key = r.marker_name.toLowerCase().trim();
+    if (!byName.has(key)) {
+      byName.set(key, {
+        marker_name: r.marker_name,
+        marker_value: r.marker_value,
+        unit: r.unit,
+        collected_at: r.collected_at,
+      });
+    }
+  }
+  return Array.from(byName.values());
+}
+
 const EXTRACTION_SYSTEM_PROMPT = `You are a meticulous medical data extractor and functional-medicine clinician.
 
 You receive raw OCR text and table-cell grids from a clinical lab report. Your job is to:
@@ -511,6 +552,12 @@ You receive raw OCR text and table-cell grids from a clinical lab report. Your j
 2. Classify each value's status into "optimal" / "normal" / "suboptimal" / "critical" using functional-medicine optimal ranges (not just the lab's reference range).
 3. Generate supplement and herb recommendations grounded in the specific biomarker values shown.
 4. Generate a longevity-oriented clinical narrative.
+
+WHEN PRIOR VALUES ARE PROVIDED:
+You will see a "PRIOR VALUES" block listing the user's most recent reading for each marker that has appeared in earlier labs.
+- Open the analysisText with a "PROGRESS SINCE LAST LAB" section that lists, by marker, what improved (toward functional optimal) and what worsened (away from functional optimal). Quote both numbers explicitly: "TSH 1.8 → 2.4 mIU/L (worsening; pushing toward suboptimal)".
+- When recommending supplements, prefer to continue what was clearly working and adjust or replace what isn't moving the needle.
+- Do NOT invent prior values that aren't in the PRIOR VALUES block. If a marker has no prior value, simply analyze it on its own.
 
 PRIORITIZE these specific products when conditions match:
 - ProOmega 2000 (Nordic Naturals): omega-3, EPA/DHA, inflammation, triglycerides
@@ -547,13 +594,18 @@ Return STRICT JSON matching this schema:
 }
 
 The analysisText should be a multi-section narrative covering:
+0. Progress since last lab (only if PRIOR VALUES were provided)
 1. Big-picture summary (top priorities)
 2. Pattern recognition
 3. Marker-by-marker analysis for the abnormal markers
 4. Root-cause action plan (diet, lifestyle, supplements, detox/gut)
 5. Top 3 things to fix first`;
 
-async function callOpenAI(textractText: string, textractTables: string[][][]): Promise<ExtractionOutput> {
+async function callOpenAI(
+  textractText: string,
+  textractTables: string[][][],
+  priorMarkers: PriorMarker[],
+): Promise<ExtractionOutput> {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
 
   const tablesPretty = textractTables.length === 0
@@ -563,6 +615,12 @@ async function callOpenAI(textractText: string, textractTables: string[][][]): P
         return `TABLE ${i + 1}:\n${rows.join('\n')}`;
       }).join('\n\n');
 
+  const priorPretty = priorMarkers.length === 0
+    ? '(no prior labs - this appears to be the first upload)'
+    : priorMarkers
+        .map(p => `- ${p.marker_name}: ${p.marker_value} ${p.unit} (collected ${p.collected_at.slice(0, 10)})`)
+        .join('\n');
+
   const userPrompt = `LAB REPORT — TEXTRACT OCR OUTPUT
 
 RAW TEXT (line-by-line):
@@ -571,7 +629,10 @@ ${textractText}
 RECONSTRUCTED TABLES:
 ${tablesPretty}
 
-Extract every biomarker as instructed and return strict JSON.`;
+PRIOR VALUES (most recent reading per marker from earlier uploads):
+${priorPretty}
+
+Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES are provided, open the analysisText with a "PROGRESS SINCE LAST LAB" section comparing the new readings to the prior ones marker-by-marker.`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -740,8 +801,12 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
       textract_raw_json: { job_id: textractJobId, block_count: blocks.length, table_count: tables.length },
     });
 
+    console.log('[lab-analyzer] Fetching prior markers for trend context');
+    const priorMarkers = await fetchPriorMarkers(sb, job.user_id, jobId);
+    console.log('[lab-analyzer] Prior markers found:', priorMarkers.length);
+
     console.log('[lab-analyzer] Calling OpenAI');
-    const extraction = await callOpenAI(text, tables);
+    const extraction = await callOpenAI(text, tables, priorMarkers);
     console.log('[lab-analyzer] OpenAI extracted', extraction.biomarkers.length, 'biomarkers');
 
     // 3. safety gates

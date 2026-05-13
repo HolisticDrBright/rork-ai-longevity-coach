@@ -127,6 +127,13 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
             tags_json: null,
             notes: latest.notes ?? null,
           });
+
+          // Trigger the daily rollup so daily_nutrition_rollups stays in
+          // sync. Fire-and-forget; don't block the user-facing flow.
+          const date = (latest.createdAt ?? new Date().toISOString()).slice(0, 10);
+          void supabase.functions
+            .invoke('rollup-nutrition', { body: { userId: session.user.id, date } })
+            .catch(e => console.log('[NutritionProvider] rollup-nutrition invoke failed (non-blocking):', e));
         }
       } catch (e) {
         console.log('[NutritionProvider] Supabase sync failed (non-blocking):', e);
