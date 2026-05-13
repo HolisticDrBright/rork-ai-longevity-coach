@@ -16,3 +16,4 @@ node_modules/
 
 # EAS config (if you don't want to track it)
 eas.json
+.rork

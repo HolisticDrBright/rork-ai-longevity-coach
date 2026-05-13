@@ -132,8 +132,7 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   const blob = await response.blob();
   const formData = new FormData();
   formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
-  // formData.append('purpose', 'user_data');
-  formData.append('purpose', 'assistants');
+  formData.append('purpose', 'user_data');
   const res = await fetch('https://api.openai.com/v1/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
@@ -250,57 +249,6 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
 
 async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-
-  // Use the Responses API — better file reading accuracy than Chat Completions
-  // for dense tabular PDFs. Falls back to Chat Completions if Responses fails.
-  try {
-    const responsesBody: Record<string, unknown> = {
-      model: OPENAI_DIRECT_MODEL,
-      temperature: 0,
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_file',
-              file_id: fileId,
-            },
-            {
-              type: 'input_text',
-              text: prompt,
-            },
-          ],
-        },
-      ],
-    };
-
-    if (expectJson) {
-      responsesBody.text = { format: { type: 'json_object' } };
-    }
-
-    const res = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(responsesBody),
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      const text = json.output?.[0]?.content?.[0]?.text
-        ?? json.output?.find?.((o: any) => o.type === 'message')?.content?.[0]?.text
-        ?? '';
-      if (text) return text;
-    }
-
-    console.log('[Labs] Responses API failed or empty, falling back to Chat Completions');
-  } catch (e) {
-    console.log('[Labs] Responses API error, falling back:', e);
-  }
-
-  // Fallback: Chat Completions with file attachment
   const body: Record<string, unknown> = {
     model: OPENAI_DIRECT_MODEL,
     temperature: 0,
@@ -762,13 +710,88 @@ Be thorough and extract every biomarker visible in the document. Base ALL recomm
         }
 
         try {
-          const jsonText = await callOpenAIWithFile(
-            openaiFileId,
-            `${extractionPrompt}\n\nReturn ONLY valid JSON with this exact shape:\n{\n  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],\n  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],\n  "priorityActions": [string]\n}`,
-            true
+          // PASS 1 — strict VERBATIM extraction of biomarker values from the PDF.
+          // No recommendations, no status inference, no catalogs — just the numbers as printed.
+          const verbatimExtractionPrompt = `You are reading a clinical lab PDF. Transcribe EVERY biomarker / analyte row VERBATIM from the document.
+
+RULES — read carefully:
+1. Copy the numeric value EXACTLY as printed in the PDF. Do NOT round. Do NOT convert units. Do NOT substitute values from memory or general knowledge.
+2. Match each value to the SAME ROW as its label and unit. Never pull a number from another row.
+3. If the PDF shows "<0.1" or ">100" treat the number after the operator as the value.
+4. Copy the reference range EXACTLY as printed (e.g. "70-99" → referenceMin 70, referenceMax 99). If only one bound is printed, set the other to null.
+5. If a value is illegible or missing, OMIT that biomarker entirely. Do NOT guess.
+6. Do NOT invent biomarkers that are not in the PDF.
+7. Use the marker name as printed (e.g. "Glucose, Fasting", "Hemoglobin A1c", "TSH, 3rd Generation").
+
+Return ONLY valid JSON with this exact shape:
+{
+  "biomarkers": [
+    {
+      "name": string,
+      "value": number,
+      "unit": string,
+      "referenceMin": number|null,
+      "referenceMax": number|null
+    }
+  ]
+}`;
+
+          const verbatimJson = await callOpenAIWithFile(openaiFileId, verbatimExtractionPrompt, true);
+          console.log('[Labs] Verbatim extraction raw:', verbatimJson.slice(0, 500));
+          const verbatimParsed = JSON.parse(verbatimJson) as {
+            biomarkers?: { name: string; value: number; unit: string; referenceMin: number | null; referenceMax: number | null }[];
+          };
+          const verbatimBiomarkers = (verbatimParsed.biomarkers ?? []).filter(
+            (b) => typeof b?.value === 'number' && Number.isFinite(b.value) && typeof b?.name === 'string' && b.name.trim().length > 0
           );
-          console.log(jsonText)
-          const parsed = JSON.parse(jsonText) as unknown;
+
+          if (verbatimBiomarkers.length === 0) {
+            throw new Error('PDF_UNREADABLE');
+          }
+
+          // PASS 2 — enrich the verbatim values with functional ranges, status, supplements, herbs.
+          // The model MUST NOT change the numeric values or reference ranges from pass 1.
+          const enrichmentPrompt = `${extractionPrompt}
+
+The biomarker values below were transcribed VERBATIM from the patient's lab PDF. You MUST preserve every value, unit, and reference range EXACTLY as given. Do not change, round, or replace any number. Only add functionalMin, functionalMax, and status — and produce the supplements / herbs / priorityActions arrays based on these values.
+
+VERBATIM BIOMARKERS (do not modify):
+${JSON.stringify(verbatimBiomarkers, null, 2)}
+
+Return ONLY valid JSON with this exact shape:
+{
+  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],
+  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
+  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
+  "priorityActions": [string]
+}
+
+The "biomarkers" array MUST contain exactly the same entries (same name/value/unit/referenceMin/referenceMax) as the verbatim list above, in the same order, only with functionalMin/functionalMax/status added.`;
+
+          const jsonText = await callOpenAIWithFile(openaiFileId, enrichmentPrompt, true);
+          console.log('[Labs] Enrichment raw length:', jsonText.length);
+          const parsed = JSON.parse(jsonText) as { biomarkers?: unknown[] } & Record<string, unknown>;
+
+          // Safety: if the enrichment pass drifted any values, force-restore the verbatim numbers.
+          if (Array.isArray(parsed.biomarkers)) {
+            const byName = new Map(verbatimBiomarkers.map((b) => [b.name.toLowerCase().trim(), b]));
+            parsed.biomarkers = (parsed.biomarkers as Record<string, unknown>[]).map((b) => {
+              const key = typeof b.name === 'string' ? b.name.toLowerCase().trim() : '';
+              const truth = byName.get(key);
+              if (truth) {
+                return {
+                  ...b,
+                  name: truth.name,
+                  value: truth.value,
+                  unit: truth.unit,
+                  referenceMin: truth.referenceMin,
+                  referenceMax: truth.referenceMax,
+                };
+              }
+              return b;
+            });
+          }
+
           extractedData = labExtractionSchema.parse(parsed);
           console.log('[Labs] OpenAI direct PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
 
