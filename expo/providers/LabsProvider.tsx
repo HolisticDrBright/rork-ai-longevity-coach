@@ -27,14 +27,17 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
   console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
 
   if (Platform.OS !== 'web') {
+
+    console.log('[Labs] Reading file for upload (mobile)...', fileUri,fileName);
     const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
       mimeType: 'application/pdf',
-      parameters: { purpose: 'assistants' },
+      parameters: { purpose: 'user_data' },
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     });
+
     if (result.status < 200 || result.status >= 300) {
       console.log('[Labs] OpenAI upload failed:', result.status, result.body);
       throw new Error(`OpenAI file upload failed (${result.status}).`);
@@ -210,26 +213,121 @@ async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<str
 //   return json.output?.[0]?.content?.[0]?.text ?? '';
 // }
 
+// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+//   const body: Record<string, unknown> = {
+//     model: OPENAI_DIRECT_MODEL,
+//     messages: [
+//       {
+//         role: "user",
+//         content: `File ID: ${fileId}\n\n${prompt}`
+
+//       }
+//     ],
+//   };
+
+//   if (expectJson) {
+//     body.response_format = { type: "json_object" };
+//   }
+
+//   const res = await fetch("https://api.openai.com/v1/chat/completions", {
+//     method: "POST",
+//     headers: {
+//       "Content-Type": "application/json",
+//       Authorization: `Bearer ${OPENAI_API_KEY}`,
+//     },
+//     body: JSON.stringify(body),
+//   });
+
+//   if (!res.ok) {
+//     const t = await res.text();
+//     console.log("[Labs] OpenAI chat call failed:", res.status, t);
+//     throw new Error(`OpenAI request failed (${res.status}).`);
+//   }
+
+//   const json = await res.json();
+//   return json.choices?.[0]?.message?.content ?? "";
+// }
+
 async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
+
+  // Use the Responses API — better file reading accuracy than Chat Completions
+  // for dense tabular PDFs. Falls back to Chat Completions if Responses fails.
+  try {
+    const responsesBody: Record<string, unknown> = {
+      model: OPENAI_DIRECT_MODEL,
+      temperature: 0,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              file_id: fileId,
+            },
+            {
+              type: 'input_text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    };
+
+    if (expectJson) {
+      responsesBody.text = { format: { type: 'json_object' } };
+    }
+
+    const res = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(responsesBody),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const text = json.output?.[0]?.content?.[0]?.text
+        ?? json.output?.find?.((o: any) => o.type === 'message')?.content?.[0]?.text
+        ?? '';
+      if (text) return text;
+    }
+
+    console.log('[Labs] Responses API failed or empty, falling back to Chat Completions');
+  } catch (e) {
+    console.log('[Labs] Responses API error, falling back:', e);
+  }
+
+  // Fallback: Chat Completions with file attachment
   const body: Record<string, unknown> = {
     model: OPENAI_DIRECT_MODEL,
+    temperature: 0,
     messages: [
       {
-        role: "user",
-        content: `File ID: ${fileId}\n\n${prompt}`
-
-      }
+        role: 'system',
+        content:
+          'You are a meticulous medical data extractor. When reading lab PDFs you transcribe numbers VERBATIM from the document. Never round, never infer, never substitute. If a value is unclear, omit it rather than guess. Match each numeric value to the row label and unit it appears on in the PDF.',
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'file', file: { file_id: fileId } },
+          { type: 'text', text: prompt },
+        ],
+      },
     ],
   };
 
   if (expectJson) {
-    body.response_format = { type: "json_object" };
+    body.response_format = { type: 'json_object' };
   }
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify(body),
@@ -237,12 +335,12 @@ async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: bo
 
   if (!res.ok) {
     const t = await res.text();
-    console.log("[Labs] OpenAI chat call failed:", res.status, t);
+    console.log('[Labs] OpenAI chat call failed:', res.status, t);
     throw new Error(`OpenAI request failed (${res.status}).`);
   }
 
-  const json = await res.json();
-  return json.choices?.[0]?.message?.content ?? "";
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return json.choices?.[0]?.message?.content ?? '';
 }
 
 async function deleteOpenAIFile(fileId: string): Promise<void> {

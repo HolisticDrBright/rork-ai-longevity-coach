@@ -23,6 +23,7 @@ import { HIPAAConsentBanner, BreachAlertBanner } from '@/components/HIPAABanner'
 import AuthScreen from '@/app/auth';
 import SignInScreen from '@/app/signin';
 import Colors from '@/constants/colors';
+import NetworkLog from '../lib/networkLogger';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -40,6 +41,7 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+     
       <Stack.Screen
         name="modal"
         options={{
