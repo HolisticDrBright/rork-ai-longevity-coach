@@ -19,11 +19,13 @@ import { useUser } from '@/providers/UserProvider';
 import { healthGoals } from '@/mocks/questionnaire';
 
 export default function OnboardingProfileScreen() {
-  const { userProfile, updateUserProfile } = useUser();
+  const { userProfile, contraindications, updateUserProfile, updateContraindications } = useUser();
   const [firstName, setFirstName] = useState(userProfile.firstName);
   const [lastName, setLastName] = useState(userProfile.lastName);
   const [email, setEmail] = useState(userProfile.email);
   const [dateOfBirth, setDateOfBirth] = useState(userProfile.dateOfBirth);
+  const [pregnant, setPregnant] = useState<boolean>(contraindications?.pregnant ?? false);
+  const [nursing, setNursing] = useState<boolean>(contraindications?.nursing ?? false);
 
   const handleDateOfBirthChange = (text: string) => {
     const digits = text.replace(/\D/g, '');
@@ -58,6 +60,13 @@ export default function OnboardingProfileScreen() {
       height: parseFloat(height) || 0,
       weight: parseFloat(weight) || 0,
       goals: selectedGoals,
+    });
+    // Save pregnancy/nursing into contraindications so the daily-coach
+    // safety gates pick it up. Only meaningful for sex === 'female';
+    // force-false for male/other to avoid stale data after a sex change.
+    updateContraindications({
+      pregnant: sex === 'female' ? pregnant : false,
+      nursing: sex === 'female' ? nursing : false,
     });
     router.push('/onboarding/lifestyle');
   };
@@ -155,6 +164,33 @@ export default function OnboardingProfileScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {sex === 'female' && (
+              <View style={styles.contraSection}>
+                <Text style={styles.label}>Are you currently pregnant or nursing?</Text>
+                <Text style={styles.contraSubtext}>
+                  Used to block contraindicated supplement recommendations.
+                </Text>
+                <View style={styles.contraRow}>
+                  <TouchableOpacity
+                    style={[styles.contraChip, pregnant && styles.contraChipActive]}
+                    onPress={() => setPregnant(p => !p)}
+                  >
+                    <Text style={[styles.contraText, pregnant && styles.contraTextActive]}>
+                      Pregnant
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.contraChip, nursing && styles.contraChipActive]}
+                    onPress={() => setNursing(n => !n)}
+                  >
+                    <Text style={[styles.contraText, nursing && styles.contraTextActive]}>
+                      Nursing / Breastfeeding
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             <View style={styles.row}>
               <View style={styles.inputHalf}>
@@ -346,6 +382,40 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   sexTextActive: {
+    color: Colors.textInverse,
+  },
+  contraSection: {
+    marginBottom: 16,
+  },
+  contraSubtext: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginTop: -4,
+    marginBottom: 10,
+  },
+  contraRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  contraChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  contraChipActive: {
+    backgroundColor: Colors.coral,
+    borderColor: Colors.coral,
+  },
+  contraText: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: Colors.textSecondary,
+  },
+  contraTextActive: {
     color: Colors.textInverse,
   },
   goalsGrid: {

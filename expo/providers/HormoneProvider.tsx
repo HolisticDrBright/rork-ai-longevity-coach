@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
-import { hormoneEntryService } from '@/lib/supabaseService';
+import { hormoneEntryService, symptomLogService } from '@/lib/supabaseService';
 import { supabase } from '@/lib/supabase';
 
 import { HormoneEntry, HormoneSymptom, HormoneGuidance } from '@/types';
@@ -86,6 +86,27 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
             notes: latest.notes ?? null,
             current_supplements_json: latest.currentSupplements as unknown as Record<string, unknown>[] ?? null,
           });
+
+          // Fan symptoms out to symptom_logs so the daily-coach aggregator
+          // can see them alongside other domains. Append-only — we don't
+          // dedupe across entries; the coach computes averages.
+          const loggedAt = new Date().toISOString();
+          for (const s of latest.symptoms) {
+            if (!s.severity || s.severity <= 0) continue;
+            const meta = hormoneSymptoms.find(hs => hs.id === s.symptomId);
+            if (!meta) continue;
+            try {
+              await symptomLogService.insert({
+                symptom_name: meta.name,
+                severity: s.severity,
+                logged_at: loggedAt,
+                duration_minutes: null,
+                notes: latest.notes ?? null,
+              });
+            } catch (innerErr) {
+              console.log('[HormoneProvider] symptom_logs insert failed (non-blocking):', innerErr);
+            }
+          }
         }
       } catch (e) {
         console.log('[HormoneProvider] Supabase sync failed (non-blocking):', e);

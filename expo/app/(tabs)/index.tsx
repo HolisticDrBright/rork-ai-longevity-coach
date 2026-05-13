@@ -6,11 +6,13 @@ import {
   ScrollView,
   TouchableOpacity,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { useQuery } from '@tanstack/react-query';
 import {
   Sun,
   Moon,
@@ -22,6 +24,8 @@ import {
   ChevronRight,
   TrendingUp,
   AlertTriangle,
+  Sparkles,
+  XCircle,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
@@ -30,6 +34,7 @@ import { useProtocol } from '@/providers/ProtocolProvider';
 import { useLabs } from '@/providers/LabsProvider';
 import { TodayAction } from '@/types';
 import { CategoryScore } from '@/types';
+import { fetchOrGenerateDailyCoach } from '@/lib/dailyCoachClient';
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -41,6 +46,17 @@ const getGreeting = () => {
 const getTimeIcon = () => {
   const hour = new Date().getHours();
   return hour >= 6 && hour < 18 ? Sun : Moon;
+};
+
+const recoveryBadgeStyle = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'good':
+      return { backgroundColor: 'rgba(16, 185, 129, 0.25)' };
+    case 'poor':
+      return { backgroundColor: 'rgba(239, 68, 68, 0.25)' };
+    default:
+      return { backgroundColor: 'rgba(245, 158, 11, 0.25)' };
+  }
 };
 
 const getActionIcon = (type: TodayAction['type']) => {
@@ -62,6 +78,17 @@ export default function TodayScreen() {
   const { userProfile, questionnaireResponses, categoryScores, isLoading: userLoading, isClinician } = useUser();
   const { todayActions, adherencePercentage, weeklyAdherenceStats, toggleActionComplete, isLoading: protocolLoading } = useProtocol();
   const { flaggedBiomarkers } = useLabs();
+
+  const coachQuery = useQuery({
+    queryKey: ['dailyCoach', new Date().toISOString().slice(0, 10)],
+    queryFn: async () => {
+      const result = await fetchOrGenerateDailyCoach();
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: !userLoading && userProfile.onboardingCompleted && !isClinician,
+    staleTime: 1000 * 60 * 30,
+  });
 
   const progressAnim = useRef(new Animated.Value(0)).current;
 
@@ -144,6 +171,77 @@ export default function TodayScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <TouchableOpacity
+          style={styles.coachCard}
+          onPress={() => router.push('/(tabs)/insights' as any)}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={['#0F172A', '#1E293B']}
+            style={styles.coachGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.coachHeader}>
+              <View style={styles.coachIconContainer}>
+                <Sparkles color={Colors.accent} size={20} />
+              </View>
+              <Text style={styles.coachTitle}>Today's AI Coach</Text>
+              {coachQuery.data?.recovery_status ? (
+                <View style={[styles.coachStatus, recoveryBadgeStyle(coachQuery.data.recovery_status)]}>
+                  <Text style={styles.coachStatusText}>
+                    {coachQuery.data.recovery_status.toUpperCase()}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {coachQuery.isLoading ? (
+              <View style={styles.coachLoadingRow}>
+                <ActivityIndicator color={Colors.accent} />
+                <Text style={styles.coachLoadingText}>Analyzing your labs, symptoms, and today's data…</Text>
+              </View>
+            ) : coachQuery.isError ? (
+              <Text style={styles.coachErrorText}>
+                Couldn't generate today's recommendation. {coachQuery.error instanceof Error ? coachQuery.error.message : ''}
+              </Text>
+            ) : coachQuery.data ? (
+              <>
+                <Text style={styles.coachShortText}>
+                  {coachQuery.data.explanation_short || 'Tap to view your full plan for today.'}
+                </Text>
+                {coachQuery.data.top_actions.length > 0 && (
+                  <View style={styles.coachActions}>
+                    {coachQuery.data.top_actions.slice(0, 3).map((a, i) => (
+                      <View key={i} style={styles.coachActionRow}>
+                        <View style={styles.coachActionBullet}><Text style={styles.coachActionBulletText}>{i + 1}</Text></View>
+                        <Text style={styles.coachActionText} numberOfLines={2}>{a}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {coachQuery.data.supplements_to_skip_today.length > 0 && (
+                  <View style={styles.coachSkipBox}>
+                    <View style={styles.coachSkipHeader}>
+                      <XCircle color={Colors.coral} size={14} />
+                      <Text style={styles.coachSkipTitle}>Skip today</Text>
+                    </View>
+                    {coachQuery.data.supplements_to_skip_today.slice(0, 3).map((s, i) => (
+                      <Text key={i} style={styles.coachSkipItem} numberOfLines={2}>
+                        • {s.name} — {s.reason}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+              </>
+            ) : (
+              <Text style={styles.coachShortText}>
+                Complete your intake and lab uploads to unlock daily recommendations.
+              </Text>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
+
         {questionnaireResponses.length > 0 && (
           <TouchableOpacity
             style={styles.insightsCard}
@@ -605,5 +703,120 @@ const styles = StyleSheet.create({
   insightsSubtitle: {
     fontSize: 13,
     color: 'rgba(255,255,255,0.8)',
+  },
+  coachCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  coachGradient: {
+    padding: 18,
+  },
+  coachHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  coachIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coachTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: Colors.textInverse,
+  },
+  coachStatus: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  coachStatusText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: Colors.textInverse,
+    letterSpacing: 0.5,
+  },
+  coachLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  coachLoadingText: {
+    flex: 1,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+  },
+  coachErrorText: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+  },
+  coachShortText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.92)',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  coachActions: {
+    gap: 8,
+    marginBottom: 4,
+  },
+  coachActionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  coachActionBullet: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  coachActionBulletText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: Colors.textInverse,
+  },
+  coachActionText: {
+    flex: 1,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.88)',
+    lineHeight: 18,
+  },
+  coachSkipBox: {
+    marginTop: 12,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderRadius: 10,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.coral,
+  },
+  coachSkipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  coachSkipTitle: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: Colors.coral,
+    letterSpacing: 0.4,
+  },
+  coachSkipItem: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.88)',
+    lineHeight: 16,
+    marginBottom: 2,
   },
 });
