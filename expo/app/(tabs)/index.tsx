@@ -32,6 +32,7 @@ import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useLabs } from '@/providers/LabsProvider';
+import { useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
 import { TodayAction , CategoryScore } from '@/types';
 import { fetchOrGenerateDailyCoach, type DailyCoachResult } from '@/lib/dailyCoachClient';
 
@@ -162,6 +163,7 @@ export default function TodayScreen() {
   const { userProfile, questionnaireResponses, categoryScores, isLoading: userLoading, isClinician } = useUser();
   const { todayActions, adherencePercentage, weeklyAdherenceStats, toggleActionComplete, isLoading: protocolLoading } = useProtocol();
   const { flaggedBiomarkers } = useLabs();
+  const { session } = useSupabaseAuth();
 
   const coachQuery = useQuery<DailyCoachResult | null>({
     queryKey: ['dailyCoach', new Date().toISOString().slice(0, 10)],
@@ -181,9 +183,19 @@ export default function TodayScreen() {
       return;
     }
     if (!userProfile.onboardingCompleted) {
+      // Defensive: if the user has an active Supabase session, they're not a
+      // brand-new user. Holding off on the redirect prevents long-running
+      // operations (lab PDF upload) from kicking them to /onboarding on a
+      // transient AsyncStorage / hydration glitch. UserProvider has a
+      // separate everOnboardedRef guard that will re-hydrate onboardingCompleted
+      // correctly on the next merge cycle.
+      if (session) {
+        console.warn('[TodayScreen] onboardingCompleted=false but session is active; skipping redirect');
+        return;
+      }
       router.replace('/onboarding' as any);
     }
-  }, [userProfile.onboardingCompleted, userLoading, isClinician]);
+  }, [userProfile.onboardingCompleted, userLoading, isClinician, session]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {

@@ -289,21 +289,18 @@ export default function LabsScreen() {
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       console.log('[Labs UI] Starting analysis for:', uploadedDocument.name);
-      
+
       const result = await analyzeLab({
         fileUri: uploadedDocument.uri,
         mimeType: uploadedDocument.mimeType,
         fileName: uploadedDocument.name,
         panelId: pendingPanelId || undefined,
       });
-      
+
       console.log('[Labs UI] Analysis completed, biomarkers:', result.biomarkers.length);
       setAnalysisResult(result);
-      
-      if (result.biomarkers.length > 0) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setShowAnalysisModal(true);
-      } else {
+
+      if (result.biomarkers.length === 0) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         Alert.alert(
           'No Biomarkers Found',
@@ -314,11 +311,60 @@ export default function LabsScreen() {
             { text: 'Cancel', style: 'cancel' },
           ]
         );
+        return;
+      }
+
+      // Auto-save the lab panel on successful analysis. Previously we showed
+      // a separate confirmation modal which made users tap "Save" again before
+      // anything persisted - that extra step was confusing ("it finished but
+      // nothing happened") and prone to state loss on long uploads.
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const panelName = labName.trim() || `Lab Results ${new Date().toLocaleDateString()}`;
+      setLabName(panelName);
+
+      console.log('[Labs UI] Auto-saving panel with', result.biomarkers.length, 'biomarkers');
+      const savedPanelId = await saveLabWithBiomarkers(result.biomarkers);
+      if (!savedPanelId) return;
+
+      try {
+        await saveLatestAnalysis({
+          panelId: savedPanelId,
+          generatedAt: new Date().toISOString(),
+          supplements: result.supplements,
+          herbs: result.herbs,
+          priorityActions: result.priorityActions,
+          flaggedBiomarkerNames: result.biomarkers
+            .filter(b => b.status === 'suboptimal' || b.status === 'critical')
+            .map(b => b.name),
+        });
+      } catch (err) {
+        console.log('[Labs UI] Failed to save latest analysis (non-blocking):', err);
+      }
+
+      if (result.supplements.length > 0 || result.herbs.length > 0) {
+        sendLabsWebhook(
+          userProfile?.id || 'unknown',
+          userProfile?.email || '',
+          'comprehensive_panel',
+          [...result.supplements, ...result.herbs],
+        );
+      }
+
+      // Keep the analysis modal as an optional review screen for users who
+      // want to see the breakdown immediately - but the panel is already
+      // saved, so dismissing the modal doesn't lose anything.
+      setShowAnalysisModal(true);
+
+      // Kick off cross-lab synthesis in the background once the user has
+      // 2+ panels - doesn't block the modal.
+      const totalPanels = labPanels.length + 1;
+      if (totalPanels >= 2) {
+        void runCrossLabSynthesis();
       }
     } catch (error) {
       console.error('[Labs UI] Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unable to analyze the lab document.';
-      
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         'Analysis Failed',

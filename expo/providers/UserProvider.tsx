@@ -116,9 +116,25 @@ export const [UserProvider, useUser] = createContextHook(() => {
   });
 
   const pendingRoleAppliedRef = useRef<boolean>(false);
+  // Tracks whether onboardingCompleted has ever been observed as true during
+  // this session. Once true, we refuse to silently downgrade it back to false -
+  // long-running operations (large PDF uploads) can pressure AsyncStorage and
+  // cause secureGetJSON to transiently return null, which would otherwise kick
+  // the user back to onboarding mid-session.
+  const everOnboardedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (userQuery.data) setUserProfile(userQuery.data);
+    if (userQuery.data) {
+      // Guard: if local query returns a default-like profile (onboardingCompleted=false)
+      // but we've previously seen the user as onboarded, restore that.
+      if (!userQuery.data.onboardingCompleted && everOnboardedRef.current) {
+        console.warn('[UserProvider] Local query returned onboardingCompleted=false but session has seen true; keeping true');
+        setUserProfile({ ...userQuery.data, onboardingCompleted: true });
+        return;
+      }
+      if (userQuery.data.onboardingCompleted) everOnboardedRef.current = true;
+      setUserProfile(userQuery.data);
+    }
   }, [userQuery.data]);
 
   const supabaseProfileQuery = useQuery({
@@ -182,6 +198,15 @@ export const [UserProvider, useUser] = createContextHook(() => {
         // Never downgrade onboarding once it's been completed locally or remotely.
         onboardingCompleted: Boolean(r.onboarding_completed) || Boolean(localBase.onboardingCompleted),
       };
+      // Defensive: never downgrade onboardingCompleted once true. Both local
+      // and remote can transiently report false (storage glitch, profile row
+      // not yet synced, etc.) - those should never push an already-onboarded
+      // user back to the onboarding flow.
+      if (everOnboardedRef.current && !merged.onboardingCompleted) {
+        merged.onboardingCompleted = true;
+      }
+      if (merged.onboardingCompleted) everOnboardedRef.current = true;
+
       const changed =
         merged.onboardingCompleted !== localBase.onboardingCompleted ||
         merged.id !== localBase.id ||

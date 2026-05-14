@@ -652,6 +652,12 @@ Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES ar
       model: OPENAI_MODEL,
       response_format: { type: 'json_object' },
       temperature: 0,
+      // Explicit max - gpt-4o-mini supports up to 16384 output tokens.
+      // Long labs with 80+ biomarkers + supplements + narrative can easily
+      // exceed the default 4096, causing JSON to be truncated mid-response
+      // and the parser to either throw or yield only the first ~15-20
+      // biomarkers.
+      max_tokens: 16384,
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
@@ -666,9 +672,30 @@ Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES ar
 
   const json = await res.json();
   const content = json?.choices?.[0]?.message?.content;
+  const finishReason = json?.choices?.[0]?.finish_reason;
   if (!content) throw new Error('OpenAI returned no content');
 
-  const parsed = JSON.parse(content) as Partial<ExtractionOutput>;
+  // If the response was truncated, log and try to salvage what we have.
+  // OpenAI sets finish_reason='length' when it stopped at max_tokens.
+  if (finishReason === 'length') {
+    console.warn('[lab-analyzer] OpenAI response truncated (finish_reason=length). Attempting partial salvage.');
+  }
+
+  let parsed: Partial<ExtractionOutput>;
+  try {
+    parsed = JSON.parse(content) as Partial<ExtractionOutput>;
+  } catch (parseErr) {
+    // Salvage attempt: find the last complete biomarker entry by trimming
+    // back to a valid JSON close. If truncation cut us off mid-string,
+    // we lose the tail but keep what we can.
+    console.error('[lab-analyzer] JSON parse failed, attempting salvage', parseErr);
+    const salvaged = trySalvagePartialJson(content);
+    if (!salvaged) {
+      throw new Error('OpenAI returned invalid JSON and salvage failed. Original error: ' + (parseErr instanceof Error ? parseErr.message : String(parseErr)));
+    }
+    parsed = salvaged;
+  }
+
   return {
     biomarkers: (parsed.biomarkers ?? []).filter(b => Number.isFinite(b?.value) && typeof b?.name === 'string'),
     supplements: parsed.supplements ?? [],
@@ -676,6 +703,46 @@ Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES ar
     priorityActions: parsed.priorityActions ?? [],
     analysisText: parsed.analysisText ?? '',
   };
+}
+
+// Last-resort recovery from a truncated JSON response. Tries to find the last
+// complete biomarker object inside `"biomarkers": [...]` and rebuild a
+// minimally-valid object. Returns null if it can't make sense of the input.
+function trySalvagePartialJson(content: string): Partial<ExtractionOutput> | null {
+  const startIdx = content.indexOf('"biomarkers"');
+  if (startIdx < 0) return null;
+  const arrayStart = content.indexOf('[', startIdx);
+  if (arrayStart < 0) return null;
+
+  // Walk forward, balancing braces/brackets, tracking the last position
+  // immediately after a complete object inside the array.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let lastGoodEnd = -1;
+  for (let i = arrayStart; i < content.length; i++) {
+    const ch = content[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) lastGoodEnd = i + 1;
+    } else if (ch === ']' && depth === 0) {
+      lastGoodEnd = i + 1;
+      break;
+    }
+  }
+  if (lastGoodEnd < 0) return null;
+
+  const repaired = content.slice(0, lastGoodEnd) + ']}';
+  try {
+    return JSON.parse(repaired) as Partial<ExtractionOutput>;
+  } catch {
+    return null;
+  }
 }
 
 // ────────────────────────────────────────────────────────────
