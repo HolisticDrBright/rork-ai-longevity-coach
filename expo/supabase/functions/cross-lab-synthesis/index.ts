@@ -286,14 +286,52 @@ Deno.serve(async (req) => {
     console.log(`[cross-lab-synthesis] ${userId}: ${groups.length} panels, ${markers.length} markers`);
 
     const llmOutput = await callLLM(groups);
+    const generatedAt = new Date().toISOString();
+
+    // Summarise each panel so the persisted row is self-contained (UI doesn't
+    // need to re-resolve job IDs to render the history).
+    const panelsSummary = groups.map(g => ({
+      jobId: g.jobId,
+      fileName: g.fileName,
+      panelType: g.panelType,
+      collectedAt: g.collectedAt,
+      markerCount: g.markers.length,
+    }));
+
+    // Persist to lab_synthesis_results so the client can hydrate from DB
+    // instead of re-running OpenAI on every app open.
+    const { data: insertedRow, error: insertErr } = await sb
+      .from('lab_synthesis_results')
+      .insert({
+        user_id: userId,
+        generated_at: generatedAt,
+        panel_count: groups.length,
+        panels_summary_json: panelsSummary,
+        patterns_json: llmOutput.patterns,
+        narrative: llmOutput.narrative,
+        model_used: OPENAI_MODEL,
+      })
+      .select('id')
+      .single();
+
+    if (insertErr) {
+      // Don't fail the request - the client still gets the synthesis in the
+      // response body. We just won't have a persisted record.
+      console.error('[cross-lab-synthesis] insert failed (non-blocking)', insertErr);
+    } else {
+      console.log('[cross-lab-synthesis] persisted as', (insertedRow as { id: string } | null)?.id);
+    }
 
     return new Response(
       JSON.stringify({
         status: 'ok',
+        id: (insertedRow as { id: string } | null)?.id ?? null,
         panelCount: groups.length,
+        panels: panelsSummary,
         patterns: llmOutput.patterns,
         narrative: llmOutput.narrative,
-        generatedAt: new Date().toISOString(),
+        generatedAt,
+        modelUsed: OPENAI_MODEL,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );

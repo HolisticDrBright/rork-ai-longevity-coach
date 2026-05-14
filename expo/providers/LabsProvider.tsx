@@ -890,37 +890,97 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
   // Cross-lab synthesis: invokes the cross-lab-synthesis edge function which
   // groups all of the user's lab_markers by panel, asks an LLM to spot
   // cross-test patterns (HPA dysregulation, gut-systemic inflammation, etc.),
-  // and returns patterns + narrative. Cached client-side; re-run on demand.
+  // and returns patterns + narrative. Persisted to lab_synthesis_results so
+  // the client hydrates from DB on app load instead of re-running OpenAI.
+  type SynthesisPanelSummary = {
+    jobId: string;
+    fileName: string;
+    panelType: string;
+    collectedAt: string;
+    markerCount?: number;
+  };
   type CrossLabSynthesis = {
+    id: string | null;
     patterns: string[];
     narrative: string;
     panelCount: number;
+    panels: SynthesisPanelSummary[];
     generatedAt: string;
+    modelUsed: string | null;
   };
-  const [crossLabSynthesis, setCrossLabSynthesis] = useState<CrossLabSynthesis | null>(null);
+
+  const synthesisHistoryQuery = useQuery({
+    queryKey: ['crossLabSynthesisHistory'],
+    queryFn: async (): Promise<CrossLabSynthesis[]> => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return [];
+      const { data, error } = await supabase
+        .from('lab_synthesis_results')
+        .select('id, generated_at, panel_count, panels_summary_json, patterns_json, narrative, model_used')
+        .eq('user_id', session.user.id)
+        .order('generated_at', { ascending: false })
+        .limit(20);
+      if (error) {
+        console.log('[Labs] synthesis history query failed:', error.message);
+        return [];
+      }
+      return ((data as Array<{ id: string; generated_at: string; panel_count: number; panels_summary_json: SynthesisPanelSummary[] | null; patterns_json: string[] | null; narrative: string | null; model_used: string | null }>) ?? [])
+        .map(row => ({
+          id: row.id,
+          patterns: row.patterns_json ?? [],
+          narrative: row.narrative ?? '',
+          panelCount: row.panel_count ?? 0,
+          panels: row.panels_summary_json ?? [],
+          generatedAt: row.generated_at,
+          modelUsed: row.model_used,
+        }));
+    },
+    staleTime: 60_000,
+  });
+
+  const crossLabSynthesis = useMemo<CrossLabSynthesis | null>(() => {
+    return synthesisHistoryQuery.data && synthesisHistoryQuery.data.length > 0
+      ? synthesisHistoryQuery.data[0]
+      : null;
+  }, [synthesisHistoryQuery.data]);
+
+  const crossLabSynthesisHistory = useMemo<CrossLabSynthesis[]>(() => {
+    return synthesisHistoryQuery.data ?? [];
+  }, [synthesisHistoryQuery.data]);
+
+  const [isRunningCrossLabSynthesis, setIsRunningCrossLabSynthesis] = useState(false);
+
+  // True when the most-recent persisted synthesis was generated against fewer
+  // panels than the user currently has uploaded. UI uses this to nudge "you've
+  // uploaded new labs since the last analysis — run again to refresh".
+  const isCrossLabSynthesisStale = useMemo(() => {
+    if (!crossLabSynthesis) return labPanels.length >= 2;
+    return labPanels.length > crossLabSynthesis.panelCount;
+  }, [crossLabSynthesis, labPanels.length]);
+
   const runCrossLabSynthesis = useCallback(async (): Promise<void> => {
     console.log('[Labs] Invoking cross-lab-synthesis edge function');
+    setIsRunningCrossLabSynthesis(true);
     try {
       const { data, error } = await supabase.functions.invoke('cross-lab-synthesis', { body: {} });
       if (error) {
         console.log('[Labs] cross-lab-synthesis invoke error:', error.message);
         return;
       }
-      const result = data as { status?: string; panelCount?: number; patterns?: string[]; narrative?: string; generatedAt?: string } | null;
+      const result = data as { status?: string } | null;
       if (!result || result.status !== 'ok') {
         console.log('[Labs] cross-lab-synthesis returned non-ok status:', result?.status);
         return;
       }
-      setCrossLabSynthesis({
-        patterns: result.patterns ?? [],
-        narrative: result.narrative ?? '',
-        panelCount: result.panelCount ?? 0,
-        generatedAt: result.generatedAt ?? new Date().toISOString(),
-      });
+      // The edge function persists to lab_synthesis_results. Invalidate so the
+      // history query re-fetches and picks up the new row.
+      await queryClient.invalidateQueries({ queryKey: ['crossLabSynthesisHistory'] });
     } catch (e) {
       console.log('[Labs] cross-lab-synthesis call failed:', e);
+    } finally {
+      setIsRunningCrossLabSynthesis(false);
     }
-  }, []);
+  }, [queryClient]);
 
   return useMemo(() => ({
     labPanels,
@@ -930,6 +990,9 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     optimalBiomarkers,
     allBiomarkers,
     crossLabSynthesis,
+    crossLabSynthesisHistory,
+    isCrossLabSynthesisStale,
+    isRunningCrossLabSynthesis,
     runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,
@@ -955,6 +1018,10 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     flaggedBiomarkers,
     optimalBiomarkers,
     allBiomarkers,
+    crossLabSynthesis,
+    crossLabSynthesisHistory,
+    isCrossLabSynthesisStale,
+    isRunningCrossLabSynthesis,
     runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,

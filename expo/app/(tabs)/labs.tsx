@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -62,6 +63,9 @@ export default function LabsScreen() {
     optimalBiomarkers,
     allBiomarkers,
     crossLabSynthesis,
+    crossLabSynthesisHistory,
+    isCrossLabSynthesisStale,
+    isRunningCrossLabSynthesis,
     runCrossLabSynthesis,
     getBiomarkerTrend,
     isLoading,
@@ -98,6 +102,7 @@ export default function LabsScreen() {
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>(['Metabolic', 'Inflammation']);
   const [expandedPanels, setExpandedPanels] = useState<string[]>([]);
+  const [showSynthesisHistory, setShowSynthesisHistory] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadedDocument, setUploadedDocument] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
   const [labName, setLabName] = useState('');
@@ -935,27 +940,131 @@ export default function LabsScreen() {
           </View>
         )}
 
-        {/* Cross-Lab Patterns */}
-        {crossLabSynthesis && crossLabSynthesis.patterns.length > 0 && (
+        {/* Cross-Lab Analysis: button + result + history */}
+        {labPanels.length >= 2 && (
           <View style={{ backgroundColor: Colors.primary + '08', borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: Colors.primary + '30' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <Sparkles color={Colors.primary} size={18} />
-              <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.primary }}>Cross-Lab Patterns Detected</Text>
+              <Text style={{ flex: 1, fontSize: 15, fontWeight: '700', color: Colors.primary }}>
+                Cross-Lab Analysis
+              </Text>
             </View>
-            {crossLabSynthesis.patterns.map((pattern, idx) => (
-              <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                <AlertTriangle color={Colors.warning} size={14} style={{ marginTop: 2 }} />
-                <Text style={{ flex: 1, fontSize: 13, color: Colors.text, lineHeight: 18 }}>{pattern}</Text>
+
+            {/* Run / re-run button */}
+            <TouchableOpacity
+              onPress={() => { void runCrossLabSynthesis(); }}
+              disabled={isRunningCrossLabSynthesis}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                backgroundColor: isRunningCrossLabSynthesis ? Colors.primary + '40' : Colors.primary,
+                paddingVertical: 12,
+                paddingHorizontal: 16,
+                borderRadius: 10,
+                marginBottom: 10,
+              }}
+            >
+              {isRunningCrossLabSynthesis ? (
+                <>
+                  <ActivityIndicator size="small" color={Colors.textInverse} />
+                  <Text style={{ color: Colors.textInverse, fontSize: 14, fontWeight: '600' }}>
+                    Analyzing {labPanels.length} labs...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Sparkles color={Colors.textInverse} size={16} />
+                  <Text style={{ color: Colors.textInverse, fontSize: 14, fontWeight: '600' }}>
+                    {crossLabSynthesis ? 'Re-run analysis' : 'Analyze all labs together'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Stale indicator */}
+            {!isRunningCrossLabSynthesis && crossLabSynthesis && isCrossLabSynthesisStale && (
+              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10, paddingHorizontal: 4 }}>
+                <AlertTriangle color={Colors.warning} size={14} style={{ marginTop: 1 }} />
+                <Text style={{ flex: 1, fontSize: 12, color: Colors.warning, lineHeight: 16 }}>
+                  You've uploaded {labPanels.length - crossLabSynthesis.panelCount} new lab(s) since the last analysis. Tap above to refresh.
+                </Text>
               </View>
-            ))}
-            {crossLabSynthesis.narrative ? (
-              <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.primary + '20' }}>
-                <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>{crossLabSynthesis.narrative}</Text>
-              </View>
+            )}
+
+            {/* Current synthesis result */}
+            {crossLabSynthesis && crossLabSynthesis.patterns.length > 0 ? (
+              <>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Patterns detected
+                </Text>
+                {crossLabSynthesis.patterns.map((pattern, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AlertTriangle color={Colors.warning} size={14} style={{ marginTop: 2 }} />
+                    <Text style={{ flex: 1, fontSize: 13, color: Colors.text, lineHeight: 18 }}>{pattern}</Text>
+                  </View>
+                ))}
+                {crossLabSynthesis.narrative ? (
+                  <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.primary + '20' }}>
+                    <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18 }}>{crossLabSynthesis.narrative}</Text>
+                  </View>
+                ) : null}
+                <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 10 }}>
+                  Based on {crossLabSynthesis.panelCount} lab{crossLabSynthesis.panelCount === 1 ? '' : 's'} · Generated{' '}
+                  {new Date(crossLabSynthesis.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </Text>
+              </>
+            ) : !isRunningCrossLabSynthesis ? (
+              <Text style={{ fontSize: 12, color: Colors.textSecondary, fontStyle: 'italic', lineHeight: 18 }}>
+                Tap above to find patterns across your {labPanels.length} uploaded labs (HPA dysregulation, gut-systemic inflammation, etc.).
+              </Text>
             ) : null}
-            <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 8 }}>
-              Based on {crossLabSynthesis.panelCount} panels · Generated {new Date(crossLabSynthesis.generatedAt).toLocaleDateString()}
-            </Text>
+
+            {/* History accordion */}
+            {crossLabSynthesisHistory.length > 1 && (
+              <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.primary + '20' }}>
+                <TouchableOpacity
+                  onPress={() => setShowSynthesisHistory(prev => !prev)}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.primary }}>
+                    Past analyses ({crossLabSynthesisHistory.length - 1})
+                  </Text>
+                  {showSynthesisHistory
+                    ? <ChevronUp color={Colors.primary} size={16} />
+                    : <ChevronDown color={Colors.primary} size={16} />
+                  }
+                </TouchableOpacity>
+                {showSynthesisHistory && (
+                  <View style={{ marginTop: 8 }}>
+                    {crossLabSynthesisHistory.slice(1).map((past) => (
+                      <View key={past.id ?? past.generatedAt} style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.borderLight }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.textSecondary }}>
+                            {new Date(past.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: Colors.textTertiary }}>
+                            {past.panelCount} lab{past.panelCount === 1 ? '' : 's'} · {past.patterns.length} pattern{past.patterns.length === 1 ? '' : 's'}
+                          </Text>
+                        </View>
+                        {past.patterns.slice(0, 2).map((p, idx) => (
+                          <Text key={idx} style={{ fontSize: 11, color: Colors.textTertiary, lineHeight: 14 }} numberOfLines={2}>
+                            • {p}
+                          </Text>
+                        ))}
+                        {past.patterns.length > 2 && (
+                          <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 2, fontStyle: 'italic' }}>
+                            + {past.patterns.length - 2} more
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         )}
 
