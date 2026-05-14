@@ -172,20 +172,25 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     },
   });
 
-  const latestPanel = useMemo(() => {
-    if (labPanels.length === 0) return null;
-    return [...labPanels].sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    )[0];
+  // Sort by date desc, with panel id as a tiebreaker so two labs uploaded
+  // the same day (date field is YYYY-MM-DD with no time component) still
+  // resolve to the newer one. Panel IDs are `panel_<Date.now()>` so newer
+  // IDs sort lexicographically larger.
+  const sortedPanels = useMemo(() => {
+    return [...labPanels].sort((a, b) => {
+      const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return (b.id ?? '').localeCompare(a.id ?? '');
+    });
   }, [labPanels]);
 
+  const latestPanel = useMemo(() => {
+    return sortedPanels.length > 0 ? sortedPanels[0] : null;
+  }, [sortedPanels]);
+
   const previousPanel = useMemo(() => {
-    if (labPanels.length < 2) return null;
-    const sorted = [...labPanels].sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-    return sorted[1];
-  }, [labPanels]);
+    return sortedPanels.length > 1 ? sortedPanels[1] : null;
+  }, [sortedPanels]);
 
   const flaggedBiomarkers = useMemo(() => {
     if (!latestPanel) return [];
