@@ -408,19 +408,26 @@ interface GetDocumentAnalysisResponse {
   StatusMessage?: string;
 }
 
-async function runTextract(s3Key: string): Promise<{ blocks: TextractBlock[]; jobId: string }> {
+async function startTextract(s3Key: string): Promise<string> {
   const start = await textractCall<{ JobId: string }>('StartDocumentAnalysis', {
     DocumentLocation: { S3Object: { Bucket: AWS_S3_BUCKET, Name: s3Key } },
     FeatureTypes: ['TABLES', 'FORMS'],
   });
+  return start.JobId;
+}
 
-  let pollCount = 0;
+// Poll Textract for up to budgetMs milliseconds. Returns:
+//   { done: false } if Textract is still IN_PROGRESS at the budget cutoff
+//   { done: true, blocks } if SUCCEEDED / PARTIAL_SUCCESS (with all blocks paginated)
+// Throws on FAILED.
+async function pollTextract(textractJobId: string, budgetMs: number): Promise<{ done: false } | { done: true; blocks: TextractBlock[] }> {
+  const deadline = Date.now() + budgetMs;
   let status: GetDocumentAnalysisResponse['JobStatus'] = 'IN_PROGRESS';
-  while (pollCount < TEXTRACT_MAX_POLLS) {
+
+  while (Date.now() < deadline) {
     await sleep(TEXTRACT_POLL_INTERVAL_MS);
-    pollCount++;
     const probe = await textractCall<GetDocumentAnalysisResponse>('GetDocumentAnalysis', {
-      JobId: start.JobId,
+      JobId: textractJobId,
       MaxResults: 1,
     });
     status = probe.JobStatus;
@@ -431,14 +438,15 @@ async function runTextract(s3Key: string): Promise<{ blocks: TextractBlock[]; jo
   }
 
   if (status !== 'SUCCEEDED' && status !== 'PARTIAL_SUCCESS') {
-    throw new Error(`Textract job did not complete after ${pollCount} polls (status=${status})`);
+    return { done: false };
   }
 
+  // Paginate all blocks now that the job is finished.
   const blocks: TextractBlock[] = [];
   let nextToken: string | undefined;
   do {
     const page = await textractCall<GetDocumentAnalysisResponse>('GetDocumentAnalysis', {
-      JobId: start.JobId,
+      JobId: textractJobId,
       MaxResults: 1000,
       ...(nextToken ? { NextToken: nextToken } : {}),
     });
@@ -446,7 +454,7 @@ async function runTextract(s3Key: string): Promise<{ blocks: TextractBlock[]; jo
     nextToken = page.NextToken;
   } while (nextToken);
 
-  return { blocks, jobId: start.JobId };
+  return { done: true, blocks };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -748,14 +756,42 @@ async function failJob(sb: ReturnType<typeof createClient>, jobId: string, messa
 }
 
 // ────────────────────────────────────────────────────────────
-// Main pipeline
+// Main pipeline - resumable state machine
+//
+// Each invocation does the minimum amount of work, then returns. The client
+// re-invokes every ~30s to push the pipeline forward, so large PDFs that
+// take Textract several minutes don't blow past Supabase's 150s/400s edge
+// function wall-clock limit.
+//
+//   pending          -> upload to S3, start Textract, save textract_job_id,
+//                       set status='extracting', return immediately (Phase 1)
+//   extracting       -> poll Textract for up to TEXTRACT_POLL_BUDGET_MS,
+//                       if done -> set status='enriching' and continue,
+//                       if not done -> return (Phase 2)
+//   enriching        -> call OpenAI, run safety gates, fan out to
+//                       lab_markers, set status='complete', cleanup S3
+//                       (Phase 3)
+//   complete/failed  -> noop, return current state
+//
+// Re-invocations are safe: lab_markers delete-then-insert keyed by source,
+// S3 cleanup runs in a final block, OpenAI cost is the only thing that
+// could double-charge if two clients invoke during Phase 3 — acceptable.
 // ────────────────────────────────────────────────────────────
 
-async function processJob(sb: ReturnType<typeof createClient>, jobId: string): Promise<{
-  biomarkers: number;
-  blocked: number;
-  cautioned: number;
-}> {
+const TEXTRACT_POLL_BUDGET_MS = 60_000; // per-invocation cap on polling
+const STORAGE_KEY_FIELD = 's3_key';
+
+function s3KeyFor(jobId: string, fileName: string): string {
+  return `lab-analyzer-staging/${jobId}/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+}
+
+type ProcessResult =
+  | { phase: 'already_done' }
+  | { phase: 'started_textract'; textract_job_id: string }
+  | { phase: 'textract_still_running'; textract_job_id: string }
+  | { phase: 'complete'; biomarkers: number; blocked: number; cautioned: number };
+
+async function processJob(sb: ReturnType<typeof createClient>, jobId: string): Promise<ProcessResult> {
   const { data: jobData, error: jobErr } = await sb
     .from('lab_analysis_jobs')
     .select('*')
@@ -763,53 +799,99 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
     .maybeSingle();
   if (jobErr || !jobData) throw new Error(`Job ${jobId} not found: ${jobErr?.message ?? 'no data'}`);
 
-  const job = jobData as JobRow;
-  if (job.status === 'complete') {
-    console.log('[lab-analyzer] Job already complete, skipping');
-    return { biomarkers: 0, blocked: 0, cautioned: 0 };
+  const job = jobData as JobRow & { textract_raw_json: Record<string, unknown> | null };
+  if (job.status === 'complete' || job.status === 'failed') {
+    console.log('[lab-analyzer] Job already', job.status, '- skipping');
+    return { phase: 'already_done' };
   }
 
-  // 1. extracting
-  await setJobStatus(sb, jobId, 'extracting');
+  const raw = (job.textract_raw_json ?? {}) as Record<string, unknown>;
+  const textractJobId = typeof raw.textract_job_id === 'string' ? raw.textract_job_id : null;
+  const s3Key = typeof raw[STORAGE_KEY_FIELD] === 'string'
+    ? (raw[STORAGE_KEY_FIELD] as string)
+    : s3KeyFor(jobId, job.file_name);
 
-  const { data: fileBlob, error: dlErr } = await sb.storage.from(STORAGE_BUCKET).download(job.storage_path);
-  if (dlErr || !fileBlob) throw new Error(`Storage download failed: ${dlErr?.message ?? 'no data'}`);
+  // ── PHASE 1: pending -> start Textract ────────────────────
+  if (!textractJobId) {
+    await setJobStatus(sb, jobId, 'extracting');
 
-  const bytes = new Uint8Array(await fileBlob.arrayBuffer());
-  const contentType =
-    job.file_type === 'pdf' ? 'application/pdf' :
-    job.file_type === 'png' ? 'image/png' :
-    'image/jpeg';
+    const { data: fileBlob, error: dlErr } = await sb.storage.from(STORAGE_BUCKET).download(job.storage_path);
+    if (dlErr || !fileBlob) throw new Error(`Storage download failed: ${dlErr?.message ?? 'no data'}`);
 
-  const s3Key = `lab-analyzer-staging/${jobId}/${job.file_name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const bytes = new Uint8Array(await fileBlob.arrayBuffer());
+    const contentType =
+      job.file_type === 'pdf' ? 'application/pdf' :
+      job.file_type === 'png' ? 'image/png' :
+      'image/jpeg';
 
-  try {
-    console.log('[lab-analyzer] Uploading to S3', s3Key, 'bytes:', bytes.byteLength);
+    console.log('[lab-analyzer] Phase 1: uploading to S3', s3Key, 'bytes:', bytes.byteLength);
     await s3PutObject(s3Key, bytes, contentType);
 
-    console.log('[lab-analyzer] Starting Textract');
-    const { blocks, jobId: textractJobId } = await runTextract(s3Key);
-    console.log('[lab-analyzer] Textract done, blocks:', blocks.length, 'job:', textractJobId);
+    console.log('[lab-analyzer] Phase 1: starting Textract');
+    const newTextractJobId = await startTextract(s3Key);
+    await sb.from('lab_analysis_jobs').update({
+      textract_raw_json: { ...raw, textract_job_id: newTextractJobId, [STORAGE_KEY_FIELD]: s3Key, phase1_done_at: new Date().toISOString() },
+      updated_at: new Date().toISOString(),
+    }).eq('id', jobId);
+    console.log('[lab-analyzer] Phase 1 complete, textract_job_id:', newTextractJobId);
+    return { phase: 'started_textract', textract_job_id: newTextractJobId };
+  }
 
-    const { text, tables } = flattenTextract(blocks);
+  // ── PHASE 2: extracting -> poll Textract ──────────────────
+  if (job.status === 'extracting') {
+    console.log('[lab-analyzer] Phase 2: polling Textract job', textractJobId);
+    const result = await pollTextract(textractJobId, TEXTRACT_POLL_BUDGET_MS);
+    if (!result.done) {
+      // Refresh updated_at so the client knows we're alive.
+      await setJobStatus(sb, jobId, 'extracting', {
+        textract_raw_json: { ...raw, last_poll_at: new Date().toISOString() },
+      });
+      console.log('[lab-analyzer] Phase 2: Textract still running, will resume next invocation');
+      return { phase: 'textract_still_running', textract_job_id: textractJobId };
+    }
+
+    const { text, tables } = flattenTextract(result.blocks);
     if (!text.trim() && tables.length === 0) {
       throw new Error('Textract extracted no text or tables from the document.');
     }
+    console.log('[lab-analyzer] Phase 2: Textract done, blocks:', result.blocks.length);
 
-    // 2. enriching
     await setJobStatus(sb, jobId, 'enriching', {
-      textract_raw_json: { job_id: textractJobId, block_count: blocks.length, table_count: tables.length },
+      textract_raw_json: {
+        ...raw,
+        textract_job_id: textractJobId,
+        [STORAGE_KEY_FIELD]: s3Key,
+        block_count: result.blocks.length,
+        table_count: tables.length,
+        textract_text: text,
+        textract_tables: tables,
+        phase2_done_at: new Date().toISOString(),
+      },
+      updated_at: new Date().toISOString(),
     });
+    // Fall through to phase 3 in the same invocation - OpenAI is fast (~5-15s)
+    // so we don't need a separate round-trip for it.
+  }
 
-    console.log('[lab-analyzer] Fetching prior markers for trend context');
+  // ── PHASE 3: enriching -> OpenAI + safety gates + finalize ─
+  const refreshed = await sb.from('lab_analysis_jobs').select('textract_raw_json').eq('id', jobId).maybeSingle();
+  const refreshedRaw = (refreshed.data?.textract_raw_json ?? raw) as Record<string, unknown>;
+  const text = (refreshedRaw.textract_text as string | undefined) ?? '';
+  const tables = (refreshedRaw.textract_tables as string[][][] | undefined) ?? [];
+  if (!text && tables.length === 0) {
+    // Should not happen if phase 2 wrote correctly. Bail to refresh.
+    throw new Error('Phase 3: missing Textract output (textract_text + textract_tables empty)');
+  }
+
+  try {
+    console.log('[lab-analyzer] Phase 3: fetching prior markers for trend context');
     const priorMarkers = await fetchPriorMarkers(sb, job.user_id, jobId);
-    console.log('[lab-analyzer] Prior markers found:', priorMarkers.length);
+    console.log('[lab-analyzer] Phase 3: prior markers found:', priorMarkers.length);
 
-    console.log('[lab-analyzer] Calling OpenAI');
+    console.log('[lab-analyzer] Phase 3: calling OpenAI');
     const extraction = await callOpenAI(text, tables, priorMarkers);
-    console.log('[lab-analyzer] OpenAI extracted', extraction.biomarkers.length, 'biomarkers');
+    console.log('[lab-analyzer] Phase 3: OpenAI extracted', extraction.biomarkers.length, 'biomarkers');
 
-    // 3. safety gates
     const ctx = await loadSafetyContext(sb, job.user_id, extraction.biomarkers);
     const { data: rulesData, error: rulesErr } = await sb
       .from('supplement_contraindication_rules')
@@ -818,31 +900,17 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
     if (rulesErr) throw new Error(`Failed to load rules: ${rulesErr.message}`);
     const gates = runSafetyGates((rulesData as RuleRow[]) ?? [], ctx);
     const { kept: filteredSupplements, skipped } = postFilterSupplements(
-      extraction.supplements,
-      gates.blocked,
-      gates.cautioned,
+      extraction.supplements, gates.blocked, gates.cautioned,
     );
     const { kept: filteredHerbs, skipped: herbsSkipped } = postFilterSupplements(
-      extraction.herbs,
-      gates.blocked,
-      gates.cautioned,
+      extraction.herbs, gates.blocked, gates.cautioned,
     );
     const allSkipped = [...skipped, ...herbsSkipped];
-    console.log('[lab-analyzer] Gates fired - blocked:', gates.blocked.length, 'cautioned:', gates.cautioned.length);
+    console.log('[lab-analyzer] Phase 3: gates fired - blocked:', gates.blocked.length, 'cautioned:', gates.cautioned.length);
 
-    // 4. fan out to lab_markers. Idempotent on re-run: delete any prior
-    // rows tagged with this job_id before inserting fresh ones, so a
-    // retry doesn't pollute the user's trend graphs with duplicates.
+    // lab_markers: idempotent delete-then-insert
     const markerSource = `lab_analysis_jobs/${jobId}`;
-    const { error: deletePriorErr } = await sb
-      .from('lab_markers')
-      .delete()
-      .eq('user_id', job.user_id)
-      .eq('source', markerSource);
-    if (deletePriorErr) {
-      console.error('[lab-analyzer] lab_markers delete-prior error', deletePriorErr);
-    }
-
+    await sb.from('lab_markers').delete().eq('user_id', job.user_id).eq('source', markerSource);
     if (extraction.biomarkers.length > 0) {
       const now = new Date().toISOString();
       const markerRows = extraction.biomarkers.map(b => ({
@@ -861,39 +929,38 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
       if (markerErr) console.error('[lab-analyzer] lab_markers insert error', markerErr);
     }
 
-    // 5. complete
-    await sb
-      .from('lab_analysis_jobs')
-      .update({
-        status: 'complete',
-        biomarkers_json: extraction.biomarkers as unknown as Record<string, unknown>[],
-        supplements_json: filteredSupplements as unknown as Record<string, unknown>[],
-        herbs_json: filteredHerbs as unknown as Record<string, unknown>[],
-        priority_actions_json: extraction.priorityActions,
-        analysis_text: extraction.analysisText,
-        textract_raw_json: {
-          job_id: textractJobId,
-          block_count: blocks.length,
-          table_count: tables.length,
-          safety_gates: {
-            blocked: gates.blocked,
-            cautioned: gates.cautioned,
-            supplements_to_skip: allSkipped,
-          },
+    await sb.from('lab_analysis_jobs').update({
+      status: 'complete',
+      biomarkers_json: extraction.biomarkers as unknown as Record<string, unknown>[],
+      supplements_json: filteredSupplements as unknown as Record<string, unknown>[],
+      herbs_json: filteredHerbs as unknown as Record<string, unknown>[],
+      priority_actions_json: extraction.priorityActions,
+      analysis_text: extraction.analysisText,
+      textract_raw_json: {
+        textract_job_id: textractJobId,
+        block_count: refreshedRaw.block_count,
+        table_count: refreshedRaw.table_count,
+        safety_gates: {
+          blocked: gates.blocked,
+          cautioned: gates.cautioned,
+          supplements_to_skip: allSkipped,
         },
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        error: null,
-      })
-      .eq('id', jobId);
+        // Note: textract_text and textract_tables are intentionally dropped
+        // from the final state to keep the row small.
+      },
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      error: null,
+    }).eq('id', jobId);
 
     return {
+      phase: 'complete',
       biomarkers: extraction.biomarkers.length,
       blocked: gates.blocked.length,
       cautioned: gates.cautioned.length,
     };
   } finally {
-    // Always try to clean up the S3 staging object.
+    // Phase 3 was reached -> S3 staging is no longer needed regardless of outcome.
     await s3DeleteObject(s3Key);
   }
 }

@@ -54,7 +54,8 @@ export interface LabAnalysisResultPayload {
 
 const BUCKET = 'lab-pdfs';
 const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+const POLL_TIMEOUT_MS = 12 * 60 * 1000; // Up to 12 minutes for very large PDFs
+const REINVOKE_INTERVAL_MS = 30 * 1000; // Re-invoke the function every 30s to advance Textract polling
 
 function fileTypeFromMime(mimeType: string): 'pdf' | 'jpg' | 'png' {
   if (mimeType === 'application/pdf') return 'pdf';
@@ -126,9 +127,10 @@ async function invokeFunction(jobId: string): Promise<void> {
     body: { job_id: jobId },
   });
   if (error) {
-    // Function may have started the job and timed out client-side; surface
-    // the error but let the poll loop still observe the final state.
-    console.log('[labAnalyzer] Edge function invoke returned error:', error.message);
+    // The function processes in resumable phases - one invocation may
+    // legitimately return "still running" without finishing. Errors here
+    // are not fatal; the poll loop observes the DB row's final state.
+    console.log('[labAnalyzer] Edge function invoke returned non-2xx (may be expected mid-pipeline):', error.message);
   }
 }
 
@@ -149,6 +151,9 @@ async function readJob(jobId: string): Promise<LabAnalysisJob | null> {
 async function pollUntilDone(jobId: string, onProgress?: (status: LabAnalysisJobStatus) => void): Promise<LabAnalysisJob> {
   const start = Date.now();
   let lastStatus: LabAnalysisJobStatus | null = null;
+  let lastInvokeAt = Date.now();
+  let lastRowUpdatedAt: string | null = null;
+
   while (Date.now() - start < POLL_TIMEOUT_MS) {
     const job = await readJob(jobId);
     if (job && job.status !== lastStatus) {
@@ -157,9 +162,24 @@ async function pollUntilDone(jobId: string, onProgress?: (status: LabAnalysisJob
       console.log('[labAnalyzer] Job status →', job.status);
     }
     if (job && (job.status === 'complete' || job.status === 'failed')) return job;
+
+    // Re-invoke the function periodically to push the pipeline forward.
+    // The function processes in resumable phases - Textract polling can run
+    // for several minutes for multi-page PDFs, and each invocation only
+    // advances by ~60s before returning. Re-invocation is also our recovery
+    // if the function silently died (no row update for > 30s).
+    const rowStale = job && lastRowUpdatedAt === job.updated_at;
+    const reinvokeDue = Date.now() - lastInvokeAt > REINVOKE_INTERVAL_MS;
+    if (job && job.status !== 'complete' && job.status !== 'failed' && reinvokeDue && rowStale) {
+      console.log('[labAnalyzer] Re-invoking function to advance pipeline');
+      void invokeFunction(jobId);
+      lastInvokeAt = Date.now();
+    }
+    if (job) lastRowUpdatedAt = job.updated_at;
+
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
-  throw new Error('Lab analysis timed out after 5 minutes.');
+  throw new Error('Lab analysis timed out after 12 minutes.');
 }
 
 export interface AnalyzeLabFileParams {
