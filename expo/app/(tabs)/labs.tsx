@@ -97,6 +97,7 @@ export default function LabsScreen() {
   }, [addSupplementToProtocol]);
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>(['Metabolic', 'Inflammation']);
+  const [expandedPanels, setExpandedPanels] = useState<string[]>([]);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadedDocument, setUploadedDocument] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
   const [labName, setLabName] = useState('');
@@ -825,34 +826,112 @@ export default function LabsScreen() {
         )}
 
         {/* Lab Panels Summary */}
-        {labPanels.length > 1 && (
-          <View style={{ backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: Colors.border }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 8 }}>
-              Your Lab Panels ({labPanels.length})
-            </Text>
-            {labPanels.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((panel, idx) => (
-              <View key={panel.id || idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: idx < labPanels.length - 1 ? 1 : 0, borderBottomColor: Colors.borderLight }}>
-                <View>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.text }}>{panel.name}</Text>
-                  <Text style={{ fontSize: 11, color: Colors.textTertiary }}>{new Date(panel.date).toLocaleDateString()} · {panel.biomarkers.length} biomarkers</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 4 }}>
-                  {panel?.biomarkers?.filter(b => b.status === 'critical').length > 0 && (
-                    <View style={{ backgroundColor: Colors.danger + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.danger }}>{panel.biomarkers.filter(b => b.status === 'critical').length} critical</Text>
-                    </View>
-                  )}
-                  {panel?.biomarkers?.filter(b => b.status === 'suboptimal').length > 0 && (
-                    <View style={{ backgroundColor: Colors.warning + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.warning }}>{panel.biomarkers.filter(b => b.status === 'suboptimal').length} suboptimal</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            ))}
-            <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 8, fontStyle: 'italic' }}>
-              Showing {allBiomarkers?.length} unique biomarkers across all panels
-            </Text>
+        {labPanels.length > 0 && (
+          <View style={styles.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+              <Text style={styles.sectionTitle}>Your Labs ({labPanels.length})</Text>
+              <Text style={{ fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic' }}>
+                {allBiomarkers.length} unique biomarkers across panels
+              </Text>
+            </View>
+            {[...labPanels]
+              .sort((a, b) => {
+                const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+                if (dateDiff !== 0) return dateDiff;
+                return (b.id ?? '').localeCompare(a.id ?? '');
+              })
+              .map((panel) => {
+                const panelKey = panel.id ?? panel.name;
+                const isExpanded = expandedPanels.includes(panelKey);
+                const critical = panel.biomarkers.filter(b => b.status === 'critical');
+                const suboptimal = panel.biomarkers.filter(b => b.status === 'suboptimal');
+                const optimal = panel.biomarkers.filter(b => b.status === 'optimal');
+                // Sort biomarkers: critical first, then suboptimal, then normal, then optimal.
+                const orderedBiomarkers = [...panel.biomarkers].sort((a, b) => {
+                  const rank: Record<string, number> = { critical: 0, suboptimal: 1, normal: 2, optimal: 3 };
+                  return (rank[a.status] ?? 4) - (rank[b.status] ?? 4);
+                });
+
+                return (
+                  <View key={panelKey} style={{ backgroundColor: Colors.surface, borderRadius: 14, marginBottom: 10, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' }}>
+                    <TouchableOpacity
+                      onPress={() => setExpandedPanels(prev => prev.includes(panelKey) ? prev.filter(p => p !== panelKey) : [...prev, panelKey])}
+                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14 }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: Colors.text }}>{panel.name}</Text>
+                        <Text style={{ fontSize: 12, color: Colors.textTertiary, marginTop: 2 }}>
+                          {new Date(panel.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          {' · '}
+                          {panel.biomarkers.length} biomarkers
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+                          {critical.length > 0 && (
+                            <View style={{ backgroundColor: Colors.danger + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.danger }}>{critical.length} critical</Text>
+                            </View>
+                          )}
+                          {suboptimal.length > 0 && (
+                            <View style={{ backgroundColor: Colors.warning + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.warning }}>{suboptimal.length} suboptimal</Text>
+                            </View>
+                          )}
+                          {optimal.length > 0 && (
+                            <View style={{ backgroundColor: Colors.success + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.success }}>{optimal.length} optimal</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                      {isExpanded
+                        ? <ChevronUp color={Colors.textTertiary} size={20} />
+                        : <ChevronDown color={Colors.textTertiary} size={20} />
+                      }
+                    </TouchableOpacity>
+                    {isExpanded && (
+                      <View style={{ borderTopWidth: 1, borderTopColor: Colors.borderLight }}>
+                        {orderedBiomarkers.length === 0 ? (
+                          <Text style={{ fontSize: 13, color: Colors.textTertiary, padding: 14, fontStyle: 'italic' }}>
+                            No biomarkers extracted from this panel.
+                          </Text>
+                        ) : (
+                          orderedBiomarkers.map((bio, idx) => {
+                            const statusColor =
+                              bio.status === 'critical' ? Colors.danger :
+                              bio.status === 'suboptimal' ? Colors.warning :
+                              bio.status === 'optimal' ? Colors.success :
+                              Colors.textTertiary;
+                            const refLow = bio.referenceRange?.min;
+                            const refHigh = bio.referenceRange?.max;
+                            const refDisplay = (refLow != null && refLow !== 0) || (refHigh != null && refHigh !== 0)
+                              ? `${refLow ?? '?'} – ${refHigh ?? '?'}`
+                              : null;
+                            return (
+                              <View key={bio.id ?? `${bio.name}-${idx}`} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: idx < orderedBiomarkers.length - 1 ? 1 : 0, borderBottomColor: Colors.borderLight }}>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={{ fontSize: 13, fontWeight: '500', color: Colors.text }}>{bio.name}</Text>
+                                  {refDisplay && (
+                                    <Text style={{ fontSize: 11, color: Colors.textTertiary, marginTop: 1 }}>Ref: {refDisplay} {bio.unit}</Text>
+                                  )}
+                                </View>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={{ fontSize: 14, fontWeight: '700', color: statusColor }}>
+                                    {bio.value} <Text style={{ fontSize: 11, fontWeight: '400', color: Colors.textTertiary }}>{bio.unit}</Text>
+                                  </Text>
+                                  <View style={{ backgroundColor: statusColor + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 2 }}>
+                                    <Text style={{ fontSize: 9, fontWeight: '700', color: statusColor, textTransform: 'uppercase' }}>{bio.status}</Text>
+                                  </View>
+                                </View>
+                              </View>
+                            );
+                          })
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
           </View>
         )}
 
