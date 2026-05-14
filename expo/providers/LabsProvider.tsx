@@ -192,64 +192,123 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     return sortedPanels.length > 1 ? sortedPanels[1] : null;
   }, [sortedPanels]);
 
+  // Combined biomarkers across all uploaded panels (Blood, Dutch, GI Map,
+  // TruAge, Total Tox, etc.). Dedups by marker name with the most-recent
+  // panel winning, so users see a unified view of every biomarker they've
+  // ever measured, not just the most-recently uploaded panel.
+  const allBiomarkers = useMemo<Biomarker[]>(() => {
+    const byName = new Map<string, Biomarker>();
+    for (const panel of sortedPanels) {
+      for (const b of panel.biomarkers) {
+        const key = b.name.toLowerCase().trim();
+        if (!byName.has(key)) byName.set(key, b);
+      }
+    }
+    return Array.from(byName.values());
+  }, [sortedPanels]);
+
+  // Biomarker views combine across ALL uploaded panels (no "latest panel
+  // wins") so a Dutch test doesn't erase the user's blood-lab markers from
+  // the UI.
+
   const flaggedBiomarkers = useMemo(() => {
-    if (!latestPanel) return [];
-    return latestPanel.biomarkers.filter(b =>
+    return allBiomarkers.filter(b =>
       b.status === 'suboptimal' || b.status === 'critical'
     );
-  }, [latestPanel]);
+  }, [allBiomarkers]);
 
   const optimalBiomarkers = useMemo(() => {
-    if (!latestPanel) return [];
-    return latestPanel.biomarkers.filter(b => b.status === 'optimal');
-  }, [latestPanel]);
+    return allBiomarkers.filter(b => b.status === 'optimal');
+  }, [allBiomarkers]);
 
+  // Trend: for a given biomarker (by id), find its current value AND the
+  // most-recent prior value across ALL panels (not just latest vs previous
+  // panel). This way a marker that appears in lab #1 + lab #3 still trends
+  // even if lab #2 didn't measure it.
   const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
-    if (!latestPanel || !previousPanel) return null;
+    let targetName: string | null = null;
+    for (const p of sortedPanels) {
+      const b = p.biomarkers.find(x => x.id === biomarkerId);
+      if (b) { targetName = b.name; break; }
+    }
+    if (!targetName) return null;
 
-    const currentBio = latestPanel.biomarkers.find(b => b.name ===
-      latestPanel.biomarkers.find(lb => lb.id === biomarkerId)?.name
-    );
-    const previousBio = previousPanel.biomarkers.find(b => b.name === currentBio?.name);
+    let current: Biomarker | null = null;
+    let prior: Biomarker | null = null;
+    for (const p of sortedPanels) {
+      const match = p.biomarkers.find(b => b.name === targetName);
+      if (!match) continue;
+      if (!current) current = match;
+      else if (!prior) { prior = match; break; }
+    }
+    if (!current || !prior) return null;
 
-    if (!currentBio || !previousBio) return null;
-
-    const percentChange = ((currentBio.value - previousBio.value) / previousBio.value) * 100;
-
+    if (prior.value === 0) return null;
+    const percentChange = ((current.value - prior.value) / prior.value) * 100;
     if (Math.abs(percentChange) < 5) return 'stable';
     return percentChange > 0 ? 'up' : 'down';
-  }, [latestPanel, previousPanel]);
+  }, [sortedPanels]);
 
+  // Keyword-driven categorization that handles the diverse lab types users
+  // actually upload (Dutch, GI Map, Total Tox, OMX, TruAge, etc.), not just
+  // standard blood panels. Order matters: most specific buckets first.
   const biomarkersByCategory = useMemo(() => {
-    if (!latestPanel) return {};
-
     const categories: Record<string, Biomarker[]> = {
       'Metabolic': [],
       'Lipids': [],
       'Thyroid': [],
       'Inflammation': [],
       'Hormones': [],
-      'Nutrients': [],
+      'Gut Health': [],
+      'Toxins / Heavy Metals': [],
+      'Methylation': [],
+      'Mitochondrial / Energy': [],
+      'Biological Age': [],
+      'Liver': [],
+      'Kidney': [],
+      'Vitamins / Minerals': [],
+      'Other': [],
     };
 
-    latestPanel.biomarkers.forEach(bio => {
-      if (['Fasting Glucose', 'HbA1c', 'Fasting Insulin'].includes(bio.name)) {
+    for (const bio of allBiomarkers) {
+      const n = bio.name.toLowerCase();
+      if (/(glucose|hba1c|insulin|fructosamine|homa[\s-]?ir|c[\s-]?peptide)/.test(n)) {
         categories['Metabolic'].push(bio);
-      } else if (['Total Cholesterol', 'HDL', 'LDL', 'Triglycerides'].includes(bio.name)) {
+      } else if (/(cholesterol|hdl|ldl|triglycer|apo[\s-]?[ab]|lipoprotein|lp\(a\))/.test(n)) {
         categories['Lipids'].push(bio);
-      } else if (['TSH', 'Free T3'].includes(bio.name)) {
+      } else if (/(tsh|free\s*t3|free\s*t4|reverse\s*t3|thyroid|tpo|tg\s*ab)/.test(n)) {
         categories['Thyroid'].push(bio);
-      } else if (['hs-CRP', 'Homocysteine'].includes(bio.name)) {
+      } else if (/(hs[\s-]?crp|homocysteine|fibrinogen|ferritin\s*high|esr|sed\s*rate)/.test(n)) {
         categories['Inflammation'].push(bio);
-      } else if (['Testosterone (Total)', 'DHEA-S'].includes(bio.name)) {
+      } else if (/(testosterone|dhea|estradiol|estrone|estriol|progesterone|cortisol|melatonin|prolactin|lh|fsh|shbg|androstene|pregnenolone|4[\s-]?oh|16[\s-]?oh|2[\s-]?oh)/.test(n)) {
         categories['Hormones'].push(bio);
+      } else if (/(zonulin|secretory\s*iga|beta[\s-]?glucuronidase|calprotectin|h\.?\s*pylori|dysbiosis|sibo|candida|firmicutes|bacteroides|akkermansia|lactobacillus|bifido)/.test(n)) {
+        categories['Gut Health'].push(bio);
+      } else if (/(aflatoxin|ochratoxin|gliotoxin|trichothecene|mold|mycotoxin|mercury|lead|arsenic|cadmium|aluminum|nickel|heavy\s*metal)/.test(n)) {
+        categories['Toxins / Heavy Metals'].push(bio);
+      } else if (/(homocysteine|methylmalonic|mma|formate|folate|b12|cobalamin|mthfr|sam|sah)/.test(n)) {
+        categories['Methylation'].push(bio);
+      } else if (/(coq10|ubiquinol|carnitine|krebs|citric|succinate|alpha[\s-]?keto|malate|fumarate|fatty\s*acid|atp)/.test(n)) {
+        categories['Mitochondrial / Energy'].push(bio);
+      } else if (/(epigenetic|biological\s*age|truage|pace\s*of\s*aging|methylation\s*age|grim|horvath|phenoage|telomere)/.test(n)) {
+        categories['Biological Age'].push(bio);
+      } else if (/(ast|alt|ggt|bilirubin|alkaline\s*phosphatase|alp)/.test(n)) {
+        categories['Liver'].push(bio);
+      } else if (/(creatinine|bun|egfr|cystatin|urea|kidney)/.test(n)) {
+        categories['Kidney'].push(bio);
+      } else if (/(vitamin\s*[abcdek]|d3|d2|25[\s-]?oh|zinc|magnesium|iron|ferritin|copper|selenium|iodine|potassium|sodium|calcium|chromium|manganese|molybdenum|niacin|biotin|riboflavin|thiamine|pyridoxine)/.test(n)) {
+        categories['Vitamins / Minerals'].push(bio);
       } else {
-        categories['Nutrients'].push(bio);
+        categories['Other'].push(bio);
       }
-    });
+    }
 
+    // Drop empty buckets so the UI doesn't render headers with zero items.
+    for (const key of Object.keys(categories)) {
+      if (categories[key].length === 0) delete categories[key];
+    }
     return categories;
-  }, [latestPanel]);
+  }, [allBiomarkers]);
 
   const addLabPanel = useCallback((panel: LabPanel) => {
     const updated = [...labPanels, panel];
@@ -827,22 +886,6 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
   const saveLatestAnalysis = useCallback((analysis: StoredLabAnalysis) => {
     saveLatestAnalysisMutation.mutate(analysis);
   }, [saveLatestAnalysisMutation]);
-
-  // Dedup biomarkers across all panels for the "Showing N unique biomarkers"
-  // header. Keeps the most recent reading per name.
-  const allBiomarkers = useMemo<Biomarker[]>(() => {
-    const byName = new Map<string, Biomarker>();
-    const sortedPanels = [...labPanels].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-    for (const panel of sortedPanels) {
-      for (const b of panel.biomarkers) {
-        const key = b.name.toLowerCase().trim();
-        if (!byName.has(key)) byName.set(key, b);
-      }
-    }
-    return Array.from(byName.values());
-  }, [labPanels]);
 
   // Cross-lab synthesis: invokes the cross-lab-synthesis edge function which
   // groups all of the user's lab_markers by panel, asks an LLM to spot

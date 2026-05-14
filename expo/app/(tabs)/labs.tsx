@@ -798,7 +798,7 @@ export default function LabsScreen() {
               <View style={[styles.statIcon, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
                 <FlaskConical color={Colors.textInverse} size={18} />
               </View>
-              <Text style={styles.statValue}>{latestPanel.biomarkers.length}</Text>
+              <Text style={styles.statValue}>{allBiomarkers.length}</Text>
               <Text style={styles.statLabel}>Total</Text>
             </View>
           </View>
