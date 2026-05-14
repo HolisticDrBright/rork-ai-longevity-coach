@@ -1,45 +1,99 @@
 import { Platform } from 'react-native';
 
-const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL ?? 'https://toolkit.rork.com';
-const TOOLKIT_SECRET = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY ?? '';
+const OPENAI_API_KEY =
+  process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? '';
 
-export async function transcribeAudio(uri: string): Promise<string> {
-  console.log('[transcribeAudio] Transcribing:', uri);
+export async function transcribeAudio(
+  uri: string
+): Promise<string> {
+  try {
+    console.log('[transcribeAudio] Transcribing:', uri);
 
-  if (!TOOLKIT_SECRET) {
-    throw new Error('Toolkit secret key not configured');
+    if (!OPENAI_API_KEY) {
+      throw new Error(
+        'EXPO_PUBLIC_OPENAI_API_KEY is missing'
+      );
+    }
+
+    const formData = new FormData();
+
+    // OpenAI transcription model
+    formData.append(
+      'model',
+      'gpt-4o-mini-transcribe'
+    );
+
+    const fileName =
+      uri.split('/').pop() || 'recording.m4a';
+
+    if (Platform.OS === 'web') {
+      const blob = await (await fetch(uri)).blob();
+
+      formData.append(
+        'file',
+        blob,
+        fileName
+      );
+    } else {
+      formData.append('file', {
+        uri,
+        name: fileName,
+        type: 'audio/mp4',
+      } as any);
+    }
+
+    console.log(
+      '[transcribeAudio] Uploading to OpenAI...'
+    );
+
+    const response = await fetch(
+      'https://api.openai.com/v1/audio/transcriptions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Accept: 'application/json',
+        },
+        body: formData,
+      }
+    );
+
+    const responseText =
+      await response.text();
+
+    console.log(
+      '[transcribeAudio] Status:',
+      response.status
+    );
+
+    console.log(
+      '[transcribeAudio] Response:',
+      responseText
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `OpenAI transcription failed: ${response.status} ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    const text: string =
+      data.text ?? '';
+
+    console.log(
+      '[transcribeAudio] Transcript:',
+      text
+    );
+
+    return text;
+  } catch (error) {
+    console.error(
+      '[transcribeAudio] ERROR:',
+      error
+    );
+
+    throw error;
   }
-
-  const form = new FormData();
-  form.append('model_id', 'scribe_v2');
-
-  if (Platform.OS === 'web') {
-    const blob = await (await fetch(uri)).blob();
-    form.append('file', blob, 'recording.m4a');
-  } else {
-    form.append('file', {
-      uri,
-      name: 'recording.m4a',
-      type: 'audio/m4a',
-    } as unknown as Blob);
-  }
-
-  const response = await fetch(`${TOOLKIT_URL}/v2/elevenlabs/v1/speech-to-text`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${TOOLKIT_SECRET}`,
-    },
-    body: form,
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error('[transcribeAudio] Error:', response.status, errText);
-    throw new Error(`Transcription failed: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const text: string = data.text ?? '';
-  console.log('[transcribeAudio] Got transcript:', text);
-  return text;
 }

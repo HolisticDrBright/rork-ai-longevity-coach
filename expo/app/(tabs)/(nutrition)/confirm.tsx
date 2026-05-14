@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -40,6 +40,12 @@ export default function ConfirmFoods() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (pendingAnalysis) {
+      setItems(pendingAnalysis.detectedItems);
+    }
+  }, [pendingAnalysis])
 
   const calculateMutation = trpc.nutrition.calculateNutrition.useMutation({
 
