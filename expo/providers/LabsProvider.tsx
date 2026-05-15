@@ -96,6 +96,11 @@ export interface StoredLabAnalysis {
   herbs: SupplementRecommendation[];
   priorityActions: string[];
   flaggedBiomarkerNames: string[];
+  // Multi-paragraph clinical narrative produced by the lab-analyzer edge
+  // function (big-picture summary, pattern recognition, marker analysis,
+  // root-cause action plan, top-3 fixes). Persisted so the UI can show it
+  // whenever the user revisits the labs tab.
+  summary?: string | null;
 }
 
 export const [LabsProvider, useLabs] = createContextHook(() => {

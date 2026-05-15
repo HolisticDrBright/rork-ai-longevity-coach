@@ -567,6 +567,12 @@ You will see a "PRIOR VALUES" block listing the user's most recent reading for e
 - When recommending supplements, prefer to continue what was clearly working and adjust or replace what isn't moving the needle.
 - Do NOT invent prior values that aren't in the PRIOR VALUES block. If a marker has no prior value, simply analyze it on its own.
 
+WHEN RECENT SYMPTOMS ARE PROVIDED:
+You will see a "RECENT SYMPTOMS (last 7 days)" block. Use it to ground the analysis in what the patient is actually experiencing:
+- In the marker-by-marker section, explicitly tie abnormal labs to the symptoms they likely explain. Example: "Low ferritin (28 ng/mL) — likely contributing to the fatigue and brain-fog symptoms you've logged this week."
+- When the labs DON'T explain a logged symptom (e.g. all relevant markers normal but the patient reports the symptom regularly), call that out as something to investigate further (functional rather than biochemical, or needs a different workup).
+- If no symptoms are provided, skip the correlation entirely; do not invent symptoms.
+
 PRIORITIZE these specific products when conditions match:
 - ProOmega 2000 (Nordic Naturals): omega-3, EPA/DHA, inflammation, triglycerides
 - GlucoPrime (Healthgevity): blood sugar, insulin resistance, HbA1c
@@ -613,6 +619,7 @@ async function callOpenAI(
   textractText: string,
   textractTables: string[][][],
   priorMarkers: PriorMarker[],
+  recentSymptoms: Array<{ symptom_name: string; severity: number | null }> = [],
 ): Promise<ExtractionOutput> {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
 
@@ -629,6 +636,22 @@ async function callOpenAI(
         .map(p => `- ${p.marker_name}: ${p.marker_value} ${p.unit} (collected ${p.collected_at.slice(0, 10)})`)
         .join('\n');
 
+  // Dedup symptoms by name keeping the highest severity per symptom, so the
+  // prompt stays compact when the patient logs the same symptom repeatedly.
+  const symptomMap = new Map<string, number | null>();
+  for (const s of recentSymptoms) {
+    if (!s.symptom_name) continue;
+    const existing = symptomMap.get(s.symptom_name);
+    if (existing == null || (s.severity ?? 0) > (existing ?? 0)) {
+      symptomMap.set(s.symptom_name, s.severity);
+    }
+  }
+  const symptomList = Array.from(symptomMap.entries())
+    .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+  const symptomsPretty = symptomList.length === 0
+    ? '(no symptoms logged in the last 7 days)'
+    : symptomList.map(([name, sev]) => `- ${name}${sev != null ? ` (severity ${sev}/5)` : ''}`).join('\n');
+
   const userPrompt = `LAB REPORT — TEXTRACT OCR OUTPUT
 
 RAW TEXT (line-by-line):
@@ -640,7 +663,10 @@ ${tablesPretty}
 PRIOR VALUES (most recent reading per marker from earlier uploads):
 ${priorPretty}
 
-Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES are provided, open the analysisText with a "PROGRESS SINCE LAST LAB" section comparing the new readings to the prior ones marker-by-marker.`;
+RECENT SYMPTOMS (last 7 days):
+${symptomsPretty}
+
+Extract every biomarker as instructed and return strict JSON. If PRIOR VALUES are provided, open the analysisText with a "PROGRESS SINCE LAST LAB" section comparing the new readings to the prior ones marker-by-marker. If RECENT SYMPTOMS are present, weave them into the marker-by-marker analysis where the labs plausibly explain a symptom, and flag symptoms the labs don't explain.`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -951,12 +977,21 @@ async function processJob(sb: ReturnType<typeof createClient>, jobId: string): P
   }
 
   try {
-    console.log('[lab-analyzer] Phase 3: fetching prior markers for trend context');
-    const priorMarkers = await fetchPriorMarkers(sb, job.user_id, jobId);
-    console.log('[lab-analyzer] Phase 3: prior markers found:', priorMarkers.length);
+    console.log('[lab-analyzer] Phase 3: fetching prior markers + recent symptoms for narrative context');
+    const [priorMarkers, recentSymptomsForPrompt] = await Promise.all([
+      fetchPriorMarkers(sb, job.user_id, jobId),
+      sb.from('symptom_logs')
+        .select('symptom_name, severity')
+        .eq('user_id', job.user_id)
+        .gte('logged_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+        .order('logged_at', { ascending: false })
+        .limit(100)
+        .then(r => ((r.data as Array<{ symptom_name: string; severity: number | null }>) ?? [])),
+    ]);
+    console.log('[lab-analyzer] Phase 3: prior markers', priorMarkers.length, '· recent symptoms', recentSymptomsForPrompt.length);
 
     console.log('[lab-analyzer] Phase 3: calling OpenAI');
-    const extraction = await callOpenAI(text, tables, priorMarkers);
+    const extraction = await callOpenAI(text, tables, priorMarkers, recentSymptomsForPrompt);
     console.log('[lab-analyzer] Phase 3: OpenAI extracted', extraction.biomarkers.length, 'biomarkers');
 
     const ctx = await loadSafetyContext(sb, job.user_id, extraction.biomarkers);

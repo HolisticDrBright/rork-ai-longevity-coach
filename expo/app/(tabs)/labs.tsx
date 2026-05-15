@@ -342,6 +342,7 @@ export default function LabsScreen() {
           flaggedBiomarkerNames: result.biomarkers
             .filter(b => b.status === 'suboptimal' || b.status === 'critical')
             .map(b => b.name),
+          summary: result.analysis?.summary ?? null,
         });
       } catch (err) {
         console.log('[Labs UI] Failed to save latest analysis (non-blocking):', err);
@@ -411,6 +412,7 @@ export default function LabsScreen() {
         flaggedBiomarkerNames: snapshot.biomarkers
           .filter(b => b.status === 'suboptimal' || b.status === 'critical')
           .map(b => b.name),
+        summary: snapshot.analysis?.summary ?? null,
       });
     } catch (err) {
       console.log('[Labs UI] Failed to save latest analysis:', err);
@@ -633,6 +635,15 @@ export default function LabsScreen() {
           <ScrollView style={styles.analysisContent} showsVerticalScrollIndicator={false}>
             {analysisResult ? (
               <>
+                {!!analysisResult.analysis?.summary && (
+                  <View style={styles.summarySection}>
+                    <Text style={styles.summaryTitle}>Clinical Summary</Text>
+                    <Text style={[styles.summaryText, { lineHeight: 20 }]}>
+                      {analysisResult.analysis.summary}
+                    </Text>
+                  </View>
+                )}
+
                 <View style={styles.summarySection}>
                   <Text style={styles.summaryTitle}>What Needs Attention</Text>
                   <Text style={styles.summaryText}>
@@ -1131,6 +1142,15 @@ export default function LabsScreen() {
           <ScrollView style={styles.analysisContent} showsVerticalScrollIndicator={false}>
             {analysisResult ? (
               <>
+                {!!analysisResult.analysis?.summary && (
+                  <View style={styles.summarySection}>
+                    <Text style={styles.summaryTitle}>Clinical Summary</Text>
+                    <Text style={[styles.summaryText, { lineHeight: 20 }]}>
+                      {analysisResult.analysis.summary}
+                    </Text>
+                  </View>
+                )}
+
                 <View style={styles.summarySection}>
                   <Text style={styles.summaryTitle}>What Needs Attention</Text>
                   <Text style={styles.summaryText}>
