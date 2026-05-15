@@ -110,7 +110,9 @@ async function uploadToStorage(
   console.log('[labAnalyzer] Uploading via chunked proxy (native):', BUCKET, objectKey);
 
   const fileType = fileTypeFromMime(mimeType);
-  const RAW_CHUNK_SIZE = 200 * 1024; // 200KB raw -> ~270KB base64, well under iOS limit
+  // 500KB raw -> ~680KB base64. Still well under iOS's ~1MB EMSGSIZE
+  // threshold but half the request count vs 200KB chunks.
+  const RAW_CHUNK_SIZE = 500 * 1024;
   const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
 
   // Split base64 along boundaries that decode evenly. Each base64 group of
@@ -126,28 +128,20 @@ async function uploadToStorage(
     const start = i * base64ChunkSize;
     const chunkBase64 = base64.slice(start, start + base64ChunkSize);
 
-    const { data, error } = await supabase.functions.invoke('lab-upload', {
-      body: {
-        upload_id: uploadId,
-        chunk_index: i,
-        total_chunks: totalChunks,
-        base64_data: chunkBase64,
-        file_name: fileName,
-        mime_type: mimeType,
-        file_type: fileType,
-      },
+    const resp = await postChunkWithRetry({
+      upload_id: uploadId,
+      chunk_index: i,
+      total_chunks: totalChunks,
+      base64_data: chunkBase64,
+      file_name: fileName,
+      mime_type: mimeType,
+      file_type: fileType,
     });
 
-    if (error) {
-      console.log('[labAnalyzer] Chunk upload failed at index', i, ':', error.message);
-      throw new Error(`Chunk ${i + 1}/${totalChunks} failed: ${error.message}`);
-    }
-
-    const resp = data as { status?: string; storage_path?: string; error?: string } | null;
-    if (resp?.status === 'error') {
+    if (resp.status === 'error') {
       throw new Error(`Chunk ${i + 1}/${totalChunks} server error: ${resp.error}`);
     }
-    if (resp?.status === 'complete') {
+    if (resp.status === 'complete') {
       if (!resp.storage_path) throw new Error('Final chunk returned no storage_path');
       finalStoragePath = resp.storage_path;
       console.log('[labAnalyzer] Chunked upload complete, storagePath:', finalStoragePath);
@@ -160,6 +154,43 @@ async function uploadToStorage(
     throw new Error('Chunked upload finished but no storage_path was returned');
   }
   return finalStoragePath;
+}
+
+// Post a chunk with exponential-backoff retry on transient failures.
+// supabase-js's "Failed to send a request to the Edge Function" error is a
+// generic network/connection failure that resolves on its own most of the
+// time - common causes are momentary network blips, edge function cold
+// starts, or short-lived rate-limit pushback.
+async function postChunkWithRetry(
+  body: {
+    upload_id: string;
+    chunk_index: number;
+    total_chunks: number;
+    base64_data: string;
+    file_name: string;
+    mime_type: string;
+    file_type: 'pdf' | 'jpg' | 'png';
+  },
+  maxAttempts: number = 5,
+): Promise<{ status?: string; storage_path?: string; error?: string }> {
+  let lastError = '';
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { data, error } = await supabase.functions.invoke('lab-upload', { body });
+      if (!error) {
+        return (data ?? {}) as { status?: string; storage_path?: string; error?: string };
+      }
+      lastError = error.message ?? 'unknown error';
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
+    if (attempt < maxAttempts - 1) {
+      const delay = Math.min(500 * Math.pow(2, attempt), 5000);
+      console.log(`[labAnalyzer] Chunk ${body.chunk_index + 1}/${body.total_chunks} attempt ${attempt + 1} failed (${lastError}), retrying in ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error(`Chunk ${body.chunk_index + 1}/${body.total_chunks} failed after ${maxAttempts} attempts: ${lastError}`);
 }
 
 // Lightweight UUID v4 generator. crypto.randomUUID is available on modern RN /
