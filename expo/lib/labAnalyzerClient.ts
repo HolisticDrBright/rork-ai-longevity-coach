@@ -64,18 +64,14 @@ function fileTypeFromMime(mimeType: string): 'pdf' | 'jpg' | 'png' {
   throw new Error(`Unsupported file type: ${mimeType}`);
 }
 
-async function readFileBytes(fileUri: string): Promise<{ bytes: Uint8Array; size: number }> {
-  if (Platform.OS === 'web') {
-    const res = await fetch(fileUri);
-    const ab = await res.arrayBuffer();
-    const bytes = new Uint8Array(ab);
-    return { bytes, size: bytes.byteLength };
-  }
-  const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return { bytes, size: bytes.byteLength };
+// Web path: read the file as bytes for direct upload via supabase-js. Works
+// fine in browsers because their fetch implementation handles arbitrarily
+// large Blob bodies via streams. We keep this path because it's the simplest
+// thing that works on web.
+async function readFileBytesWeb(fileUri: string): Promise<Uint8Array> {
+  const res = await fetch(fileUri);
+  const ab = await res.arrayBuffer();
+  return new Uint8Array(ab);
 }
 
 async function uploadToStorage(
@@ -84,17 +80,52 @@ async function uploadToStorage(
   fileName: string,
   mimeType: string,
 ): Promise<string> {
-  const { bytes } = await readFileBytes(fileUri);
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const objectKey = `${userId}/${Date.now()}_${safeName}`;
 
-  console.log('[labAnalyzer] Uploading to Storage:', BUCKET, objectKey, 'bytes:', bytes.byteLength);
-  const { error } = await supabase.storage.from(BUCKET).upload(objectKey, bytes, {
-    contentType: mimeType,
-    upsert: false,
+  if (Platform.OS === 'web') {
+    const bytes = await readFileBytesWeb(fileUri);
+    console.log('[labAnalyzer] Uploading to Storage (web):', BUCKET, objectKey, 'bytes:', bytes.byteLength);
+    const { error } = await supabase.storage.from(BUCKET).upload(objectKey, bytes, {
+      contentType: mimeType,
+      upsert: false,
+    });
+    if (error) throw new Error(`Storage upload failed: ${error.message}`);
+    return objectKey;
+  }
+
+  // Native path: use FileSystem.uploadAsync which streams the file directly
+  // from disk to Supabase Storage via a native HTTP request. The previous
+  // approach (read file -> Uint8Array -> supabase.storage.upload) fails on
+  // React Native with "Network request failed" for files larger than ~1MB,
+  // because supabase-js wraps the Uint8Array in a Blob and RN's fetch can't
+  // reliably send large Blob bodies on iOS/Android.
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) {
+    throw new Error('EXPO_PUBLIC_SUPABASE_URL is not configured');
+  }
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not authenticated (no Supabase session)');
+
+  const uploadUrl = `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectKey}`;
+  console.log('[labAnalyzer] Uploading to Storage (native, streaming):', BUCKET, objectKey);
+
+  const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
+    httpMethod: 'POST',
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      'Content-Type': mimeType,
+      'x-upsert': 'false',
+    },
   });
 
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  if (result.status < 200 || result.status >= 300) {
+    console.log('[labAnalyzer] Storage upload failed:', result.status, result.body);
+    throw new Error(`Storage upload failed (${result.status}): ${result.body?.slice(0, 200) ?? 'no body'}`);
+  }
+
   return objectKey;
 }
 
