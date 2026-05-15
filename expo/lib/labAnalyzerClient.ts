@@ -94,50 +94,85 @@ async function uploadToStorage(
     return objectKey;
   }
 
-  // Native path: signed upload URL + FileSystem.uploadAsync PUT.
+  // Native path: chunked upload via the lab-upload edge function.
   //
-  // Why this dance: prior attempts kept hitting iOS NSPOSIXErrorDomain
-  // Code=40 "Message too long" at the socket layer for files >~1MB.
-  // The pattern was reproducible with:
-  //   - supabase-js storage.upload(uint8) -> "Network request failed"
-  //   - FileSystem.uploadAsync BINARY_CONTENT + background session -> EMSGSIZE
-  //   - FileSystem.uploadAsync MULTIPART + foreground session    -> EMSGSIZE
+  // We previously tried every variant of single-request upload (supabase-js
+  // storage.upload, FileSystem.uploadAsync BINARY_CONTENT/MULTIPART,
+  // foreground/background sessions, signed URL PUT) and every one of them
+  // hit iOS NSPOSIXErrorDomain Code=40 "Message too long" at the socket
+  // layer for files >~1MB. Sending small chunks via supabase.functions.invoke
+  // works because each individual HTTP request stays well under the
+  // EMSGSIZE threshold - we never touch a body iOS will reject.
   //
-  // Common factor was the request hitting the regular Supabase Storage POST
-  // endpoint with a full Bearer JWT (~700 bytes of header). The signed
-  // upload URL workflow:
-  //   1. Asks Supabase for a one-time URL with a token embedded in the
-  //      query string (small request, no body)
-  //   2. PUTs the file directly to that URL with no Authorization header
-  //   3. Routes through a different Storage endpoint with different
-  //      middleware
-  // This combination has consistently worked for users hitting EMSGSIZE on
-  // iOS RN uploads.
-  const { data: signed, error: signError } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUploadUrl(objectKey);
-  if (signError || !signed) {
-    throw new Error(`Failed to create signed upload URL: ${signError?.message ?? 'no data'}`);
+  // The lab-upload edge function reassembles chunks server-side and writes
+  // to lab-pdfs Storage. Returns the storage path on the last chunk's
+  // response.
+  console.log('[labAnalyzer] Uploading via chunked proxy (native):', BUCKET, objectKey);
+
+  const fileType = fileTypeFromMime(mimeType);
+  const RAW_CHUNK_SIZE = 200 * 1024; // 200KB raw -> ~270KB base64, well under iOS limit
+  const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+
+  // Split base64 along boundaries that decode evenly. Each base64 group of
+  // 4 chars decodes to 3 raw bytes, so we slice at multiples of 4.
+  const base64ChunkSize = Math.ceil(RAW_CHUNK_SIZE / 3) * 4;
+  const totalChunks = Math.max(1, Math.ceil(base64.length / base64ChunkSize));
+  const uploadId = generateUploadId();
+
+  console.log('[labAnalyzer] File base64 length:', base64.length, 'chunks:', totalChunks);
+
+  let finalStoragePath: string | null = null;
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * base64ChunkSize;
+    const chunkBase64 = base64.slice(start, start + base64ChunkSize);
+
+    const { data, error } = await supabase.functions.invoke('lab-upload', {
+      body: {
+        upload_id: uploadId,
+        chunk_index: i,
+        total_chunks: totalChunks,
+        base64_data: chunkBase64,
+        file_name: fileName,
+        mime_type: mimeType,
+        file_type: fileType,
+      },
+    });
+
+    if (error) {
+      console.log('[labAnalyzer] Chunk upload failed at index', i, ':', error.message);
+      throw new Error(`Chunk ${i + 1}/${totalChunks} failed: ${error.message}`);
+    }
+
+    const resp = data as { status?: string; storage_path?: string; error?: string } | null;
+    if (resp?.status === 'error') {
+      throw new Error(`Chunk ${i + 1}/${totalChunks} server error: ${resp.error}`);
+    }
+    if (resp?.status === 'complete') {
+      if (!resp.storage_path) throw new Error('Final chunk returned no storage_path');
+      finalStoragePath = resp.storage_path;
+      console.log('[labAnalyzer] Chunked upload complete, storagePath:', finalStoragePath);
+    } else {
+      console.log('[labAnalyzer] Chunk', i + 1, '/', totalChunks, 'acknowledged');
+    }
   }
 
-  console.log('[labAnalyzer] Uploading via signed URL (native, PUT, no JWT header):', BUCKET, objectKey);
+  if (!finalStoragePath) {
+    throw new Error('Chunked upload finished but no storage_path was returned');
+  }
+  return finalStoragePath;
+}
 
-  const result = await FileSystem.uploadAsync(signed.signedUrl, fileUri, {
-    httpMethod: 'PUT',
-    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-    sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
-    headers: {
-      'Content-Type': mimeType,
-      // Intentionally no Authorization: signedUrl carries its own token.
-    },
+// Lightweight UUID v4 generator. crypto.randomUUID is available on modern RN /
+// Hermes but we fall back to a manual builder for older runtimes.
+function generateUploadId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  // Fallback
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
   });
-
-  if (result.status < 200 || result.status >= 300) {
-    console.log('[labAnalyzer] Signed upload failed:', result.status, result.body);
-    throw new Error(`Signed upload failed (${result.status}): ${result.body?.slice(0, 200) ?? 'no body'}`);
-  }
-
-  return objectKey;
 }
 
 async function createJob(
