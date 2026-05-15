@@ -357,10 +357,20 @@ export default function LabsScreen() {
         );
       }
 
-      // Keep the analysis modal as an optional review screen for users who
-      // want to see the breakdown immediately - but the panel is already
-      // saved, so dismissing the modal doesn't lose anything.
-      setShowAnalysisModal(true);
+      // Close the upload modal first. iOS only renders one pageSheet
+      // modal at a time and swallows a setVisible(true) on a sibling
+      // modal while the previous one is still mid-dismiss, which is why
+      // the analysis modal never appeared.
+      setShowUploadModal(false);
+      setUploadedDocument(null);
+      setUploadedImages([]);
+      setAnalysisProgress('');
+      setPendingPanelId(null);
+
+      // Wait for the upload modal's dismiss animation (iOS default ~350ms)
+      // before opening the analysis modal. analysisResult stays populated
+      // throughout - the modal has data to render the moment it opens.
+      setTimeout(() => setShowAnalysisModal(true), 450);
 
       // Kick off cross-lab synthesis in the background once the user has
       // 2+ panels - doesn't block the modal.
