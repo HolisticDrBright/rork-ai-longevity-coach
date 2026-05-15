@@ -95,11 +95,13 @@ async function uploadToStorage(
   }
 
   // Native path: use FileSystem.uploadAsync which streams the file directly
-  // from disk to Supabase Storage via a native HTTP request. The previous
-  // approach (read file -> Uint8Array -> supabase.storage.upload) fails on
-  // React Native with "Network request failed" for files larger than ~1MB,
-  // because supabase-js wraps the Uint8Array in a Blob and RN's fetch can't
-  // reliably send large Blob bodies on iOS/Android.
+  // from disk to Supabase Storage via a native HTTP request.
+  //
+  // Important iOS detail: we explicitly use MULTIPART upload + FOREGROUND
+  // session. BINARY_CONTENT on iOS routes through a background URLSession
+  // which throws NSPOSIXErrorDomain Code=40 "Message too long" for bodies
+  // over ~1MB during the SSL handshake. Multipart with a foreground session
+  // works because iOS handles the form-encoded body without that limit.
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
     throw new Error('EXPO_PUBLIC_SUPABASE_URL is not configured');
@@ -109,14 +111,16 @@ async function uploadToStorage(
   if (!session) throw new Error('Not authenticated (no Supabase session)');
 
   const uploadUrl = `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectKey}`;
-  console.log('[labAnalyzer] Uploading to Storage (native, streaming):', BUCKET, objectKey);
+  console.log('[labAnalyzer] Uploading to Storage (native, multipart/foreground):', BUCKET, objectKey);
 
   const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
     httpMethod: 'POST',
-    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+    uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+    fieldName: 'file',
+    mimeType,
+    sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
     headers: {
       Authorization: `Bearer ${session.access_token}`,
-      'Content-Type': mimeType,
       'x-upsert': 'false',
     },
   });
