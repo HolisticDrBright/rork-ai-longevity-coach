@@ -94,40 +94,47 @@ async function uploadToStorage(
     return objectKey;
   }
 
-  // Native path: use FileSystem.uploadAsync which streams the file directly
-  // from disk to Supabase Storage via a native HTTP request.
+  // Native path: signed upload URL + FileSystem.uploadAsync PUT.
   //
-  // Important iOS detail: we explicitly use MULTIPART upload + FOREGROUND
-  // session. BINARY_CONTENT on iOS routes through a background URLSession
-  // which throws NSPOSIXErrorDomain Code=40 "Message too long" for bodies
-  // over ~1MB during the SSL handshake. Multipart with a foreground session
-  // works because iOS handles the form-encoded body without that limit.
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  if (!supabaseUrl) {
-    throw new Error('EXPO_PUBLIC_SUPABASE_URL is not configured');
+  // Why this dance: prior attempts kept hitting iOS NSPOSIXErrorDomain
+  // Code=40 "Message too long" at the socket layer for files >~1MB.
+  // The pattern was reproducible with:
+  //   - supabase-js storage.upload(uint8) -> "Network request failed"
+  //   - FileSystem.uploadAsync BINARY_CONTENT + background session -> EMSGSIZE
+  //   - FileSystem.uploadAsync MULTIPART + foreground session    -> EMSGSIZE
+  //
+  // Common factor was the request hitting the regular Supabase Storage POST
+  // endpoint with a full Bearer JWT (~700 bytes of header). The signed
+  // upload URL workflow:
+  //   1. Asks Supabase for a one-time URL with a token embedded in the
+  //      query string (small request, no body)
+  //   2. PUTs the file directly to that URL with no Authorization header
+  //   3. Routes through a different Storage endpoint with different
+  //      middleware
+  // This combination has consistently worked for users hitting EMSGSIZE on
+  // iOS RN uploads.
+  const { data: signed, error: signError } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUploadUrl(objectKey);
+  if (signError || !signed) {
+    throw new Error(`Failed to create signed upload URL: ${signError?.message ?? 'no data'}`);
   }
 
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated (no Supabase session)');
+  console.log('[labAnalyzer] Uploading via signed URL (native, PUT, no JWT header):', BUCKET, objectKey);
 
-  const uploadUrl = `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectKey}`;
-  console.log('[labAnalyzer] Uploading to Storage (native, multipart/foreground):', BUCKET, objectKey);
-
-  const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
-    httpMethod: 'POST',
-    uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-    fieldName: 'file',
-    mimeType,
+  const result = await FileSystem.uploadAsync(signed.signedUrl, fileUri, {
+    httpMethod: 'PUT',
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
     sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
     headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      'x-upsert': 'false',
+      'Content-Type': mimeType,
+      // Intentionally no Authorization: signedUrl carries its own token.
     },
   });
 
   if (result.status < 200 || result.status >= 300) {
-    console.log('[labAnalyzer] Storage upload failed:', result.status, result.body);
-    throw new Error(`Storage upload failed (${result.status}): ${result.body?.slice(0, 200) ?? 'no body'}`);
+    console.log('[labAnalyzer] Signed upload failed:', result.status, result.body);
+    throw new Error(`Signed upload failed (${result.status}): ${result.body?.slice(0, 200) ?? 'no body'}`);
   }
 
   return objectKey;
