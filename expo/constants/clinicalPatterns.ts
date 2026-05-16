@@ -845,6 +845,205 @@ export const SYMPTOM_TO_PATTERN_MAP: Record<string, (TCMPattern | FunctionalSyst
   muscle_weakness: ['qi_deficiency', 'blood_deficiency', 'mitochondrial'],
 };
 
+// Biomarker -> pattern mapping. When a biomarker is flagged suboptimal or
+// critical, it contributes to one or more TCM / functional patterns. Match
+// is case-insensitive substring on marker_name. `condition` controls whether
+// the marker contributes when it's flagged-high, flagged-low, or either
+// direction. Multiple rules can match the same marker (e.g. ferritin maps
+// to inflammation when high, blood_deficiency when low).
+export interface BiomarkerPatternRule {
+  matchAny: string[];
+  patterns: (TCMPattern | FunctionalSystem)[];
+  condition: 'high' | 'low' | 'either';
+  // Per-rule weight when scoring patterns (default 30 - roughly equivalent
+  // to one moderate-severity symptom).
+  weight?: number;
+}
+
+export const BIOMARKER_TO_PATTERN_MAP: BiomarkerPatternRule[] = [
+  // Metabolic
+  { matchAny: ['hba1c', 'fasting glucose', 'glucose'], patterns: ['blood_sugar', 'inflammation'], condition: 'high' },
+  { matchAny: ['fasting insulin', 'insulin'], patterns: ['blood_sugar', 'hormone_signaling'], condition: 'high' },
+  { matchAny: ['homa-ir', 'homa ir'], patterns: ['blood_sugar', 'hormone_signaling', 'dampness'], condition: 'high' },
+  // Inflammation
+  { matchAny: ['hs-crp', 'c-reactive', 'crp'], patterns: ['inflammation', 'heat', 'immune_activation'], condition: 'high' },
+  { matchAny: ['homocysteine'], patterns: ['inflammation', 'mitochondrial', 'blood_stasis'], condition: 'high' },
+  { matchAny: ['fibrinogen', 'esr', 'sed rate'], patterns: ['inflammation', 'blood_stasis'], condition: 'high' },
+  // Hormones - androgens
+  { matchAny: ['testosterone'], patterns: ['hormone_signaling', 'heat'], condition: 'high' },
+  { matchAny: ['testosterone'], patterns: ['hormone_signaling', 'yang_deficiency'], condition: 'low' },
+  { matchAny: ['dhea-s', 'dhea'], patterns: ['hormone_signaling', 'yang_deficiency', 'qi_deficiency'], condition: 'low' },
+  // Hormones - cortisol / HPA
+  { matchAny: ['cortisol'], patterns: ['hormone_signaling', 'heat', 'nervous_system'], condition: 'high' },
+  { matchAny: ['cortisol'], patterns: ['hormone_signaling', 'qi_deficiency', 'yang_deficiency'], condition: 'low' },
+  // Hormones - estrogens
+  { matchAny: ['estradiol'], patterns: ['hormone_signaling', 'heat'], condition: 'high' },
+  { matchAny: ['estradiol', 'estrone'], patterns: ['hormone_signaling', 'yin_deficiency', 'blood_deficiency'], condition: 'low' },
+  { matchAny: ['progesterone'], patterns: ['hormone_signaling', 'nervous_system'], condition: 'low' },
+  { matchAny: ['4-oh estrone', '4-hydroxy', '16-oh estrone'], patterns: ['detoxification', 'hormone_signaling', 'heat'], condition: 'high' },
+  // Thyroid
+  { matchAny: ['tsh'], patterns: ['hormone_signaling', 'yang_deficiency', 'cold'], condition: 'high' },
+  { matchAny: ['free t3', 'free t4'], patterns: ['hormone_signaling', 'mitochondrial', 'yang_deficiency'], condition: 'low' },
+  { matchAny: ['reverse t3'], patterns: ['hormone_signaling', 'nervous_system'], condition: 'high' },
+  // Blood / Anemia
+  { matchAny: ['ferritin'], patterns: ['blood_deficiency', 'qi_deficiency'], condition: 'low', weight: 40 },
+  { matchAny: ['ferritin'], patterns: ['inflammation', 'detoxification'], condition: 'high' },
+  { matchAny: ['hemoglobin', 'hematocrit'], patterns: ['blood_deficiency', 'qi_deficiency'], condition: 'low' },
+  { matchAny: ['rdw'], patterns: ['blood_deficiency'], condition: 'high' },
+  // Vitamins / minerals
+  { matchAny: ['vitamin d', '25-oh', '25(oh)', '25-hydroxy'], patterns: ['hormone_signaling', 'immune_activation', 'yang_deficiency'], condition: 'low' },
+  { matchAny: ['vitamin b12', 'b12', 'cobalamin', 'methylmalonic'], patterns: ['nervous_system', 'blood_deficiency'], condition: 'low' },
+  { matchAny: ['folate', 'folic acid'], patterns: ['nervous_system', 'blood_deficiency'], condition: 'low' },
+  { matchAny: ['zinc'], patterns: ['immune_activation', 'gut_function', 'qi_deficiency'], condition: 'low' },
+  { matchAny: ['magnesium'], patterns: ['nervous_system', 'yin_deficiency'], condition: 'low' },
+  { matchAny: ['iron'], patterns: ['blood_deficiency', 'qi_deficiency'], condition: 'low' },
+  { matchAny: ['selenium'], patterns: ['hormone_signaling', 'detoxification'], condition: 'low' },
+  // Lipids
+  { matchAny: ['triglyceride'], patterns: ['blood_sugar', 'inflammation', 'dampness'], condition: 'high' },
+  { matchAny: ['hdl'], patterns: ['inflammation', 'mitochondrial'], condition: 'low' },
+  { matchAny: ['ldl', 'apo b', 'apolipoprotein b'], patterns: ['inflammation', 'detoxification'], condition: 'high' },
+  // Liver
+  { matchAny: ['alt', 'ast', 'ggt'], patterns: ['detoxification', 'heat'], condition: 'high' },
+  { matchAny: ['bilirubin'], patterns: ['detoxification'], condition: 'high' },
+  // Kidney
+  { matchAny: ['creatinine', 'cystatin'], patterns: ['detoxification', 'yang_deficiency'], condition: 'high' },
+  { matchAny: ['egfr'], patterns: ['detoxification', 'yang_deficiency'], condition: 'low' },
+  // Gut markers (GI Map / stool tests)
+  { matchAny: ['zonulin'], patterns: ['gut_function', 'inflammation', 'immune_activation'], condition: 'high', weight: 40 },
+  { matchAny: ['secretory iga', 'siga'], patterns: ['gut_function', 'immune_activation'], condition: 'either' },
+  { matchAny: ['calprotectin'], patterns: ['gut_function', 'inflammation'], condition: 'high' },
+  { matchAny: ['beta-glucuronidase', 'beta glucuronidase'], patterns: ['detoxification', 'hormone_signaling', 'gut_function'], condition: 'high' },
+  { matchAny: ['h. pylori', 'h pylori', 'helicobacter'], patterns: ['gut_function', 'immune_activation'], condition: 'high' },
+  // Toxins / mycotoxins
+  { matchAny: ['aflatoxin', 'ochratoxin', 'gliotoxin', 'mycotoxin', 'trichothecene'], patterns: ['detoxification', 'mitochondrial', 'immune_activation', 'inflammation'], condition: 'high', weight: 50 },
+  { matchAny: ['mercury', 'lead', 'arsenic', 'cadmium'], patterns: ['detoxification', 'nervous_system', 'inflammation'], condition: 'high', weight: 50 },
+  // Mitochondrial / organic acids (OMX panel)
+  { matchAny: ['coq10', 'ubiquinol'], patterns: ['mitochondrial'], condition: 'low' },
+  { matchAny: ['carnitine'], patterns: ['mitochondrial'], condition: 'low' },
+  { matchAny: ['glucuronate', 'orotate', 'sulfate'], patterns: ['detoxification', 'mitochondrial'], condition: 'high' },
+];
+
+// Wearable / biometric anomaly -> pattern mapping. Threshold-based: when
+// the recent average of the field crosses the threshold in the specified
+// direction, the patterns are scored.
+export interface BiometricPatternRule {
+  field:
+    | 'hrv'
+    | 'resting_hr'
+    | 'sleep_efficiency'
+    | 'sleep_duration_minutes'
+    | 'temp_deviation'
+    | 'sleep_score'
+    | 'respiratory_rate';
+  threshold: number;
+  direction: 'below' | 'above';
+  patterns: (TCMPattern | FunctionalSystem)[];
+  weight?: number;
+  label: string; // for the "data source" badge
+}
+
+export const BIOMETRIC_PATTERN_RULES: BiometricPatternRule[] = [
+  { field: 'hrv', threshold: 30, direction: 'below', patterns: ['nervous_system', 'qi_deficiency'], label: 'Low HRV' },
+  { field: 'resting_hr', threshold: 70, direction: 'above', patterns: ['nervous_system', 'heat'], label: 'Elevated resting HR' },
+  { field: 'sleep_efficiency', threshold: 80, direction: 'below', patterns: ['yin_deficiency', 'nervous_system'], label: 'Poor sleep efficiency' },
+  { field: 'sleep_duration_minutes', threshold: 360, direction: 'below', patterns: ['yin_deficiency', 'qi_deficiency'], label: 'Short sleep' },
+  { field: 'temp_deviation', threshold: 0.5, direction: 'above', patterns: ['heat', 'immune_activation', 'inflammation'], label: 'Elevated temperature' },
+  { field: 'temp_deviation', threshold: -0.5, direction: 'below', patterns: ['cold', 'yang_deficiency'], label: 'Low temperature' },
+  { field: 'sleep_score', threshold: 60, direction: 'below', patterns: ['yin_deficiency', 'nervous_system'], label: 'Low sleep score' },
+  { field: 'respiratory_rate', threshold: 18, direction: 'above', patterns: ['heat', 'nervous_system'], label: 'Elevated respiratory rate' },
+];
+
+// Biomarker-driven dietary additions. Layered on top of TCM dietary
+// recommendations to nudge the user toward foods that specifically target
+// their abnormal labs.
+export interface BiomarkerDietaryRule {
+  matchAny: string[];
+  condition: 'high' | 'low' | 'either';
+  foods: string[];
+  avoid: string[];
+  source: string; // displayed as the recommendation source
+}
+
+export const BIOMARKER_DIETARY_RULES: BiomarkerDietaryRule[] = [
+  {
+    matchAny: ['hba1c', 'fasting glucose', 'fasting insulin', 'homa'],
+    condition: 'high',
+    foods: ['Leafy greens', 'Cruciferous vegetables', 'Berries', 'Avocado', 'Olive oil', 'Pastured eggs', 'Wild fish'],
+    avoid: ['Refined carbs', 'Sugar-sweetened drinks', 'Fruit juice', 'Late-night meals'],
+    source: 'Elevated blood sugar markers',
+  },
+  {
+    matchAny: ['triglyceride'],
+    condition: 'high',
+    foods: ['Wild salmon', 'Sardines', 'Walnuts', 'Flaxseed', 'Olive oil', 'Leafy greens'],
+    avoid: ['Refined carbs', 'Added sugar', 'Alcohol', 'Trans fats'],
+    source: 'Elevated triglycerides',
+  },
+  {
+    matchAny: ['hs-crp', 'crp', 'homocysteine'],
+    condition: 'high',
+    foods: ['Wild salmon', 'Berries', 'Turmeric', 'Leafy greens', 'Green tea', 'Extra virgin olive oil'],
+    avoid: ['Industrial seed oils', 'Processed meats', 'Refined sugar', 'Trans fats'],
+    source: 'Systemic inflammation',
+  },
+  {
+    matchAny: ['homocysteine'],
+    condition: 'high',
+    foods: ['Pastured eggs', 'Wild salmon', 'Leafy greens (folate)', 'Lentils', 'Sunflower seeds', 'Liver (B12)'],
+    avoid: ['Coffee in excess', 'Alcohol', 'Refined grains'],
+    source: 'Methylation support',
+  },
+  {
+    matchAny: ['ferritin', 'iron', 'hemoglobin'],
+    condition: 'low',
+    foods: ['Grass-fed beef', 'Liver', 'Lentils', 'Pumpkin seeds', 'Spinach with lemon (vit C for absorption)'],
+    avoid: ['Coffee/tea with iron-rich meals (tannins block absorption)', 'Calcium supplements at iron-rich meals'],
+    source: 'Low iron / blood-building',
+  },
+  {
+    matchAny: ['vitamin d', '25-oh', '25(oh)'],
+    condition: 'low',
+    foods: ['Wild salmon', 'Sardines', 'Cod liver oil', 'Pastured egg yolks', 'Mushrooms (UV-exposed)'],
+    avoid: [],
+    source: 'Low vitamin D',
+  },
+  {
+    matchAny: ['vitamin b12', 'b12', 'methylmalonic'],
+    condition: 'low',
+    foods: ['Liver', 'Wild salmon', 'Clams', 'Grass-fed beef', 'Pastured eggs'],
+    avoid: ['PPIs / antacids (block B12 absorption)'],
+    source: 'Low B12',
+  },
+  {
+    matchAny: ['magnesium'],
+    condition: 'low',
+    foods: ['Pumpkin seeds', 'Dark chocolate (85%+)', 'Spinach', 'Almonds', 'Avocado'],
+    avoid: ['Alcohol', 'Caffeine in excess'],
+    source: 'Low magnesium',
+  },
+  {
+    matchAny: ['alt', 'ast', 'ggt'],
+    condition: 'high',
+    foods: ['Cruciferous vegetables', 'Beets', 'Artichokes', 'Dandelion greens', 'Wild salmon'],
+    avoid: ['Alcohol', 'Industrial seed oils', 'Acetaminophen overuse'],
+    source: 'Liver / detox support',
+  },
+  {
+    matchAny: ['tsh'],
+    condition: 'high',
+    foods: ['Brazil nuts (selenium)', 'Wild salmon', 'Pastured eggs', 'Sea vegetables (in moderation)'],
+    avoid: ['Soy in excess', 'Cruciferous in raw excess if iodine-deficient'],
+    source: 'Sluggish thyroid',
+  },
+  {
+    matchAny: ['zonulin', 'secretory iga', 'calprotectin'],
+    condition: 'high',
+    foods: ['Bone broth', 'Fermented vegetables', 'Cooked greens', 'Wild-caught fish'],
+    avoid: ['Gluten', 'Industrial seed oils', 'Alcohol', 'NSAIDs when avoidable'],
+    source: 'Gut barrier / inflammation',
+  },
+];
+
 export const CLINICAL_AI_SYSTEM_PROMPT = `You are a clinical decision-support AI operating within a functional medicine and Traditional Chinese Medicine (TCM) framework. Your role is to analyze user-provided data, identify clinically relevant patterns, and explain correlations in a clear, patient-friendly way while maintaining medical caution.
 
 CORE FRAMEWORK:

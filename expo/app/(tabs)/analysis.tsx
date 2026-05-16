@@ -33,14 +33,20 @@ import {
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
+import { useLabs } from '@/providers/LabsProvider';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 import ChiefComplaintIntake from '@/components/ChiefComplaintIntake';
 import ClinicalAIAssistant from '@/components/ClinicalAIAssistant';
 import {
   TCM_PATTERNS,
   FUNCTIONAL_SYSTEMS,
   SYMPTOM_TO_PATTERN_MAP,
+  BIOMARKER_TO_PATTERN_MAP,
+  BIOMETRIC_PATTERN_RULES,
+  BIOMARKER_DIETARY_RULES,
 } from '@/constants/clinicalPatterns';
-import { TCMPattern, FunctionalSystem, ChiefComplaint, AssociatedSymptom } from '@/types';
+import { TCMPattern, FunctionalSystem, ChiefComplaint, AssociatedSymptom, Biomarker } from '@/types';
 
 const TCM_PATTERN_ICONS: Partial<Record<TCMPattern, any>> = {
   qi_deficiency: Activity,
@@ -65,6 +71,17 @@ const FUNCTIONAL_SYSTEM_ICONS: Partial<Record<FunctionalSystem, any>> = {
   immune_activation: AlertCircle,
 };
 
+interface BiometricAverage {
+  hrv: number | null;
+  resting_hr: number | null;
+  sleep_efficiency: number | null;
+  sleep_duration_minutes: number | null;
+  temp_deviation: number | null;
+  sleep_score: number | null;
+  respiratory_rate: number | null;
+  days_sampled: number;
+}
+
 export default function AnalysisScreen() {
   const {
     categoryScores,
@@ -72,6 +89,48 @@ export default function AnalysisScreen() {
     saveClinicalIntake,
     isLoading,
   } = useUser();
+  const { allBiomarkers, labPanels } = useLabs();
+
+  // Pull 7-day biometric averages directly. We can't put this in a provider
+  // hook (no biometrics provider exists), but the Clinical Analysis tab is
+  // the only consumer right now, so a local React Query call is the
+  // simplest answer.
+  const biometricsQuery = useQuery<BiometricAverage | null>({
+    queryKey: ['analysisBiometrics7d'],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+      const start = new Date();
+      start.setUTCDate(start.getUTCDate() - 6);
+      const startStr = start.toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from('daily_biometric_records')
+        .select('hrv, resting_hr, sleep_efficiency, sleep_duration_minutes, temp_deviation, sleep_score, respiratory_rate')
+        .eq('user_id', session.user.id)
+        .gte('date', startStr)
+        .lte('date', today);
+      if (error || !data) return null;
+      const rows = data as Array<Record<string, number | null>>;
+      if (rows.length === 0) return null;
+      const avg = (k: string): number | null => {
+        const vals = rows.map(r => r[k]).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+        if (vals.length === 0) return null;
+        return vals.reduce((s, v) => s + v, 0) / vals.length;
+      };
+      return {
+        hrv: avg('hrv'),
+        resting_hr: avg('resting_hr'),
+        sleep_efficiency: avg('sleep_efficiency'),
+        sleep_duration_minutes: avg('sleep_duration_minutes'),
+        temp_deviation: avg('temp_deviation'),
+        sleep_score: avg('sleep_score'),
+        respiratory_rate: avg('respiratory_rate'),
+        days_sampled: rows.length,
+      };
+    },
+    staleTime: 60_000,
+  });
 
   const [showIntakeModal, setShowIntakeModal] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
@@ -80,11 +139,38 @@ export default function AnalysisScreen() {
   const [activeTab, setActiveTab] = useState<'patterns' | 'tcm' | 'dietary'>('patterns');
 
   const detectedPatterns = useMemo(() => {
-    const tcmPatterns: { pattern: TCMPattern; score: number; symptoms: string[] }[] = [];
-    const functionalPatterns: { system: FunctionalSystem; score: number; symptoms: string[] }[] = [];
+    // Each pattern accumulates a score plus a list of "evidence items"
+    // describing what contributed (so the UI can show e.g. "From: 3
+    // symptoms + 2 biomarkers + low HRV").
+    type EvidenceSource = 'symptom' | 'biomarker' | 'biometric';
+    interface PatternBucket {
+      score: number;
+      evidence: { source: EvidenceSource; label: string }[];
+    }
+    const tcm: Record<string, PatternBucket> = {};
+    const functional: Record<string, PatternBucket> = {};
 
+    const addPattern = (
+      p: TCMPattern | FunctionalSystem,
+      score: number,
+      source: EvidenceSource,
+      label: string,
+    ) => {
+      const isTCM = TCM_PATTERNS.some(t => t.id === p);
+      const target = isTCM ? tcm : functional;
+      const existing = target[p];
+      if (existing) {
+        existing.score += score;
+        if (!existing.evidence.some(e => e.label === label && e.source === source)) {
+          existing.evidence.push({ source, label });
+        }
+      } else {
+        target[p] = { score, evidence: [{ source, label }] };
+      }
+    };
+
+    // 1. SYMPTOMS - questionnaire categoryScores + clinical intake
     const symptomMap: Record<string, number> = {};
-
     categoryScores.forEach(score => {
       if (score.percentage >= 25) {
         const categorySymptoms = getSymptomsByCategory(score.categoryId);
@@ -93,50 +179,78 @@ export default function AnalysisScreen() {
         });
       }
     });
-
     if (clinicalIntake?.associatedSymptoms) {
       clinicalIntake.associatedSymptoms.forEach(s => {
         symptomMap[s.name.toLowerCase().replace(/\s+/g, '_')] = s.severity * 10;
       });
     }
-
     Object.entries(symptomMap).forEach(([symptom, severity]) => {
       const patterns = SYMPTOM_TO_PATTERN_MAP[symptom] || [];
-      patterns.forEach(p => {
-        const isTCM = TCM_PATTERNS.some(t => t.id === p);
-        if (isTCM) {
-          const existing = tcmPatterns.find(t => t.pattern === p as TCMPattern);
-          if (existing) {
-            existing.score += severity;
-            if (!existing.symptoms.includes(symptom)) {
-              existing.symptoms.push(symptom);
-            }
-          } else {
-            tcmPatterns.push({ pattern: p as TCMPattern, score: severity, symptoms: [symptom] });
-          }
-        } else {
-          const existing = functionalPatterns.find(f => f.system === p as FunctionalSystem);
-          if (existing) {
-            existing.score += severity;
-            if (!existing.symptoms.includes(symptom)) {
-              existing.symptoms.push(symptom);
-            }
-          } else {
-            functionalPatterns.push({ system: p as FunctionalSystem, score: severity, symptoms: [symptom] });
-          }
-        }
-      });
+      patterns.forEach(p => addPattern(p, severity, 'symptom', symptom.replace(/_/g, ' ')));
     });
 
+    // 2. BIOMARKERS - any flagged (suboptimal/critical) marker contributes
+    // to patterns per BIOMARKER_TO_PATTERN_MAP
+    for (const bio of allBiomarkers) {
+      if (bio.status !== 'suboptimal' && bio.status !== 'critical') continue;
+      // Direction: suboptimal/critical when value is above functional range = high,
+      // when below = low. Fall back to reference range if functional is empty.
+      const max = bio.functionalRange?.max || bio.referenceRange?.max;
+      const min = bio.functionalRange?.min || bio.referenceRange?.min;
+      let direction: 'high' | 'low' | null = null;
+      if (max && bio.value > max) direction = 'high';
+      else if (min && bio.value < min) direction = 'low';
+
+      const lname = bio.name.toLowerCase();
+      for (const rule of BIOMARKER_TO_PATTERN_MAP) {
+        if (!rule.matchAny.some(m => lname.includes(m))) continue;
+        if (rule.condition !== 'either' && direction && rule.condition !== direction) continue;
+        const weight = rule.weight ?? 30;
+        for (const p of rule.patterns) {
+          addPattern(p, weight, 'biomarker', `${bio.name}${direction ? ' ' + direction : ''}`);
+        }
+      }
+    }
+
+    // 3. BIOMETRICS - 7-day averages crossing threshold rules
+    const bio = biometricsQuery.data;
+    if (bio) {
+      for (const rule of BIOMETRIC_PATTERN_RULES) {
+        const val = bio[rule.field];
+        if (val == null) continue;
+        const fires = rule.direction === 'below' ? val < rule.threshold : val > rule.threshold;
+        if (!fires) continue;
+        const weight = rule.weight ?? 25;
+        for (const p of rule.patterns) {
+          addPattern(p, weight, 'biometric', rule.label);
+        }
+      }
+    }
+
     return {
-      tcm: tcmPatterns.sort((a, b) => b.score - a.score),
-      functional: functionalPatterns.sort((a, b) => b.score - a.score),
+      tcm: Object.entries(tcm)
+        .map(([k, v]) => ({
+          pattern: k as TCMPattern,
+          score: v.score,
+          symptoms: v.evidence.map(e => e.label),
+          evidence: v.evidence,
+        }))
+        .sort((a, b) => b.score - a.score),
+      functional: Object.entries(functional)
+        .map(([k, v]) => ({
+          system: k as FunctionalSystem,
+          score: v.score,
+          symptoms: v.evidence.map(e => e.label),
+          evidence: v.evidence,
+        }))
+        .sort((a, b) => b.score - a.score),
     };
-  }, [categoryScores, clinicalIntake]);
+  }, [categoryScores, clinicalIntake, allBiomarkers, biometricsQuery.data]);
 
   const dietaryRecommendations = useMemo(() => {
     const recommendations: { foods: string[]; avoid: string[]; source: string }[] = [];
-    
+
+    // TCM pattern-driven (existing behaviour)
     detectedPatterns.tcm.slice(0, 3).forEach(p => {
       const info = TCM_PATTERNS.find(t => t.id === p.pattern);
       if (info) {
@@ -148,8 +262,32 @@ export default function AnalysisScreen() {
       }
     });
 
+    // Biomarker-driven dietary additions
+    const seenSources = new Set<string>(recommendations.map(r => r.source));
+    for (const bio of allBiomarkers) {
+      if (bio.status !== 'suboptimal' && bio.status !== 'critical') continue;
+      const max = bio.functionalRange?.max || bio.referenceRange?.max;
+      const min = bio.functionalRange?.min || bio.referenceRange?.min;
+      let direction: 'high' | 'low' | null = null;
+      if (max && bio.value > max) direction = 'high';
+      else if (min && bio.value < min) direction = 'low';
+
+      const lname = bio.name.toLowerCase();
+      for (const rule of BIOMARKER_DIETARY_RULES) {
+        if (!rule.matchAny.some(m => lname.includes(m))) continue;
+        if (rule.condition !== 'either' && direction && rule.condition !== direction) continue;
+        if (seenSources.has(rule.source)) continue;
+        seenSources.add(rule.source);
+        recommendations.push({
+          foods: rule.foods,
+          avoid: rule.avoid,
+          source: rule.source,
+        });
+      }
+    }
+
     return recommendations;
-  }, [detectedPatterns.tcm]);
+  }, [detectedPatterns.tcm, allBiomarkers]);
 
   const handleIntakeComplete = useCallback((complaint: ChiefComplaint, symptoms: AssociatedSymptom[]) => {
     saveClinicalIntake(complaint, symptoms);
@@ -298,11 +436,58 @@ export default function AnalysisScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Data sources indicator - what's feeding the pattern detection */}
+        <View style={{
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 6,
+          paddingHorizontal: 20,
+          paddingBottom: 12,
+        }}>
+          {(() => {
+            const symptomCount = (clinicalIntake?.associatedSymptoms?.length ?? 0)
+              + categoryScores.filter(s => s.percentage >= 25).length;
+            const labCount = allBiomarkers.filter(b => b.status === 'suboptimal' || b.status === 'critical').length;
+            const biometricDays = biometricsQuery.data?.days_sampled ?? 0;
+            const panelCount = labPanels.length;
+            const items: { icon: string; label: string; active: boolean }[] = [
+              { icon: 'symptoms', label: symptomCount > 0 ? `${symptomCount} symptom signals` : 'No symptoms logged', active: symptomCount > 0 },
+              { icon: 'labs', label: panelCount > 0 ? `${labCount} flagged biomarkers · ${panelCount} panel${panelCount === 1 ? '' : 's'}` : 'No labs uploaded', active: panelCount > 0 },
+              { icon: 'wearable', label: biometricDays > 0 ? `${biometricDays} day${biometricDays === 1 ? '' : 's'} of wearable data` : 'No wearable data', active: biometricDays > 0 },
+            ];
+            return items.map((item, idx) => (
+              <View
+                key={idx}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 12,
+                  backgroundColor: item.active ? Colors.primary + '15' : Colors.borderLight,
+                  borderWidth: 1,
+                  borderColor: item.active ? Colors.primary + '40' : Colors.border,
+                }}
+              >
+                {item.icon === 'symptoms' && <Stethoscope size={12} color={item.active ? Colors.primary : Colors.textTertiary} />}
+                {item.icon === 'labs' && <FileText size={12} color={item.active ? Colors.primary : Colors.textTertiary} />}
+                {item.icon === 'wearable' && <Activity size={12} color={item.active ? Colors.primary : Colors.textTertiary} />}
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: '600',
+                  color: item.active ? Colors.primary : Colors.textTertiary,
+                }}>{item.label}</Text>
+              </View>
+            ));
+          })()}
+        </View>
+
         {activeTab === 'patterns' && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Functional Medicine Systems</Text>
             <Text style={styles.sectionSubtitle}>
-              Analysis based on your questionnaire and symptoms
+              Combining your symptoms, lab biomarkers, and wearable trends
             </Text>
 
             {detectedPatterns.functional.length === 0 ? (
@@ -473,7 +658,7 @@ export default function AnalysisScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Dietary Recommendations</Text>
             <Text style={styles.sectionSubtitle}>
-              Based on your TCM patterns
+              Based on your TCM patterns and lab findings
             </Text>
 
             {dietaryRecommendations.length === 0 ? (
