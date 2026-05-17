@@ -80,9 +80,11 @@ reactive / acne-prone / mature-aging / resilient), quality observations
 under-eye, UV / glycation / oxidative stress signs), facial zones (forehead,
 temples, glabella, under eyes, cheeks, nose/T-zone, nasolabial folds,
 mouth/lips, jawline, chin, neck) each scored 0-100 with a one-line note,
-undertone (cool / warm / neutral), six longevity scores (skin_longevity,
-barrier_strength, hydration, collagen_support, inflammation,
-recovery_capacity) each 0-100, skin age delta years vs chronological.
+undertone (cool / warm / neutral), six longevity scores nested under
+"longevity_scores" with the EXACT keys: skin_longevity_score,
+barrier_strength_score, hydration_score, collagen_support_score,
+inflammation_score, recovery_capacity_score (each 0-100). skin age delta
+years vs chronological.
 
 RECOMMENDATIONS — the LLM does NOT pick products. Emit
 recommendation_finding_tags (e.g., barrier_stress_high, hydration_low,

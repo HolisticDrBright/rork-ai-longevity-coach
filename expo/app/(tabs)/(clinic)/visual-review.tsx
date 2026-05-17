@@ -25,16 +25,22 @@ export default function VisualReviewQueueScreen() {
     { staleTime: 30_000 }
   );
 
+  // queueQuery is a new object reference every render but its .refetch
+  // method is stable, so we depend on the stable function ref instead
+  // of the whole query object to avoid an effect-refire-per-render storm
+  // (audit bug #9).
+  const refetch = queueQuery.refetch;
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    await queueQuery.refetch();
+    await refetch();
     setRefreshing(false);
-  }, [queueQuery]);
+  }, [refetch]);
 
   useFocusEffect(
     useCallback(() => {
-      queueQuery.refetch();
-    }, [queueQuery])
+      refetch();
+    }, [refetch])
   );
 
   return (

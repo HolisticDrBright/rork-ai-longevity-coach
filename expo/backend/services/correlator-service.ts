@@ -112,9 +112,17 @@ export function runCorrelator(input: CorrelatorInput): CorrelatorOutput {
   }
 
   // ── Step 2: convergence pass ──
+  // Convergence requires ≥CONVERGENCE_MIN_MODALITIES *visual* modalities.
+  // The 'symptom_rollup' virtual modality contributes confidence to the
+  // noisy-OR fusion when present, but does NOT count toward the
+  // modality-count threshold — otherwise a single visual modality plus
+  // matching symptoms would trigger a false "cross-modality" convergence
+  // (audit bug #7).
   const convergent: ConvergentFinding[] = [];
   for (const [tag, modalityConfs] of tagMap.entries()) {
-    if (modalityConfs.size < CONVERGENCE_MIN_MODALITIES) continue;
+    const visualModalityCount = Array.from(modalityConfs.keys())
+      .filter(k => k !== 'symptom_rollup').length;
+    if (visualModalityCount < CONVERGENCE_MIN_MODALITIES) continue;
     const combined = noisyOr(Array.from(modalityConfs.values()));
     if (combined < CONVERGENCE_MIN_COMBINED_CONF) continue;
     convergent.push({

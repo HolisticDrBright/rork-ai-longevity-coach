@@ -9,6 +9,7 @@ import {
   Alert,
   TextInput,
   Linking,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,6 +17,50 @@ import { CheckCircle, AlertTriangle, Mail, Eye } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
+
+type ImageRow = {
+  id: string;
+  modality: string;
+  angle: string;
+  storage_key: string;
+  mime_type: string;
+  captured_at: string;
+};
+
+// Resolves a Storage key to a short-lived signed URL so an <Image>
+// can render it. Caches the URL for its TTL (~5 min from
+// visualDiagnostics.getSignedAssetUrl).
+function SessionImage({ storageKey, modality, angle }: { storageKey: string; modality: string; angle: string }) {
+  const urlQuery = trpc.visualDiagnostics.getSignedAssetUrl.useQuery(
+    { storageKey },
+    { enabled: !!storageKey, staleTime: 4 * 60 * 1000 },
+  );
+  return (
+    <View style={imageStyles.tile}>
+      {urlQuery.data?.url ? (
+        <Image source={{ uri: urlQuery.data.url }} style={imageStyles.img} resizeMode="cover" />
+      ) : urlQuery.isError ? (
+        <View style={imageStyles.errorBox}>
+          <Text style={imageStyles.errorText}>Image unavailable</Text>
+        </View>
+      ) : (
+        <View style={imageStyles.loading}>
+          <ActivityIndicator color={Colors.primary} size="small" />
+        </View>
+      )}
+      <Text style={imageStyles.caption}>{modality} · {angle}</Text>
+    </View>
+  );
+}
+
+const imageStyles = StyleSheet.create({
+  tile: { width: 140, marginRight: 8 },
+  img: { width: 140, height: 140, borderRadius: 8, backgroundColor: Colors.surfaceSecondary },
+  loading: { width: 140, height: 140, borderRadius: 8, backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center' },
+  errorBox: { width: 140, height: 140, borderRadius: 8, backgroundColor: Colors.danger + '15', alignItems: 'center', justifyContent: 'center' },
+  errorText: { fontSize: 11, color: Colors.danger, textAlign: 'center', paddingHorizontal: 8 },
+  caption: { fontSize: 11, color: Colors.textSecondary, marginTop: 4, textAlign: 'center' },
+});
 
 type RedFlagRow = {
   id: string;
@@ -159,6 +204,23 @@ export default function PractitionerVisualSessionScreen() {
             </Text>
           </View>
         </View>
+
+        {/* Captured images — practitioner needs to see source to verify findings */}
+        {(s.images as ImageRow[] | undefined) && (s.images as ImageRow[]).length > 0 && (
+          <>
+            <Text style={styles.sectionHeader}>Captured images</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              {(s.images as ImageRow[]).map((img) => (
+                <SessionImage
+                  key={img.id}
+                  storageKey={img.storage_key}
+                  modality={img.modality}
+                  angle={img.angle}
+                />
+              ))}
+            </ScrollView>
+          </>
+        )}
 
         {/* Per-modality findings */}
         <Text style={styles.sectionHeader}>Per-modality findings</Text>

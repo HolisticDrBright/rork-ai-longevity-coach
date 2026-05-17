@@ -99,7 +99,12 @@ function runCorrelator(input: {
 
   const convergent: ConvergentFinding[] = [];
   for (const [tag, modalityConfs] of tagMap.entries()) {
-    if (modalityConfs.size < CONVERGENCE_MIN_MODALITIES) continue;
+    // Require ≥CONVERGENCE_MIN_MODALITIES *visual* modalities — the
+    // symptom_rollup virtual modality contributes confidence to the
+    // noisy-OR but doesn't count toward the modality threshold.
+    const visualModalityCount = Array.from(modalityConfs.keys())
+      .filter((k: string) => k !== 'symptom_rollup').length;
+    if (visualModalityCount < CONVERGENCE_MIN_MODALITIES) continue;
     const combined = noisyOr(Array.from(modalityConfs.values()));
     if (combined < CONVERGENCE_MIN_COMBINED_CONF) continue;
     convergent.push({

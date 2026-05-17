@@ -164,48 +164,54 @@ async function main(): Promise<void> {
     (catData ?? []).map((c: { id: string; category_name: string }) => [c.category_name, c.id]),
   );
 
-  // 4. Upsert products (chunked to avoid request-size limits)
-  const CHUNK = 50;
+  // 4. Upsert products. PostgREST's onConflict requires bare-column
+  //    UNIQUE constraints — the existing approved_products unique
+  //    index is (brand_id, lower(product_name)) which is an expression
+  //    index and can't be referenced from onConflict. So for each row
+  //    we delete-then-insert keyed on (brand_id, lower(product_name)).
+  //    Chunked deletes use .in() per brand to keep request size sane.
   let written = 0;
   let skipped = 0;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const slice = rows.slice(i, i + CHUNK);
-    const records = slice
-      .map(r => {
-        const brand_id = brandIdByName.get(r.brand_name);
-        if (!brand_id) {
-          console.warn(`[ingest] skipping "${r.product_name}" — brand "${r.brand_name}" not found`);
-          skipped += 1;
-          return null;
-        }
-        const category_id = catIdByName.get(r.category_name) ?? null;
-        return {
-          brand_id,
-          product_name: r.product_name,
-          product_type: r.product_type || null,
-          recommendation_category_id: category_id,
-          actives_positioning: r.actives_positioning || null,
-          when_to_use: r.when_to_use || null,
-          routine_slot: r.routine_slot || null,
-          verification_level: r.verification_level,
-          source_url: r.source_url || null,
-          exclusion_flags: r.exclusion_flags,
-          finding_tags: r.finding_tags,
-          best_skin_types: r.best_skin_types,
-          priority: r.priority,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
-
-    if (records.length === 0) continue;
-    const { error } = await sb
-      .from('approved_products')
-      .upsert(records, { onConflict: 'brand_id,lower(product_name)' });
-    if (error) {
-      console.error(`[ingest] chunk starting at ${i} failed: ${error.message}`);
+  for (const r of rows) {
+    const brand_id = brandIdByName.get(r.brand_name);
+    if (!brand_id) {
+      console.warn(`[ingest] skipping "${r.product_name}" — brand "${r.brand_name}" not found`);
+      skipped += 1;
       continue;
     }
-    written += records.length;
+    const category_id = catIdByName.get(r.category_name) ?? null;
+    const record = {
+      brand_id,
+      product_name: r.product_name,
+      product_type: r.product_type || null,
+      recommendation_category_id: category_id,
+      actives_positioning: r.actives_positioning || null,
+      when_to_use: r.when_to_use || null,
+      routine_slot: r.routine_slot || null,
+      verification_level: r.verification_level,
+      source_url: r.source_url || null,
+      exclusion_flags: r.exclusion_flags,
+      finding_tags: r.finding_tags,
+      best_skin_types: r.best_skin_types,
+      priority: r.priority,
+    };
+
+    // Delete existing row for this (brand, lower(name)) if any.
+    const { error: delErr } = await sb
+      .from('approved_products')
+      .delete()
+      .eq('brand_id', brand_id)
+      .ilike('product_name', r.product_name);
+    if (delErr) {
+      console.error(`[ingest] delete-before-insert failed for "${r.product_name}": ${delErr.message}`);
+      continue;
+    }
+    const { error: insErr } = await sb.from('approved_products').insert(record);
+    if (insErr) {
+      console.error(`[ingest] insert failed for "${r.product_name}": ${insErr.message}`);
+      continue;
+    }
+    written += 1;
   }
 
   console.log(`[ingest] Done. wrote=${written}, skipped=${skipped}`);

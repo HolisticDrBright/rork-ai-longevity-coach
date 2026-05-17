@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -80,18 +80,24 @@ export default function SessionDetailScreen() {
     load().finally(() => setIsLoading(false));
   }, [load]);
 
-  // Auto-refresh while still analyzing/correlating
+  // Auto-refresh while still analyzing/correlating. We depend on the
+  // status STRING (not the full detail object) so the interval doesn't
+  // tear down / re-create on every poll tick. A ref to the load fn
+  // keeps the effect dep list stable across re-renders. (Audit bug #13.)
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const status = detail?.session.status;
   useEffect(() => {
-    if (!detail) return;
+    if (!status) return;
     const isTerminal =
-      detail.session.status === 'review_pending' ||
-      detail.session.status === 'signed_off' ||
-      detail.session.status === 'failed' ||
-      detail.session.status === 'render_failed';
+      status === 'review_pending' ||
+      status === 'signed_off' ||
+      status === 'failed' ||
+      status === 'render_failed';
     if (isTerminal) return;
-    const interval = setInterval(load, 3000);
+    const interval = setInterval(() => loadRef.current(), 3000);
     return () => clearInterval(interval);
-  }, [detail, load]);
+  }, [status]);
 
   if (isLoading) {
     return (
