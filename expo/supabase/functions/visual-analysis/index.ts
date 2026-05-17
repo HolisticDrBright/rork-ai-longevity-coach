@@ -237,7 +237,7 @@ async function buildPatientContext(
   const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString();
   const sixMonthsAgo = new Date(Date.now() - 180 * 86400000).toISOString();
 
-  const [profileRes, intakeRes, contraRes, protocolsRes, prevFindingRes, labMarkersRes, symptomLogsRes] = await Promise.all([
+  const [profileRes, intakeRes, contraRes, protocolsRes, prevFindingRes, labMarkersRes, symptomLogsRes, hormoneRes] = await Promise.all([
     sb.from('profiles').select('sex, birth_date, paradigm_preferences').eq('id', userId).maybeSingle(),
     sb.from('clinical_intakes').select('chief_complaint_json').eq('user_id', userId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     sb.from('contraindications').select('pregnant, nursing, medications, allergies, conditions').eq('user_id', userId).maybeSingle(),
@@ -245,6 +245,10 @@ async function buildPatientContext(
     sb.from('visual_findings').select('summary_text, created_at').eq('user_id', userId).eq('modality', modality).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     sb.from('lab_markers').select('marker_name, marker_value, unit, reference_range_low, reference_range_high').eq('user_id', userId).gte('collected_at', sixMonthsAgo).order('collected_at', { ascending: false }).limit(100),
     sb.from('symptom_logs').select('symptom_name, severity').eq('user_id', userId).gte('logged_at', fourteenDaysAgo),
+    // Most recent cycle entry — used to derive cycle_day for cycling
+    // female patients (audit bug #17). If the table or rows don't
+    // exist we silently fall back to 'n/a'.
+    sb.from('hormone_entries').select('cycle_day, logged_at').eq('user_id', userId).order('logged_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const profile = profileRes.data as { sex?: string; birth_date?: string; paradigm_preferences?: string[] } | null;
@@ -257,6 +261,19 @@ async function buildPatientContext(
 
   const age = ageFromBirthDate(profile?.birth_date ?? null);
   const sex = profile?.sex ?? 'unknown';
+
+  // Compute cycle_day from the most recent hormone entry. If the entry
+  // is older than 35 days the cycle is stale and we surface 'n/a' so
+  // the analyzer doesn't condition on outdated data.
+  const hormone = hormoneRes.data as { cycle_day?: number | null; logged_at?: string } | null;
+  let cycleDayString: string = 'n/a';
+  if (hormone?.cycle_day != null && hormone?.logged_at) {
+    const daysSinceLog = Math.round((Date.now() - new Date(hormone.logged_at).getTime()) / 86400000);
+    if (daysSinceLog <= 35) {
+      const estimated = hormone.cycle_day + daysSinceLog;
+      cycleDayString = String(estimated > 35 ? '>35 (recalibrate)' : estimated);
+    }
+  }
 
   const ccText = (() => {
     const cc = intake?.chief_complaint_json;
@@ -316,7 +333,7 @@ async function buildPatientContext(
   return {
     age: age != null ? String(age) : 'unknown',
     sex,
-    cycle_day: 'n/a',
+    cycle_day: cycleDayString,
     chief_complaint_text: ccText,
     medical_history_flags_csv: csv(historyFlags),
     active_protocols_csv: csv(protocols),
@@ -513,12 +530,27 @@ Deno.serve(async (req) => {
     }
     const generationMs = Date.now() - startedAt;
 
+    // Compose a compact summary that the NEXT session's analyzer call
+    // can use as `previous_summary` context (audit bug #18). Pull from
+    // the synergistic/western narrative paragraphs first, fall back to
+    // a tag dump.
+    const narratives = (typeof parsed.narrative_by_paradigm === 'object' && parsed.narrative_by_paradigm !== null)
+      ? parsed.narrative_by_paradigm as Record<string, unknown>
+      : {};
+    const narrativeText = [narratives.synergistic, narratives.western, narratives.functional]
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)[0];
+    const tagDump = Array.isArray(parsed.cross_modality_tags) && parsed.cross_modality_tags.length > 0
+      ? `Tags: ${(parsed.cross_modality_tags as unknown[]).join(', ')}`
+      : null;
+    const summaryText = (narrativeText ?? tagDump ?? 'No salient observations.').slice(0, 1000);
+
     // 7. Persist visual_findings row
     const findingsRow = {
       session_id: sessionId,
       user_id: session.user_id,
       modality,
       structured_findings: parsed,
+      summary_text: summaryText,
       cross_modality_tags: Array.isArray(parsed.cross_modality_tags) ? parsed.cross_modality_tags : [],
       tags_with_confidence: (typeof parsed.tags_with_confidence === 'object' && parsed.tags_with_confidence !== null)
         ? parsed.tags_with_confidence
