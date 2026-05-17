@@ -42,6 +42,18 @@ export default function ClinicLayout() {
           title: 'Supplements Admin',
         }}
       />
+      <Stack.Screen
+        name="visual-review"
+        options={{
+          title: 'Visual Review Queue',
+        }}
+      />
+      <Stack.Screen
+        name="visual-session/[sessionId]"
+        options={{
+          title: 'Visual Assessment',
+        }}
+      />
     </Stack>
   );
 }

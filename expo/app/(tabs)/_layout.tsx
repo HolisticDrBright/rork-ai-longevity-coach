@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf, Watch } from 'lucide-react-native';
+import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf, Watch, Camera } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
@@ -78,6 +78,13 @@ export default function TabLayout() {
         options={{
           title: 'Labs',
           tabBarIcon: ({ color, size }) => <FlaskConical color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="visual-assessments"
+        options={{
+          title: 'Visual',
+          tabBarIcon: ({ color, size }) => <Camera color={color} size={size} />,
         }}
       />
       <Tabs.Screen

@@ -420,6 +420,7 @@ Deno.serve(async (req) => {
       }
     }
     if (allRedFlags.length > 0) {
+      // Insert visual_red_flag_alerts (patient-visible record)
       const rfRows = allRedFlags.map(rf => ({
         session_id: sessionId,
         user_id: session.user_id,
@@ -429,8 +430,57 @@ Deno.serve(async (req) => {
         observation: rf.observation,
         recommended_action: rf.recommended_action,
       }));
-      const { error: rfErr } = await sb.from('visual_red_flag_alerts').insert(rfRows);
+      const { data: insertedRfs, error: rfErr } = await sb
+        .from('visual_red_flag_alerts')
+        .insert(rfRows)
+        .select('id, severity, observation, recommended_action');
       if (rfErr) console.error('[visual-correlator] red_flag insert failed:', rfErr);
+
+      // For severity critical/high, also write into clinic_alert_events so
+      // the practitioner alerts feed surfaces it alongside lab/biometric
+      // alerts. trigger_data carries the back-ref to the visual session +
+      // red flag row so the practitioner UI can deep-link to the report.
+      const escalations = (insertedRfs ?? []).filter(rf =>
+        rf.severity === 'critical' || rf.severity === 'high'
+      );
+      if (escalations.length > 0) {
+        const eventRows = escalations.map(rf => ({
+          patient_id: session.user_id,
+          rule_id: null,
+          category: 'symptom',
+          trigger_type: 'event',
+          trigger_data: {
+            source: 'visual_diagnostics',
+            visual_session_id: sessionId,
+            visual_red_flag_alert_id: rf.id,
+          },
+          severity: rf.severity,
+          status: 'new',
+          title: `Visual diagnostics: ${rf.observation.slice(0, 80)}`,
+          message: rf.recommended_action
+            ? `${rf.observation}\n\nRecommended action: ${rf.recommended_action}`
+            : rf.observation,
+        }));
+        const { data: insertedEvents, error: evtErr } = await sb
+          .from('clinic_alert_events')
+          .insert(eventRows)
+          .select('id, trigger_data');
+        if (evtErr) {
+          console.error('[visual-correlator] clinic_alert_events insert failed:', evtErr);
+        } else {
+          // Back-link each visual_red_flag_alerts row to its clinic_alert_events row
+          for (const evt of insertedEvents ?? []) {
+            const td = evt.trigger_data as { visual_red_flag_alert_id?: string };
+            const rfId = td?.visual_red_flag_alert_id;
+            if (rfId) {
+              await sb
+                .from('visual_red_flag_alerts')
+                .update({ clinic_alert_event_id: evt.id })
+                .eq('id', rfId);
+            }
+          }
+        }
+      }
     }
 
     // Update session
