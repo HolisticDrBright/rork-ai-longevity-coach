@@ -15,36 +15,15 @@
 --       practitioner sign-off no longer overwrites patient/system notes.
 -- ============================================================
 
--- ─── #3 clinic_alert_events category enum ───────────────────
--- The table is defined elsewhere with a CHECK constraint we need
--- to relax. We DROP-and-recreate the constraint with the added
--- 'visual_diagnostics' value. The constraint name is best-guess;
--- if it differs in prod we'll need a follow-up.
-do $$
-declare
-  con_name text;
-begin
-  select conname into con_name
-  from pg_constraint
-  where conrelid = 'public.clinic_alert_events'::regclass
-    and contype = 'c'
-    and pg_get_constraintdef(oid) ilike '%category%';
-  if con_name is not null then
-    execute format('alter table public.clinic_alert_events drop constraint %I', con_name);
-  end if;
-exception when undefined_table then
-  raise notice 'clinic_alert_events does not exist locally — skipping category enum fix';
-end $$;
-
-do $$
-begin
-  alter table public.clinic_alert_events
-    add constraint clinic_alert_events_category_check
-    check (category in ('lab', 'biometric', 'upload', 'adherence', 'symptom', 'visual_diagnostics'));
-exception
-  when undefined_table then null;
-  when duplicate_object then null;
-end $$;
+-- ─── #3 clinic_alert_events: nothing to alter ───────────────
+-- Earlier draft of this migration tried to extend a `category` enum
+-- on clinic_alert_events. Verifying against the actual schema (see
+-- mapDbToAlertEvent in backend/trpc/routes/clinic/utils.ts) the events
+-- table has NO `category` column — `category` lives on
+-- clinic_alert_rules and is joined in via rule_id. The correlator's
+-- insert was updated to drop both the `category` and `clinician_id`
+-- fields it was erroneously setting. trigger_data.source carries the
+-- 'visual_diagnostics' classification instead. No DDL needed here.
 
 -- ─── #4 profiles.role for clinician gating ──────────────────
 -- The profiles table is created by an earlier migration not in this

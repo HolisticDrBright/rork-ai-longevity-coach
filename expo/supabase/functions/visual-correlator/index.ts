@@ -449,34 +449,32 @@ Deno.serve(async (req) => {
         rf.severity === 'critical' || rf.severity === 'high'
       );
       if (escalations.length > 0) {
-        // Resolve the auth user → clinic patient mapping. clinic_alert_events.patient_id
-        // FKs to clinic_patients.id (NOT auth.users.id), and clinician_id is
-        // NOT NULL per every writer in clinic/alerts.ts. Migration
-        // 20260517000004 adds clinic_patients.linked_auth_user_id so we can
-        // resolve auth user → patient row → assigned clinician.
+        // Resolve auth user → clinic patient. clinic_alert_events.patient_id
+        // FKs to clinic_patients.id (NOT auth.users.id). Migration
+        // 20260517000004 adds clinic_patients.linked_auth_user_id so we
+        // can resolve auth user → patient row.
         //
-        // If the patient has no linked clinic chart, we skip the
-        // clinic_alert_events insert. The red flags still appear in
-        // visual_red_flag_alerts so the patient UI + standalone visual
-        // review queue surface them.
+        // clinic_alert_events has NO `category` and NO `clinician_id`
+        // columns — those live on clinic_alert_rules and are joined via
+        // rule_id. Visual diagnostics escalations have rule_id = null;
+        // the source classification is carried in trigger_data.source.
+        //
+        // If the patient has no linked clinic chart we skip the insert.
+        // Red flags still surface in visual_red_flag_alerts (patient UI
+        // + standalone review queue).
         const { data: patientRow } = await sb
           .from('clinic_patients')
-          .select('id, assigned_clinician_id, clinician_id')
+          .select('id')
           .eq('linked_auth_user_id', session.user_id)
           .maybeSingle();
         const clinicPatientId = (patientRow as { id?: string } | null)?.id ?? null;
-        const assignedClinicianId = (patientRow as { assigned_clinician_id?: string; clinician_id?: string } | null)?.assigned_clinician_id
-          ?? (patientRow as { clinician_id?: string } | null)?.clinician_id
-          ?? null;
 
-        if (!clinicPatientId || !assignedClinicianId) {
-          console.warn(`[visual-correlator] auth user ${session.user_id} has no linked clinic_patients row or no assigned clinician; skipping clinic_alert_events insert. Red flags still recorded in visual_red_flag_alerts.`);
+        if (!clinicPatientId) {
+          console.warn(`[visual-correlator] auth user ${session.user_id} has no linked clinic_patients row; skipping clinic_alert_events insert. Red flags still recorded in visual_red_flag_alerts.`);
         } else {
           const eventRows = escalations.map(rf => ({
             patient_id: clinicPatientId,
-            clinician_id: assignedClinicianId,
             rule_id: null,
-            category: 'visual_diagnostics',
             trigger_type: 'event',
             trigger_data: {
               source: 'visual_diagnostics',
