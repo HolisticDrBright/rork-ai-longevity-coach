@@ -156,28 +156,7 @@ begin
 exception when undefined_table then null;
 end $$;
 
--- ─── C. Tighten profiles.role constraint cleanup ────────────
--- The 20260517000002 migration matched constraints with "role" in their
--- definition, which would have caught unrelated constraints like
--- notify_roles checks. We re-run a narrower check that only matches the
--- specific column-level CHECK we added.
-do $$
-declare
-  con_name text;
-begin
-  -- Match constraints that reference the profiles.role column specifically
-  -- (not arrays-of-roles or substring matches on other columns).
-  select conname into con_name
-  from pg_constraint c
-  join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
-  where c.conrelid = 'public.profiles'::regclass
-    and c.contype = 'c'
-    and a.attname = 'role'
-    and conname <> 'profiles_role_check'
-  limit 1;
-  if con_name is not null then
-    execute format('alter table public.profiles drop constraint %I', con_name);
-    raise notice 'Dropped extra profiles.role check constraint: %', con_name;
-  end if;
-exception when undefined_table then null;
-end $$;
+-- ─── C. profiles.role constraint cleanup — N/A ─────────────
+-- 20260517000002 was revised to NOT add a CHECK constraint on
+-- profiles.role (real deploys have legacy values outside any canonical
+-- enum). Nothing to clean up here.

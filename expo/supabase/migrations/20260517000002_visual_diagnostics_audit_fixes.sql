@@ -28,31 +28,19 @@
 -- ─── #4 profiles.role for clinician gating ──────────────────
 -- The profiles table is created by an earlier migration not in this
 -- branch. ADD COLUMN IF NOT EXISTS is idempotent.
+--
+-- NOTE: no CHECK constraint on the values. Real deploys have
+-- legacy/imported rows with role values outside any canonical enum,
+-- and clinicianProcedure already string-matches exactly ('clinician',
+-- 'staff', 'admin') so non-conforming values fail closed without a
+-- constraint. Adding one here would fail on any row outside the
+-- canonical set.
 do $$
 begin
   alter table public.profiles
     add column if not exists role text not null default 'patient';
 exception when undefined_table then
   raise notice 'profiles table does not exist locally — skipping role column';
-end $$;
-
-do $$
-declare
-  con_name text;
-begin
-  -- Drop any existing role check and recreate with the canonical values
-  select conname into con_name
-  from pg_constraint
-  where conrelid = 'public.profiles'::regclass
-    and contype = 'c'
-    and pg_get_constraintdef(oid) ilike '%role%';
-  if con_name is not null then
-    execute format('alter table public.profiles drop constraint %I', con_name);
-  end if;
-  alter table public.profiles
-    add constraint profiles_role_check
-    check (role in ('patient', 'clinician', 'staff', 'admin'));
-exception when undefined_table then null;
 end $$;
 
 create index if not exists profiles_role_idx on public.profiles(role);
