@@ -42,7 +42,8 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
-const STORAGE_BUCKET = 'lab-pdfs';
+const DEFAULT_STORAGE_BUCKET = 'lab-pdfs';
+const ALLOWED_BUCKETS = new Set(['lab-pdfs', 'visual-diagnostics']);
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -57,6 +58,10 @@ interface ChunkBody {
   base64_data?: string;
   file_name?: string;
   mime_type?: string;
+  // Optional; defaults to 'lab-pdfs' for backward-compat with the lab
+  // analyzer pipeline. Visual diagnostics passes 'visual-diagnostics'.
+  // Only values in ALLOWED_BUCKETS are accepted; anything else returns 400.
+  target_bucket?: string;
 }
 
 function safeFileName(name: string): string {
@@ -114,6 +119,7 @@ Deno.serve(async (req) => {
     base64_data: base64Data,
     file_name: fileName,
     mime_type: mimeType,
+    target_bucket: targetBucketRaw,
   } = body;
 
   if (
@@ -134,6 +140,16 @@ Deno.serve(async (req) => {
 
   if (chunkIndex < 0 || chunkIndex >= totalChunks) {
     return new Response(JSON.stringify({ error: 'chunk_index out of range' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const targetBucket = targetBucketRaw ?? DEFAULT_STORAGE_BUCKET;
+  if (!ALLOWED_BUCKETS.has(targetBucket)) {
+    return new Response(JSON.stringify({
+      error: `target_bucket "${targetBucket}" is not allowed`,
+      allowed: Array.from(ALLOWED_BUCKETS),
+    }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -211,7 +227,7 @@ Deno.serve(async (req) => {
 
     const storagePath = `${userId}/${Date.now()}_${safeFileName(fileName)}`;
     const { error: uploadErr } = await sb.storage
-      .from(STORAGE_BUCKET)
+      .from(targetBucket)
       .upload(storagePath, fileBytes, {
         contentType: mimeType,
         upsert: false,

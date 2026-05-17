@@ -18,7 +18,7 @@
 
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { protectedProcedure, createTRPCRouter } from '../../create-context';
+import { protectedProcedure, clinicianProcedure, createTRPCRouter } from '../../create-context';
 import { createServerSupabaseClient } from '../../../supabase-server';
 
 const STORAGE_BUCKET = 'visual-diagnostics';
@@ -120,12 +120,13 @@ export const visualDiagnosticsRouter = createTRPCRouter({
 
   /**
    * Returns sessions awaiting practitioner review, ordered by red-flag
-   * severity then capture date. RLS on visual_sessions still applies —
-   * the practitioner role grant + clinician-scope policy must permit
-   * cross-user reads. (Current RLS is owner-only; the practitioner
-   * role-based policy is a Phase 2 expansion.)
+   * severity then capture date. Gated by clinicianProcedure (verifies
+   * profiles.role ∈ {clinician, staff, admin}). RLS on visual_sessions
+   * is owner-only at the DB layer — the practitioner-scope policy is a
+   * Phase 2 expansion. Until that lands, the queue only surfaces
+   * sessions the clinician already has read access to.
    */
-  listReviewQueue: protectedProcedure
+  listReviewQueue: clinicianProcedure
     .input(z.object({
       status: sessionStatusSchema.default('review_pending'),
       limit: z.number().min(1).max(100).default(50),
@@ -173,22 +174,27 @@ export const visualDiagnosticsRouter = createTRPCRouter({
       }));
     }),
 
-  signOffSession: protectedProcedure
+  signOffSession: clinicianProcedure
     .input(z.object({
       sessionId: z.string().uuid(),
       reviewerNotes: z.string().max(2000).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
+      // Writes to reviewer_notes (added in 20260517000002) — the
+      // session-level `notes` field is reserved for patient/system
+      // entries (e.g., the correlator writes failure messages there).
       const { data, error } = await sb
         .from('visual_sessions')
         .update({
           status: 'signed_off',
-          notes: input.reviewerNotes ?? null,
+          reviewer_notes: input.reviewerNotes ?? null,
+          signed_off_by: ctx.user.id,
+          signed_off_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq('id', input.sessionId)
-        .select('id, status')
+        .select('id, status, signed_off_by, signed_off_at')
         .single();
       if (error || !data) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Sign-off failed: ${error?.message}` });
@@ -196,7 +202,7 @@ export const visualDiagnosticsRouter = createTRPCRouter({
       return data;
     }),
 
-  acknowledgeRedFlag: protectedProcedure
+  acknowledgeRedFlag: clinicianProcedure
     .input(z.object({ redFlagId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
@@ -219,7 +225,7 @@ export const visualDiagnosticsRouter = createTRPCRouter({
    * Returns recommendation renders for a session — used by the
    * practitioner "Why this product?" drill-down.
    */
-  listRecommendationRenders: protectedProcedure
+  listRecommendationRenders: clinicianProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       const sb = createServerSupabaseClient(ctx.sessionToken);
@@ -236,7 +242,7 @@ export const visualDiagnosticsRouter = createTRPCRouter({
 
   // ─── Product DB read (used by the practitioner admin screen) ─
 
-  listApprovedProducts: protectedProcedure
+  listApprovedProducts: clinicianProcedure
     .input(z.object({
       verificationLevel: z.enum(['pending', 'verified', 'official']).optional(),
       categoryName: z.string().optional(),

@@ -444,49 +444,67 @@ Deno.serve(async (req) => {
         rf.severity === 'critical' || rf.severity === 'high'
       );
       if (escalations.length > 0) {
-        const eventRows = escalations.map(rf => ({
-          patient_id: session.user_id,
-          rule_id: null,
-          category: 'symptom',
-          trigger_type: 'event',
-          trigger_data: {
-            source: 'visual_diagnostics',
-            visual_session_id: sessionId,
-            visual_red_flag_alert_id: rf.id,
-          },
-          severity: rf.severity,
-          status: 'new',
-          title: `Visual diagnostics: ${rf.observation.slice(0, 80)}`,
-          message: rf.recommended_action
-            ? `${rf.observation}\n\nRecommended action: ${rf.recommended_action}`
-            : rf.observation,
-        }));
-        const { data: insertedEvents, error: evtErr } = await sb
-          .from('clinic_alert_events')
-          .insert(eventRows)
-          .select('id, trigger_data');
-        if (evtErr) {
-          console.error('[visual-correlator] clinic_alert_events insert failed:', evtErr);
+        // Resolve the patient's assigned clinician. clinic_alert_events.clinician_id
+        // is NOT NULL (per every other writer in clinic/alerts.ts). If the
+        // patient has no assigned clinician, we leave the events unwritten
+        // rather than insert with a placeholder — the visual_red_flag_alerts
+        // rows still surface in the patient UI and the standalone review queue.
+        const { data: patientRow } = await sb
+          .from('clinic_patients')
+          .select('assigned_clinician_id')
+          .eq('user_id', session.user_id)
+          .maybeSingle();
+        const assignedClinicianId = (patientRow as { assigned_clinician_id?: string } | null)?.assigned_clinician_id ?? null;
+
+        if (!assignedClinicianId) {
+          console.warn(`[visual-correlator] ${session.user_id} has no assigned clinician; skipping clinic_alert_events insert. Red flags still recorded in visual_red_flag_alerts.`);
         } else {
-          // Back-link each visual_red_flag_alerts row to its clinic_alert_events row
-          for (const evt of insertedEvents ?? []) {
-            const td = evt.trigger_data as { visual_red_flag_alert_id?: string };
-            const rfId = td?.visual_red_flag_alert_id;
-            if (rfId) {
-              await sb
-                .from('visual_red_flag_alerts')
-                .update({ clinic_alert_event_id: evt.id })
-                .eq('id', rfId);
+          const eventRows = escalations.map(rf => ({
+            patient_id: session.user_id,
+            clinician_id: assignedClinicianId,
+            rule_id: null,
+            category: 'visual_diagnostics',
+            trigger_type: 'event',
+            trigger_data: {
+              source: 'visual_diagnostics',
+              visual_session_id: sessionId,
+              visual_red_flag_alert_id: rf.id,
+            },
+            severity: rf.severity,
+            status: 'new',
+            title: `Visual diagnostics: ${rf.observation.slice(0, 80)}`,
+            message: rf.recommended_action
+              ? `${rf.observation}\n\nRecommended action: ${rf.recommended_action}`
+              : rf.observation,
+          }));
+          const { data: insertedEvents, error: evtErr } = await sb
+            .from('clinic_alert_events')
+            .insert(eventRows)
+            .select('id, trigger_data');
+          if (evtErr) {
+            console.error('[visual-correlator] clinic_alert_events insert failed:', evtErr);
+          } else {
+            // Back-link each visual_red_flag_alerts row to its clinic_alert_events row
+            for (const evt of insertedEvents ?? []) {
+              const td = evt.trigger_data as { visual_red_flag_alert_id?: string };
+              const rfId = td?.visual_red_flag_alert_id;
+              if (rfId) {
+                await sb
+                  .from('visual_red_flag_alerts')
+                  .update({ clinic_alert_event_id: evt.id })
+                  .eq('id', rfId);
+              }
             }
           }
         }
       }
     }
 
-    // Update session
-    const finalStatus = allRedFlags.length > 0 ? 'review_pending' : 'review_pending';
+    // Update session. Status is always 'review_pending' on success —
+    // any red flags just elevate visibility in the practitioner queue
+    // (counted separately in listReviewQueue).
     await sb.from('visual_sessions').update({
-      status: finalStatus,
+      status: 'review_pending',
       visual_health_index: result.visualHealthIndex,
       updated_at: new Date().toISOString(),
     }).eq('id', sessionId);

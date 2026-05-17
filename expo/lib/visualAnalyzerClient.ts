@@ -22,7 +22,9 @@ import { supabase } from './supabase';
 const BUCKET = 'visual-diagnostics';
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 6 * 60 * 1000;
-const RAW_CHUNK_SIZE = 500 * 1024; // ~680KB base64
+// 500KB raw → ~680KB base64. Same threshold the lab analyzer uses to
+// stay well under iOS's ~1MB EMSGSIZE socket-level limit.
+const RAW_CHUNK_SIZE = 500 * 1024;
 
 export type Modality = 'skin' | 'tcm_face' | 'tongue' | 'nails' | 'iris';
 export type Angle =
@@ -85,67 +87,83 @@ async function uploadImageWeb(fileUri: string, objectKey: string, mimeType: stri
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 }
 
-async function uploadImageNative(fileUri: string, objectKey: string, mimeType: string, fileName: string): Promise<void> {
-  // Native: chunked upload via the existing lab-upload edge function.
-  // The lab-upload function assembles chunks and writes to whichever
-  // bucket the file_type implies; for visual diagnostics we need our
-  // own thin orchestration. For simplicity in MVP, we upload to the
-  // visual-diagnostics bucket via signed URL OR via supabase-js direct
-  // (smaller images don't hit the EMSGSIZE wall on iOS).
-  //
-  // Visual diagnostic images are typically <2MB (single portrait /
-  // tongue / hand shot). For files <1MB the supabase-js path works on
-  // iOS. For larger we fall back to FileSystem.uploadAsync MULTIPART +
-  // FOREGROUND session.
-  const info = await FileSystem.getInfoAsync(fileUri);
-  const sizeBytes = (info as { size?: number }).size ?? 0;
+/**
+ * Native upload uses the chunked lab-upload edge function exclusively.
+ *
+ * Why not supabase-js direct or FileSystem.uploadAsync? labAnalyzerClient
+ * documents that EVERY single-request variant — supabase-js storage.upload,
+ * FileSystem.uploadAsync BINARY_CONTENT, MULTIPART, FOREGROUND/BACKGROUND
+ * session, signed URL PUT — hits iOS NSPOSIXErrorDomain Code=40
+ * "Message too long" at the socket layer for files >~1MB. Camera JPEGs at
+ * quality 0.85 routinely cross that threshold. The chunked-upload pattern
+ * (small base64 chunks via supabase.functions.invoke) is the only one
+ * that works reliably. The lab-upload function now takes a target_bucket
+ * parameter so we share the proven plumbing.
+ */
+async function uploadImageNativeChunked(
+  fileUri: string,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
+  const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+  // Slice along base64 4-char boundaries so chunks decode evenly.
+  const base64ChunkSize = Math.ceil(RAW_CHUNK_SIZE / 3) * 4;
+  const totalChunks = Math.max(1, Math.ceil(base64.length / base64ChunkSize));
+  const uploadId = generateId();
 
-  if (sizeBytes < 800 * 1024) {
-    // Small enough to use supabase-js directly
-    const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const { error } = await supabase.storage.from(BUCKET).upload(objectKey, bytes, {
-      contentType: mimeType,
-      upsert: false,
+  console.log(`[visualAnalyzer] Chunked upload: ${totalChunks} chunk(s), base64 len=${base64.length}`);
+
+  let storagePath: string | null = null;
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * base64ChunkSize;
+    const chunkBase64 = base64.slice(start, start + base64ChunkSize);
+
+    const { data, error } = await supabase.functions.invoke('lab-upload', {
+      body: {
+        upload_id: uploadId,
+        chunk_index: i,
+        total_chunks: totalChunks,
+        base64_data: chunkBase64,
+        file_name: fileName,
+        mime_type: mimeType,
+        target_bucket: BUCKET,
+      },
     });
-    if (error) throw new Error(`Storage upload failed: ${error.message}`);
-    return;
+    if (error) {
+      throw new Error(`Chunk ${i + 1}/${totalChunks} upload failed: ${error.message}`);
+    }
+    const resp = data as { status: string; storage_path?: string; error?: string };
+    if (resp.status === 'error') {
+      throw new Error(`Chunk ${i + 1}/${totalChunks} server error: ${resp.error ?? 'unknown'}`);
+    }
+    if (resp.status === 'complete') {
+      if (!resp.storage_path) throw new Error('Final chunk completed but no storage_path returned');
+      storagePath = resp.storage_path;
+    }
   }
-
-  // Larger images: use FileSystem.uploadAsync MULTIPART foreground
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  if (!supabaseUrl) throw new Error('EXPO_PUBLIC_SUPABASE_URL not configured');
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not authenticated');
-
-  const uploadUrl = `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectKey}`;
-  const result = await FileSystem.uploadAsync(uploadUrl, fileUri, {
-    httpMethod: 'POST',
-    uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-    fieldName: 'file',
-    mimeType,
-    sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-      'x-upsert': 'false',
-    },
-  });
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Storage upload failed (${result.status}): ${result.body?.slice(0, 200) ?? 'no body'}`);
-  }
+  if (!storagePath) throw new Error('Upload finished without storage_path');
+  return storagePath;
 }
 
-async function uploadImage(fileUri: string, userId: string, modality: Modality, angle: Angle, fileName: string, mimeType: string): Promise<string> {
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const objectKey = `${userId}/${Date.now()}_${modality}_${angle}_${safeName}`;
+async function uploadImage(
+  fileUri: string,
+  userId: string,
+  modality: Modality,
+  angle: Angle,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
   if (Platform.OS === 'web') {
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const objectKey = `${userId}/${Date.now()}_${modality}_${angle}_${safeName}`;
     await uploadImageWeb(fileUri, objectKey, mimeType);
-  } else {
-    await uploadImageNative(fileUri, objectKey, mimeType, fileName);
+    return objectKey;
   }
-  return objectKey;
+  // Native: the chunked edge function chooses the final storage path
+  // (user_id/timestamp_filename). We prefix the filename with the
+  // modality/angle metadata so the resulting path is self-describing.
+  const tagged = `${modality}_${angle}_${fileName}`;
+  return uploadImageNativeChunked(fileUri, tagged, mimeType);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -188,6 +206,17 @@ export interface AnalyzeVisualSessionOptions {
   onProgress?: (info: { phase: 'upload' | 'analyzing' | 'correlating' | 'complete'; modality?: Modality; status?: VisualSessionStatus }) => void;
 }
 
+async function markSessionFailed(sessionId: string, reason: string): Promise<void> {
+  try {
+    await supabase
+      .from('visual_sessions')
+      .update({ status: 'failed', notes: reason.slice(0, 500), updated_at: new Date().toISOString() })
+      .eq('id', sessionId);
+  } catch (cleanupErr) {
+    console.log('[visualAnalyzer] markSessionFailed itself errored (best-effort):', cleanupErr);
+  }
+}
+
 export async function analyzeVisualSession(
   input: StartSessionInput,
   options: AnalyzeVisualSessionOptions = {},
@@ -211,71 +240,85 @@ export async function analyzeVisualSession(
   });
   if (sessionErr) throw new Error(`Failed to create session: ${sessionErr.message}`);
 
-  // 2. For each capture: upload image + insert visual_session_images row
-  const uploadedModalities: Modality[] = [];
-  for (const cap of captures) {
-    onProgress?.({ phase: 'upload', modality: cap.modality });
-    const storageKey = await uploadImage(cap.fileUri, userId, cap.modality, cap.angle, cap.fileName, cap.mimeType);
-    const { error: imgErr } = await supabase.from('visual_session_images').insert({
-      session_id: sessionId,
-      user_id: userId,
-      modality: cap.modality,
-      angle: cap.angle,
-      storage_key: storageKey,
-      mime_type: cap.mimeType,
-      captured_at: new Date().toISOString(),
-    });
-    if (imgErr) throw new Error(`Failed to record image row for ${cap.modality}: ${imgErr.message}`);
-    uploadedModalities.push(cap.modality);
-  }
-
-  // 3. Invoke visual-analysis for each modality in parallel
-  onProgress?.({ phase: 'analyzing' });
-  const analysisPromises = uploadedModalities.map(async (modality) => {
-    const { error } = await supabase.functions.invoke('visual-analysis', {
-      body: { session_id: sessionId, modality },
-    });
-    if (error) {
-      console.log(`[visualAnalyzer] visual-analysis(${modality}) returned non-2xx:`, error.message);
+  // Once the session row exists, every subsequent failure path must
+  // mark it 'failed' so the patient doesn't see a stuck 'Queued' entry
+  // forever (audit bugs #11 + #12).
+  try {
+    // 2. For each capture: upload image + insert visual_session_images row
+    const uploadedModalities: Modality[] = [];
+    for (const cap of captures) {
+      onProgress?.({ phase: 'upload', modality: cap.modality });
+      const storageKey = await uploadImage(cap.fileUri, userId, cap.modality, cap.angle, cap.fileName, cap.mimeType);
+      const { error: imgErr } = await supabase.from('visual_session_images').insert({
+        session_id: sessionId,
+        user_id: userId,
+        modality: cap.modality,
+        angle: cap.angle,
+        storage_key: storageKey,
+        mime_type: cap.mimeType,
+        captured_at: new Date().toISOString(),
+      });
+      if (imgErr) throw new Error(`Failed to record image row for ${cap.modality}: ${imgErr.message}`);
+      uploadedModalities.push(cap.modality);
     }
-    return modality;
-  });
-  await Promise.all(analysisPromises);
 
-  // 4. Invoke visual-correlator (it expects all per-modality findings to exist)
-  onProgress?.({ phase: 'correlating' });
-  const { error: corrErr } = await supabase.functions.invoke('visual-correlator', {
-    body: { session_id: sessionId },
-  });
-  if (corrErr) {
-    console.log('[visualAnalyzer] visual-correlator non-2xx (may have completed despite error):', corrErr.message);
+    // 3. Invoke visual-analysis for each modality in parallel. Track
+    //    per-modality outcome — if ANY analyzer fails the correlator
+    //    would run on partial findings (audit bug #5), so we mark the
+    //    session 'failed' rather than producing a bogus VHI.
+    onProgress?.({ phase: 'analyzing' });
+    const analysisResults = await Promise.all(
+      uploadedModalities.map(async (modality) => {
+        const { error } = await supabase.functions.invoke('visual-analysis', {
+          body: { session_id: sessionId, modality },
+        });
+        return { modality, error: error ? error.message : null };
+      }),
+    );
+    const failed = analysisResults.filter(r => r.error !== null);
+    if (failed.length > 0) {
+      const summary = failed.map(f => `${f.modality}: ${f.error}`).join('; ');
+      throw new Error(`Analyzer failed for: ${summary}`);
+    }
+
+    // 4. Invoke visual-correlator (it expects all per-modality findings to exist)
+    onProgress?.({ phase: 'correlating' });
+    const { error: corrErr } = await supabase.functions.invoke('visual-correlator', {
+      body: { session_id: sessionId },
+    });
+    if (corrErr) {
+      throw new Error(`Correlator failed: ${corrErr.message}`);
+    }
+
+    // 5. Poll session row until terminal status
+    await pollUntilDone(sessionId, (status) => onProgress?.({ phase: 'analyzing', status }));
+
+    // 6. Return final result
+    const final = await readSession(sessionId);
+    if (!final) throw new Error('Session disappeared during polling');
+    if (final.status === 'failed') throw new Error('Visual analysis failed; check Supabase Edge Function logs.');
+
+    const [convergentRes, divergentRes, redFlagRes] = await Promise.all([
+      supabase.from('visual_convergent_findings').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
+      supabase.from('visual_divergent_findings').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
+      supabase.from('visual_red_flag_alerts').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
+    ]);
+
+    onProgress?.({ phase: 'complete' });
+    return {
+      sessionId,
+      status: final.status,
+      visualHealthIndex: final.visual_health_index,
+      modalitiesAnalyzed: uploadedModalities,
+      convergentCount: convergentRes.count ?? 0,
+      divergentCount: divergentRes.count ?? 0,
+      redFlagCount: redFlagRes.count ?? 0,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await markSessionFailed(sessionId, msg);
+    throw err;
   }
-
-  // 5. Poll session row until terminal status
-  await pollUntilDone(sessionId, (status) => onProgress?.({ phase: 'analyzing', status }));
-
-  // 6. Return final result
-  const final = await readSession(sessionId);
-  if (!final) throw new Error('Session disappeared during polling');
-  if (final.status === 'failed') throw new Error('Visual analysis failed; check Supabase Edge Function logs.');
-
-  // Pull counts for the result summary
-  const [convergentRes, divergentRes, redFlagRes] = await Promise.all([
-    supabase.from('visual_convergent_findings').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
-    supabase.from('visual_divergent_findings').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
-    supabase.from('visual_red_flag_alerts').select('id', { count: 'exact', head: true }).eq('session_id', sessionId),
-  ]);
-
-  onProgress?.({ phase: 'complete' });
-  return {
-    sessionId,
-    status: final.status,
-    visualHealthIndex: final.visual_health_index,
-    modalitiesAnalyzed: uploadedModalities,
-    convergentCount: convergentRes.count ?? 0,
-    divergentCount: divergentRes.count ?? 0,
-    redFlagCount: redFlagRes.count ?? 0,
-  };
 }
 
 // ────────────────────────────────────────────────────────────

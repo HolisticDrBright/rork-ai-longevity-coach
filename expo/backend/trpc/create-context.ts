@@ -75,3 +75,47 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
     },
   });
 });
+
+/**
+ * Clinician-only procedure. Checks the user's `profiles.role` is
+ * 'clinician', 'staff', or 'admin'. Use this on any endpoint that
+ * reads other patients' data or performs sign-off / acknowledgement
+ * actions on behalf of the clinic.
+ *
+ * If the `profiles` table doesn't have a role column (older deploys)
+ * the check fails closed — better to reject a real clinician until the
+ * migration runs than to silently allow a patient to acknowledge their
+ * own red flags.
+ */
+export const clinicianProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const supabase = createAnonSupabaseClient();
+  // We can't use the user's session client here because RLS may restrict
+  // reading the role column; the anon client + filter on id is fine
+  // because the id came from a verified JWT above.
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", ctx.user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.log("[tRPC:clinicianProcedure] profile lookup failed:", error.message);
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Clinician role check failed",
+    });
+  }
+  const role = (data as { role?: string } | null)?.role;
+  if (role !== "clinician" && role !== "staff" && role !== "admin") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Clinician role required",
+    });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      clinicianRole: role,
+    },
+  });
+});
