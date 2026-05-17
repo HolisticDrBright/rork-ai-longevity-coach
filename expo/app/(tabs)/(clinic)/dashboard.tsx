@@ -10,15 +10,16 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { 
-  Users, 
-  AlertTriangle, 
-  FileText, 
+  Users,
+  AlertTriangle,
+  FileText,
   Activity,
   ChevronRight,
   Bell,
   TrendingUp,
   Clock,
   Package,
+  Camera,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
@@ -274,12 +275,19 @@ export default function ClinicDashboardScreen() {
           <Bell size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Alert Inbox</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.quickAction}
           onPress={() => router.push('/(tabs)/(clinic)/supplements-admin' as any)}
         >
           <Package size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Supplements</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => router.push('/(tabs)/(clinic)/visual-review' as any)}
+        >
+          <Camera size={20} color={Colors.primary} />
+          <Text style={styles.quickActionText}>Visual Review</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
