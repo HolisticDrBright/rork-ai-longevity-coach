@@ -246,9 +246,10 @@ async function buildPatientContext(
     sb.from('lab_markers').select('marker_name, marker_value, unit, reference_range_low, reference_range_high').eq('user_id', userId).gte('collected_at', sixMonthsAgo).order('collected_at', { ascending: false }).limit(100),
     sb.from('symptom_logs').select('symptom_name, severity').eq('user_id', userId).gte('logged_at', fourteenDaysAgo),
     // Most recent cycle entry — used to derive cycle_day for cycling
-    // female patients (audit bug #17). If the table or rows don't
-    // exist we silently fall back to 'n/a'.
-    sb.from('hormone_entries').select('cycle_day, logged_at').eq('user_id', userId).order('logged_at', { ascending: false }).limit(1).maybeSingle(),
+    // female patients (audit bug #17). Column is `date`, not
+    // `logged_at` (verified against patient-context-builder.ts:194).
+    // If the table or rows don't exist we silently fall back to 'n/a'.
+    sb.from('hormone_entries').select('cycle_day, date').eq('user_id', userId).order('date', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const profile = profileRes.data as { sex?: string; birth_date?: string; paradigm_preferences?: string[] } | null;
@@ -265,10 +266,10 @@ async function buildPatientContext(
   // Compute cycle_day from the most recent hormone entry. If the entry
   // is older than 35 days the cycle is stale and we surface 'n/a' so
   // the analyzer doesn't condition on outdated data.
-  const hormone = hormoneRes.data as { cycle_day?: number | null; logged_at?: string } | null;
+  const hormone = hormoneRes.data as { cycle_day?: number | null; date?: string } | null;
   let cycleDayString: string = 'n/a';
-  if (hormone?.cycle_day != null && hormone?.logged_at) {
-    const daysSinceLog = Math.round((Date.now() - new Date(hormone.logged_at).getTime()) / 86400000);
+  if (hormone?.cycle_day != null && hormone?.date) {
+    const daysSinceLog = Math.round((Date.now() - new Date(hormone.date).getTime()) / 86400000);
     if (daysSinceLog <= 35) {
       const estimated = hormone.cycle_day + daysSinceLog;
       cycleDayString = String(estimated > 35 ? '>35 (recalibrate)' : estimated);

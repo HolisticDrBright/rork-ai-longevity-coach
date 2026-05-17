@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
 import superjson from "superjson";
-import { createAnonSupabaseClient } from "../supabase-server";
+import { createAnonSupabaseClient, createServerSupabaseClient } from "../supabase-server";
 
 interface AuthUser {
   id: string;
@@ -88,10 +88,10 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
  * own red flags.
  */
 export const clinicianProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const supabase = createAnonSupabaseClient();
-  // We can't use the user's session client here because RLS may restrict
-  // reading the role column; the anon client + filter on id is fine
-  // because the id came from a verified JWT above.
+  // Use the user's own session client so profile RLS (auth.uid() = id)
+  // permits self-read of the role column. The anon client would fail
+  // against typical profiles RLS that requires authentication.
+  const supabase = createServerSupabaseClient(ctx.sessionToken);
   const { data, error } = await supabase
     .from("profiles")
     .select("role")

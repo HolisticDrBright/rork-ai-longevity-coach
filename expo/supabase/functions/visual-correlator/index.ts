@@ -449,23 +449,31 @@ Deno.serve(async (req) => {
         rf.severity === 'critical' || rf.severity === 'high'
       );
       if (escalations.length > 0) {
-        // Resolve the patient's assigned clinician. clinic_alert_events.clinician_id
-        // is NOT NULL (per every other writer in clinic/alerts.ts). If the
-        // patient has no assigned clinician, we leave the events unwritten
-        // rather than insert with a placeholder — the visual_red_flag_alerts
-        // rows still surface in the patient UI and the standalone review queue.
+        // Resolve the auth user → clinic patient mapping. clinic_alert_events.patient_id
+        // FKs to clinic_patients.id (NOT auth.users.id), and clinician_id is
+        // NOT NULL per every writer in clinic/alerts.ts. Migration
+        // 20260517000004 adds clinic_patients.linked_auth_user_id so we can
+        // resolve auth user → patient row → assigned clinician.
+        //
+        // If the patient has no linked clinic chart, we skip the
+        // clinic_alert_events insert. The red flags still appear in
+        // visual_red_flag_alerts so the patient UI + standalone visual
+        // review queue surface them.
         const { data: patientRow } = await sb
           .from('clinic_patients')
-          .select('assigned_clinician_id')
-          .eq('user_id', session.user_id)
+          .select('id, assigned_clinician_id, clinician_id')
+          .eq('linked_auth_user_id', session.user_id)
           .maybeSingle();
-        const assignedClinicianId = (patientRow as { assigned_clinician_id?: string } | null)?.assigned_clinician_id ?? null;
+        const clinicPatientId = (patientRow as { id?: string } | null)?.id ?? null;
+        const assignedClinicianId = (patientRow as { assigned_clinician_id?: string; clinician_id?: string } | null)?.assigned_clinician_id
+          ?? (patientRow as { clinician_id?: string } | null)?.clinician_id
+          ?? null;
 
-        if (!assignedClinicianId) {
-          console.warn(`[visual-correlator] ${session.user_id} has no assigned clinician; skipping clinic_alert_events insert. Red flags still recorded in visual_red_flag_alerts.`);
+        if (!clinicPatientId || !assignedClinicianId) {
+          console.warn(`[visual-correlator] auth user ${session.user_id} has no linked clinic_patients row or no assigned clinician; skipping clinic_alert_events insert. Red flags still recorded in visual_red_flag_alerts.`);
         } else {
           const eventRows = escalations.map(rf => ({
-            patient_id: session.user_id,
+            patient_id: clinicPatientId,
             clinician_id: assignedClinicianId,
             rule_id: null,
             category: 'visual_diagnostics',
