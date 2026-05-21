@@ -14,7 +14,7 @@ import {
   Keyboard,
   Platform
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Plus, Trash2, ChevronDown, Search, Check, AlertCircle, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,6 +32,7 @@ interface EditableItem extends DetectedFoodItem {
 export default function ConfirmFoods() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
   const { pendingAnalysis, addFoodLog, dietProfile, setPendingMealAnalysis } = useNutrition();
 
   const [items, setItems] = useState<EditableItem[]>(pendingAnalysis?.detectedItems || []);
@@ -41,11 +42,21 @@ export default function ConfirmFoods() {
   const [newItemName, setNewItemName] = useState('');
   const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
 
+
   useEffect(() => {
+
     if (pendingAnalysis) {
       setItems(pendingAnalysis.detectedItems);
     }
   }, [pendingAnalysis])
+
+  useEffect(() => {
+    if (params) {
+      const parsedItems = JSON.parse(params?.detectedItems)
+      setItems(parsedItems);
+    }
+  }, [])
+
 
   const calculateMutation = trpc.nutrition.calculateNutrition.useMutation({
 
@@ -141,6 +152,7 @@ export default function ConfirmFoods() {
     });
   }, [items, pendingAnalysis, dietProfile, calculateMutation]);
 
+
   const handleCancel = useCallback(() => {
     Alert.alert(
       'Discard Changes?',
@@ -225,7 +237,7 @@ export default function ConfirmFoods() {
     );
   };
 
-  if (!pendingAnalysis) {
+  if (!items) {
     return (
       <View style={styles.container}>
         <Stack.Screen options={{ title: 'Confirm Foods' }} />
@@ -256,6 +268,7 @@ export default function ConfirmFoods() {
         }}
       />
 
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
@@ -264,7 +277,7 @@ export default function ConfirmFoods() {
       >
         <View style={styles.mealTypeHeader}>
           <Text style={styles.mealTypeLabel}>
-            {pendingAnalysis.mealType.charAt(0).toUpperCase() + pendingAnalysis.mealType.slice(1)}
+            {pendingAnalysis?.mealType?.charAt(0).toUpperCase() + pendingAnalysis?.mealType?.slice(1)}
           </Text>
           <Text style={styles.itemCount}>
             {items.length} item{items.length !== 1 ? 's' : ''}

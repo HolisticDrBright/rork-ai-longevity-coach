@@ -4,6 +4,7 @@ import { createTRPCRouter, publicProcedure } from "../create-context";
 const PASSIO_BASE_URL = process.env.PASSIO_BASE_URL || "https://api.passiolife.com/v2";
 const PASSIO_API_KEY = process.env.PASSIO_API_KEY || "";
 
+console.log("PASSIO_BASE_URL:", PASSIO_BASE_URL, PASSIO_API_KEY);
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
 async function getPassioToken(): Promise<string> {
@@ -16,16 +17,18 @@ async function getPassioToken(): Promise<string> {
   }
 
   try {
-    const response = await fetch(`${PASSIO_BASE_URL}/token`, {
+   
+
+ 
+    const response = await fetch(`${PASSIO_BASE_URL}/token-cache/unified/oauth/token/${PASSIO_API_KEY}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": PASSIO_API_KEY,
+        // "X-API-Key": PASSIO_API_KEY,
       },
     });
 
     if (!response.ok) {
-      console.log("Passio token request failed, using API key directly");
       return PASSIO_API_KEY;
     }
 
@@ -212,12 +215,13 @@ export const nutritionRouter = createTRPCRouter({
       try {
         const token = await getPassioToken();
 
-        const response = await fetch(`${PASSIO_BASE_URL}/products/visualsearch`, {
+        const response = await fetch(`${PASSIO_BASE_URL}/products/napi/tools/vision/extractIngredientsAutoTyped`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json",
           },
+
           body: JSON.stringify({
             image: input.photoBase64,
           }),
@@ -227,16 +231,53 @@ export const nutritionRouter = createTRPCRouter({
           const passioData = await response.json();
           console.log("Passio response:", JSON.stringify(passioData).substring(0, 500));
 
-          const detectedItems = (passioData.results || passioData.foods || []).map((item: any, index: number) => ({
-            id: `item_${index}`,
-            name: item.name || item.food_name || `Food ${index + 1}`,
-            passioFoodId: item.passio_id || item.id || null,
-            confidence: item.confidence || item.score || 0.8,
-            portionQty: 1,
-            portionUnit: "serving",
-            suggestedPortions: ["g", "oz", "cup", "tbsp", "piece", "serving"],
-          }));
+          // const detectedItems = (passioData.results || passioData.foods || []).map((item: any, index: number) => ({
+          //   id: `item_${index}`,
+          //   name: item.displayName || item.food_name || `Food ${index + 1}`,
+          //   passioFoodId: item.passio_id || item.id || null,
+          //   confidence: item.confidence || item.score || 0.8,
+          //   portionQty: 1,
+          //   portionUnit: "serving",
+          //   suggestedPortions: ["g", "oz", "cup", "tbsp", "piece", "serving"],
+          // }));
 
+          // return {
+          //   foodLogId,
+          //   detectedItems: detectedItems.length > 0 ? detectedItems : getMockDetectedItems(),
+          //   passioRawJson: passioData,
+          //   clarifyingQuestions: generateClarifyingQuestions(detectedItems),
+          // };
+
+          const detectedItems = (Array.isArray(passioData) ? passioData : []).map(
+            (item: any, index: number) => ({
+              id: `item_${index}`,
+          
+              name:
+                item.displayName ||
+                item.ingredientName ||
+                item.shortName ||
+                `Food ${index + 1}`,
+          
+              passioFoodId: foodLogId,
+          
+              confidence: item.score ?? item.confidence ?? 0.8,
+          
+              portionQty: item.portionQuantity ?? 1,
+              portionUnit: item.portionSize ?? "serving",
+          
+              weightGrams: item.weightGrams ?? null,
+          
+              suggestedPortions: [
+                "g",
+                "oz",
+                "cup",
+                "tbsp",
+                "piece",
+                "serving",
+              ],
+            })
+          );
+          
           return {
             foodLogId,
             detectedItems: detectedItems.length > 0 ? detectedItems : getMockDetectedItems(),
@@ -297,7 +338,7 @@ export const nutritionRouter = createTRPCRouter({
         console.log("Before estimate");
         let nutrition = getNutritionEstimate(item.name, item.portionQty, item.portionUnit);
 
-        console.log("After estimate",nutrition);
+        console.log("After estimate", nutrition);
         console.log("Calculating nutrition for", input.confirmedItems.length, "items");
         console.log("PASSIO_API_KEY:", PASSIO_API_KEY);
         console.log("item.passioFoodId:", item.passioFoodId);

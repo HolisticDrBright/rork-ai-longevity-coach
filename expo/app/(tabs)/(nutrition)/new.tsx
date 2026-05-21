@@ -109,13 +109,26 @@ export default function NewMealCapture() {
   const analyzePhotoMutation = trpc.nutrition.analyzePhoto.useMutation({
     onSuccess: (data) => {
       console.log('Analysis successful:', data.foodLogId);
-      setPendingMealAnalysis({
-        foodLogId: data.foodLogId,
-        detectedItems: data.detectedItems,
-        mealType: selectedMeal!,
-        photoBase64,
+      console.log('Analysis successful:', data.detectedItems);
+
+      // setPendingMealAnalysis({
+      //   foodLogId: data.foodLogId,
+      //   detectedItems: data.detectedItems,
+      //   mealType: selectedMeal!,
+      //   photoBase64,
+      // });
+
+      router.push({
+        pathname: '/(tabs)/(nutrition)/confirm',
+        params: {
+          foodLogId: data.foodLogId,
+          detectedItems:JSON.stringify(data.detectedItems),
+          mealType: selectedMeal!,
+          // photoBase64,
+        },
       });
-      router.push('/(tabs)/(nutrition)/confirm' as any);
+
+      // router.push('/(tabs)/(nutrition)/confirm' as any);
     },
     onError: (error) => {
       console.error('Analysis failed:', error);
@@ -139,23 +152,23 @@ export default function NewMealCapture() {
 
       const result = useCamera
         ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 0.8,
-            base64: true,
-          })
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          aspect: [4, 3],
+          quality: 0.8,
+          base64: true,
+        })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 0.8,
-            base64: true,
-          });
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          aspect: [4, 3],
+          quality: 0.8,
+          base64: true,
+        });
 
       if (!result.canceled && result.assets[0]) {
         setPhotoUri(result.assets[0].uri);
-        setPhotoBase64(result.assets[0].base64 || null);
+        setPhotoBase64(`data:${result.assets[0].mimeType || 'image/jpeg'};base64,${result.assets[0].base64}` || null);
       }
     } catch (error) {
       console.error('Image picker error:', error);
@@ -177,7 +190,8 @@ export default function NewMealCapture() {
       photoBase64,
       mealType: selectedMeal,
       userId: dietProfile.userId || 'user_default',
-    });
+    },
+    );
   }, [selectedMeal, photoBase64, dietProfile.userId, analyzePhotoMutation]);
 
   const goToConfirm = useCallback(
