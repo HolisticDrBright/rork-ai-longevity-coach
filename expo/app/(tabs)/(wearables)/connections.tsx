@@ -52,6 +52,7 @@ export default function ConnectionsScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const result = await connectMutation.mutateAsync();
+      console.log('[Connections] connect result', result);
       if (result.success && result.newProvider) {
         Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
       } else if (result.success && !result.newProvider) {

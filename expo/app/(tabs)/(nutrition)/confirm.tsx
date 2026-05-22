@@ -50,12 +50,6 @@ export default function ConfirmFoods() {
     }
   }, [pendingAnalysis])
 
-  // useEffect(() => {
-  //   if (params) {
-  //     const parsedItems = JSON.parse(params?.detectedItems)
-  //     setItems(parsedItems);
-  //   }
-  // }, [])
 
   useEffect(() => {
     if (!params?.detectedItems) return;
@@ -64,7 +58,6 @@ export default function ConfirmFoods() {
       const parsedItems = JSON.parse(params.detectedItems);
       setItems(parsedItems);
     } catch (error) {
-      console.warn("Invalid JSON in detectedItems:", error);
       setItems([]); // fallback
     }
   }, [params?.detectedItems]);
