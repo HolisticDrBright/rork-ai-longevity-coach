@@ -50,12 +50,24 @@ export default function ConfirmFoods() {
     }
   }, [pendingAnalysis])
 
+  // useEffect(() => {
+  //   if (params) {
+  //     const parsedItems = JSON.parse(params?.detectedItems)
+  //     setItems(parsedItems);
+  //   }
+  // }, [])
+
   useEffect(() => {
-    if (params) {
-      const parsedItems = JSON.parse(params?.detectedItems)
+    if (!params?.detectedItems) return;
+  
+    try {
+      const parsedItems = JSON.parse(params.detectedItems);
       setItems(parsedItems);
+    } catch (error) {
+      console.warn("Invalid JSON in detectedItems:", error);
+      setItems([]); // fallback
     }
-  }, [])
+  }, [params?.detectedItems]);
 
 
   const calculateMutation = trpc.nutrition.calculateNutrition.useMutation({

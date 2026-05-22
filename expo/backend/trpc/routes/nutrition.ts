@@ -227,6 +227,7 @@ export const nutritionRouter = createTRPCRouter({
           }),
         });
 
+        console.log(response)
         if (response.ok) {
           const passioData = await response.json();
           console.log("Passio response:", JSON.stringify(passioData).substring(0, 500));
