@@ -61,7 +61,17 @@
       "expo-font",
       "expo-web-browser",
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      [
+        "@tryvital/vital-core-react-native"
+      ],
+      [
+        "@tryvital/vital-health-react-native",
+        {
+          "healthSharePermission": "Allow this app to access your health data"
+        }
+      ]
+
     ],
     "experiments": {
       "typedRoutes": true
