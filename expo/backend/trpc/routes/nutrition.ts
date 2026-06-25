@@ -17,9 +17,6 @@ async function getPassioToken(): Promise<string> {
   }
 
   try {
-   
-
- 
     const response = await fetch(`${PASSIO_BASE_URL}/token-cache/unified/oauth/token/${PASSIO_API_KEY}`, {
       method: "POST",
       headers: {

@@ -1,200 +1,126 @@
-// /**
-//  * Junction (Vital) SDK v6 wrapper.
-//  *
-//  * CURRENT STATE: The Vital native SDK packages are NOT installed.
-//  * All functions return safe defaults (empty arrays, false, void).
-//  * The app runs normally — wearable features show empty state.
-//  *
-//  * TO ENABLE WEARABLES:
-//  *   1. npm install @tryvital/vital-core-react-native @tryvital/vital-health-react-native expo-dev-client
-//  *   2. Re-add the @tryvital/vital-health-react-native config plugin to app.json
-//  *   3. npx expo prebuild
-//  *   4. eas build --profile development
-//  *   5. Uncomment the SDK imports below and remove the stubs
-//  */
+/**
+ * Junction (Vital) SDK v6 wrapper.
+ *
+ * CURRENT STATE: The Vital native SDK packages are NOT installed.
+ * All functions return safe defaults (empty arrays, false, void).
+ * The app runs normally — wearable features show empty state.
+ *
+ * TO ENABLE WEARABLES:
+ *   1. npm install @tryvital/vital-core-react-native @tryvital/vital-health-react-native expo-dev-client
+ *   2. Re-add the @tryvital/vital-health-react-native config plugin to app.json
+ *   3. npx expo prebuild
+ *   4. eas build --profile development
+ *   5. Uncomment the SDK imports below and remove the stubs
+ */
 
-// import { Platform } from 'react-native';
-// import type { HealthSource } from './types';
-
-// const VITAL_ENVIRONMENT = (process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox') as string;
-// const VITAL_REGION = (process.env.EXPO_PUBLIC_VITAL_REGION ?? 'us') as string;
-// const VITAL_API_KEY = process.env.EXPO_PUBLIC_VITAL_API_KEY ?? '';
-
-// let initialized = false;
-
-// // ────────────────────────────────────────────────────────────
-// // SDK is not installed — all functions are safe stubs.
-// // When the native SDK is installed + prebuilt, replace these
-// // stubs with real SDK calls.
-// // ────────────────────────────────────────────────────────────
-
-// export async function initializeJunction(userId: string): Promise<void> {
-//   if (!VITAL_API_KEY) {
-//     console.warn('[Junction] EXPO_PUBLIC_VITAL_API_KEY not set — wearable features disabled');
-//     return;
-//   }
-//   console.log('[Junction] SDK not installed — running in stub mode. Wearable features disabled.');
-//   initialized = true;
-// }
-
-// export async function requestHealthPermissions(): Promise<'success' | 'cancelled' | 'error'> {
-//   console.warn('[Junction] SDK not installed — cannot request permissions');
-//   return 'error';
-// }
-
-// export async function hasHealthPermissions(): Promise<boolean> {
-//   return false;
-// }
-
-// export async function connectOnDeviceHealth(): Promise<void> {
-//   // no-op without SDK
-// }
-
-// export function buildLinkUrl(vitalUserId: string): string {
-//   const env = VITAL_ENVIRONMENT === 'production' ? '' : 'sandbox.';
-//   return `https://link.${env}tryvital.io/?token=${VITAL_API_KEY}&user_id=${vitalUserId}`;
-// }
-
-// export async function disconnectProvider(provider: string): Promise<void> {
-//   // no-op without SDK
-// }
-
-// export async function listConnectedProviders(): Promise<Array<{
-//   name: string;
-//   slug: string;
-//   status: string;
-// }>> {
-//   return [];
-// }
-
-// export async function triggerSync(): Promise<void> {
-//   // no-op without SDK
-// }
-
-// export async function enableBackgroundSync(): Promise<boolean> {
-//   return false;
-// }
-
-// export function toHealthSource(providerSlug: string): HealthSource {
-//   const slug = providerSlug.toLowerCase();
-//   if (slug === 'apple_health_kit' || slug === 'apple_health') return 'junction:healthkit';
-//   if (slug === 'health_connect') return 'junction:health_connect';
-//   if (slug.includes('oura')) return 'junction:oura';
-//   if (slug.includes('fitbit')) return 'junction:fitbit';
-//   if (slug.includes('whoop')) return 'junction:whoop';
-//   if (slug.includes('garmin')) return 'junction:garmin';
-//   if (slug.includes('withings')) return 'junction:withings';
-//   if (slug.includes('polar')) return 'junction:polar';
-//   return `junction:${slug}` as HealthSource;
-// }
-
-// export function isInitialized(): boolean {
-//   return initialized;
-// }
-
-
-
-import { VitalCore } from "@tryvital/vital-core-react-native";
-
-import {
-  VitalHealth,
-  VitalResource,
-} from "@tryvital/vital-health-react-native";
+import { Platform } from 'react-native';
 import type { HealthSource } from './types';
 
-const VITAL_ENVIRONMENT =
-  process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox';
 
-const VITAL_REGION =
-  process.env.EXPO_PUBLIC_VITAL_REGION ?? 'us';
-
-const VITAL_API_KEY =
-  process.env.EXPO_PUBLIC_VITAL_API_KEY ?? '';
+import { trpcClient } from '@/lib/trpc';
+const VITAL_ENVIRONMENT = (process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox') as string;
+const VITAL_REGION = (process.env.EXPO_PUBLIC_VITAL_REGION ?? 'us') as string;
+const VITAL_API_KEY = process.env.EXPO_PUBLIC_VITAL_API_KEY ?? '';
 
 let initialized = false;
 
-export async function initializeJunction(
-  userId: string
-): Promise<void> {
+// ────────────────────────────────────────────────────────────
+// SDK is not installed — all functions are safe stubs.
+// When the native SDK is installed + prebuilt, replace these
+// stubs with real SDK calls.
+// ────────────────────────────────────────────────────────────
+
+export async function initializeJunction(userId: string): Promise<void> {
   if (!VITAL_API_KEY) {
-    throw new Error('Missing Vital API Key');
+    console.warn('[Junction] EXPO_PUBLIC_VITAL_API_KEY not set — wearable features disabled');
+    return;
   }
-
-  await VitalCore.configure(
-    "sk_us_ODarFLoefEtsVcriGroklXUQ-GEr24t2FKBUJ9XZGfQ",
-    "sandbox",
-    "us",
-    true,
-  );
-
-  await VitalCore.setUserId(userId);
-
+  console.log('[Junction] SDK not installed — running in stub mode. Wearable features disabled.');
   initialized = true;
-
-  console.log('[Vital] initialized');
 }
 
-export async function requestHealthPermissions() {
-  try {
-
-    await VitalHealth.ask(
-      [VitalResource.Activity,
-      VitalResource.Workout,
-      VitalResource.Sleep,
-      VitalResource.HeartRate,
-      VitalResource.Steps
-      ],
-      [],
-      undefined,
-    );
-
-    await VitalHealth.syncData();
-   
-    // await VitalCore.
-   
-
-  } catch (e) {
-    console.log(e);
-    return 'error';
-  }
+export async function requestHealthPermissions(): Promise<'success' | 'cancelled' | 'error'> {
+  console.warn('[Junction] SDK not installed — cannot request permissions');
+  return 'error';
 }
 
 export async function hasHealthPermissions(): Promise<boolean> {
-  return await VitalHealth.hasPermissions();
+  return false;
 }
 
 export async function connectOnDeviceHealth(): Promise<void> {
-  await VitalHealth.syncData();
+  // no-op without SDK
 }
 
-export function buildLinkUrl(vitalUserId: string): string {
-  const env =
-    VITAL_ENVIRONMENT === 'production'
-      ? ''
-      : 'sandbox.';
+export async function buildLinkUrl(vitalUserId: string): Promise<string> {
 
-  return `https://link.${env}tryvital.io/?token=${VITAL_API_KEY}&user_id=${vitalUserId}`;
+  const token = await trpcClient.junction.createLinkToken.mutate({
+    userId: vitalUserId,
+    provider: "oura",
+  });
+
+
+  console.log(token)
+
+}
+
+export async function disconnectProvider(provider: string): Promise<void> {
+  // no-op without SDK
+}
+
+export async function listConnectedProviders(): Promise<
+  Array<{
+    name: string;
+    slug: string;
+    status: string;
+  }>
+> {
+  try {
+    const providers = await trpcClient.junction.getAllProviders.query();
+    return providers;
+  } catch (error) {
+    console.error("Failed to fetch providers:", error);
+    return [];
+  }
 }
 
 export async function triggerSync(): Promise<void> {
-  await VitalHealth.syncData();
+  // no-op without SDK
+}
+
+export async function enableBackgroundSync(): Promise<boolean> {
+  return false;
+}
+
+export function toHealthSource(providerSlug: string): HealthSource {
+  const slug = providerSlug.toLowerCase();
+  if (slug === 'apple_health_kit' || slug === 'apple_health') return 'junction:healthkit';
+  if (slug === 'health_connect') return 'junction:health_connect';
+  if (slug.includes('oura')) return 'junction:oura';
+  if (slug.includes('fitbit')) return 'junction:fitbit';
+  if (slug.includes('whoop')) return 'junction:whoop';
+  if (slug.includes('garmin')) return 'junction:garmin';
+  if (slug.includes('withings')) return 'junction:withings';
+  if (slug.includes('polar')) return 'junction:polar';
+  return `junction:${slug}` as HealthSource;
 }
 
 export function isInitialized(): boolean {
   return initialized;
 }
 
-export function toHealthSource(
-  providerSlug: string
-): HealthSource {
-  const slug = providerSlug.toLowerCase();
+/**
+ * Junction (Vital) SDK v6 wrapper.
+ *
+ * CURRENT STATE:
+ * Native Vital SDK packages are not installed.
+ * All functions return safe defaults.
+ *
+ * TO ENABLE:
+ * 1. npm install @tryvital/vital-core-react-native @tryvital/vital-health-react-native expo-dev-client
+ * 2. Re-add Vital config plugin to app.json
+ * 3. npx expo prebuild
+ * 4. eas build --profile development
+ * 5. Replace stub implementations with actual SDK calls
+ */
 
-  if (
-    slug === 'apple_health_kit' ||
-    slug === 'apple_health'
-  ) {
-    return 'junction:healthkit';
-  }
-
-  return `junction:${slug}` as HealthSource;
-}

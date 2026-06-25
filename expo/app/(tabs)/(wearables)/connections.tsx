@@ -22,8 +22,6 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
-import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
-import { initializeJunction ,requestHealthPermissions} from '@/services/health/junctionClient';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   apple_health_kit: 'Apple Health',
@@ -42,6 +40,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 function displayName(slug: string): string {
   return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
 }
+import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 export default function ConnectionsScreen() {
   const { connections, hasConnections, isRefreshing } = useWearables();
@@ -50,26 +49,23 @@ export default function ConnectionsScreen() {
   const syncMutation = useSyncHealth();
 
   const handleConnect = useCallback(async () => {
-
-    await initializeJunction('ccd6f98d-3a2a-433b-a114-8fe064f301ed');
-    await requestHealthPermissions(); 
-    // try {
-    //   const result = await connectMutation.mutateAsync();
-    //   console.log('[Connections] connect result', result);
-    //   if (result.success && result.newProvider) {
-    //     Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
-    //   } else if (result.success && !result.newProvider) {
-    //     Alert.alert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
-    //   } else {
-    //     Alert.alert(
-    //       'Wearables not available',
-    //       'Device connections require a custom build with the Vital SDK installed. This preview/Expo Go build cannot connect to wearables. Once a development build is created and EXPO_PUBLIC_VITAL_API_KEY is configured, this button will open the provider picker.'
-    //     );
-    //   }
-    // } catch (err) {
-    //   console.error('[Connections] connect failed', err);
-    //   Alert.alert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
-    // }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const result = await connectMutation.mutateAsync();
+      if (result.success && result.newProvider) {
+        Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
+      } else if (result.success && !result.newProvider) {
+        Alert.alert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
+      } else {
+        Alert.alert(
+          'Wearables not available',
+          'Device connections require a custom build with the Vital SDK installed. This preview/Expo Go build cannot connect to wearables. Once a development build is created and EXPO_PUBLIC_VITAL_API_KEY is configured, this button will open the provider picker.'
+        );
+      }
+    } catch (err) {
+      console.error('[Connections] connect failed', err);
+      Alert.alert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
+    }
   }, [connectMutation]);
 
   const handleDisconnect = useCallback((provider: string) => {

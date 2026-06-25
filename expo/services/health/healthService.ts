@@ -121,17 +121,22 @@ export async function connectDevice(): Promise<{
   newProvider?: string;
   permissionResult?: 'success' | 'cancelled' | 'error';
 }> {
-  if (!isInitialized()) return { success: false };
-
+  console.log('isInitialized------>>>>>>')
+//   if (!isInitialized()) return { success: false };
+// console.log('access')
   const userId = await getCurrentUserId();
   if (!userId) return { success: false };
+  console.log('access2')
 
   // 1. Snapshot pre-Link connections
   const preSnapshot = await listConnectedProviders();
+  console.log('preSnapshot', preSnapshot)
   const preSlugs = new Set(preSnapshot.map(p => p.slug));
 
   // 2. Open Link FIRST — user picks their provider
-  const linkUrl = buildLinkUrl(userId);
+  const linkUrl =await buildLinkUrl(userId);
+
+  console.log('linkUrl', linkUrl)
   const redirectUrl = `${APP_SCHEME}://vital-callback`;
 
   let resultUrl: string | null = null;
