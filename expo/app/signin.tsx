@@ -9,22 +9,43 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Sparkles, Mail, Lock, User, Stethoscope, ChevronRight, Eye, EyeOff } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
+import { showAlert } from '@/lib/ui/appAlert';
 
 const PENDING_ROLE_KEY = 'longevity_pending_role';
+export const PRACTITIONER_INTENT_KEY = 'longevity_practitioner_intent';
 
 type AuthMode = 'welcome' | 'signin' | 'signup';
 type UserRole = 'patient' | 'clinician';
 
+/**
+ * Choosing "Practitioner" must NOT grant the clinician role — the role is
+ * only granted after a compliance-reviewed application. We record the
+ * intent so the app can route new practitioners to the info/apply screen,
+ * and never write 'clinician' into the pending-role key (which UserProvider
+ * would otherwise apply automatically).
+ */
+async function persistRoleSelection(role: UserRole): Promise<void> {
+  try {
+    if (role === 'clinician') {
+      await AsyncStorage.setItem(PRACTITIONER_INTENT_KEY, 'true');
+    } else {
+      await AsyncStorage.setItem(PENDING_ROLE_KEY, 'patient');
+      await AsyncStorage.removeItem(PRACTITIONER_INTENT_KEY);
+    }
+  } catch (e) {
+    console.log('[signin] could not persist role', e);
+  }
+}
+
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
-  const { signUp, signIn, authError, clearError, isLoading } = useSupabaseAuth();
+  const { signUp, signIn, authError, clearError } = useSupabaseAuth();
 
   const [mode, setMode] = useState<AuthMode>('welcome');
   const [role, setRole] = useState<UserRole>('patient');
@@ -44,53 +65,49 @@ export default function SignInScreen() {
 
   const handleSignIn = useCallback(async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      showAlert('Missing fields', 'Please enter your email and password.');
       return;
     }
     setSubmitting(true);
-    try {
-      await AsyncStorage.setItem(PENDING_ROLE_KEY, role);
-    } catch (e) {
-      console.log('[signin] could not persist role', e);
-    }
+    await persistRoleSelection(role);
+    // signIn only returns a boolean; the specific error message is set in
+    // provider state and rendered inline below the inputs. Reading authError
+    // from this closure would be stale (one render behind), so show a
+    // generic alert and let the inline text carry the details.
     const success = await signIn(email.trim(), password);
     setSubmitting(false);
-    if (!success && authError) {
-      Alert.alert('Sign in failed', authError);
+    if (!success) {
+      showAlert('Sign in failed', 'Please check your email and password, then try again.');
     }
-  }, [email, password, role, signIn, authError]);
+  }, [email, password, role, signIn]);
 
   const handleSignUp = useCallback(async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      showAlert('Missing fields', 'Please enter your email and password.');
       return;
     }
     if (password.length < 6) {
-      Alert.alert('Weak password', 'Password must be at least 6 characters.');
+      showAlert('Weak password', 'Password must be at least 6 characters.');
       return;
     }
     if (password !== confirmPassword) {
-      Alert.alert('Mismatch', 'Passwords do not match.');
+      showAlert('Mismatch', 'Passwords do not match.');
       return;
     }
     setSubmitting(true);
-    try {
-      await AsyncStorage.setItem(PENDING_ROLE_KEY, role);
-    } catch (e) {
-      console.log('[signin] could not persist role', e);
-    }
+    await persistRoleSelection(role);
     const success = await signUp(email.trim(), password);
     setSubmitting(false);
     if (success) {
-      Alert.alert(
+      showAlert(
         'Account created',
         'Check your email to confirm your account, then sign in.',
         [{ text: 'OK', onPress: () => switchMode('signin') }]
       );
-    } else if (authError) {
-      Alert.alert('Sign up failed', authError);
+    } else {
+      showAlert('Sign up failed', 'We could not create your account. Please try again.');
     }
-  }, [email, password, confirmPassword, role, signUp, authError, switchMode]);
+  }, [email, password, confirmPassword, role, signUp, switchMode]);
 
   // ── Welcome screen with role selection ──────────────────────
   if (mode === 'welcome') {
@@ -139,7 +156,7 @@ export default function SignInScreen() {
             <View style={styles.roleContent}>
               <Text style={[styles.roleTitle, role === 'clinician' && styles.roleTitleActive]}>Practitioner</Text>
               <Text style={styles.roleDescription}>
-                Manage patients, review protocols, and access the clinic portal
+                Apply for provider access — credentials are verified before the clinic portal unlocks
               </Text>
             </View>
             {role === 'clinician' && (

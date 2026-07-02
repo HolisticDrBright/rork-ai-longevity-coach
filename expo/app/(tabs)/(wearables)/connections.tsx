@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,12 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
   Watch,
   Wifi,
-  WifiOff,
   Clock,
   Shield,
   Plus,
@@ -22,6 +20,7 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
+import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   apple_health_kit: 'Apple Health',
@@ -53,34 +52,30 @@ export default function ConnectionsScreen() {
     try {
       const result = await connectMutation.mutateAsync();
       if (result.success && result.newProvider) {
-        Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
+        showAlert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
       } else if (result.success && !result.newProvider) {
-        Alert.alert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
+        showAlert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
       } else {
-        Alert.alert(
+        showAlert(
           'Wearables not available',
           'Device connections require a custom build with the Vital SDK installed. This preview/Expo Go build cannot connect to wearables. Once a development build is created and EXPO_PUBLIC_VITAL_API_KEY is configured, this button will open the provider picker.'
         );
       }
     } catch (err) {
       console.error('[Connections] connect failed', err);
-      Alert.alert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
+      showAlert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
     }
   }, [connectMutation]);
 
-  const handleDisconnect = useCallback((provider: string) => {
-    Alert.alert(
+  const handleDisconnect = useCallback(async (provider: string) => {
+    const confirmed = await confirmAsync(
       'Disconnect device',
       `Are you sure you want to disconnect ${displayName(provider)}? Historical data will be preserved.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Disconnect',
-          style: 'destructive',
-          onPress: () => disconnectMutation.mutate(provider),
-        },
-      ]
+      { confirmText: 'Disconnect', destructive: true }
     );
+    if (confirmed) {
+      disconnectMutation.mutate(provider);
+    }
   }, [disconnectMutation]);
 
   const handleRefreshHistory = useCallback(() => {

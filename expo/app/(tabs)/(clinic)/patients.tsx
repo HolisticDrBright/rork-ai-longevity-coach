@@ -239,7 +239,14 @@ export default function PatientsScreen() {
         />
       )}
 
-      <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 90 }]} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + 90 }]}
+        activeOpacity={0.8}
+        onPress={() => router.push('/(tabs)/(clinic)/patient/new' as any)}
+        accessibilityRole="button"
+        accessibilityLabel="Add patient"
+        testID="add-patient-fab"
+      >
         <Plus size={24} color={Colors.textInverse} />
       </TouchableOpacity>
     </View>

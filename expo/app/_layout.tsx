@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
@@ -23,7 +23,6 @@ import { HIPAAConsentBanner, BreachAlertBanner } from '@/components/HIPAABanner'
 import AuthScreen from '@/app/auth';
 import SignInScreen from '@/app/signin';
 import Colors from '@/constants/colors';
-import NetworkLog from '../lib/networkLogger';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -87,7 +86,17 @@ function ConsentGate({ children }: { children: React.ReactNode }) {
       {!consentAccepted && <HIPAAConsentBanner onAccept={acceptConsent} />}
       {consentAccepted && (
         <>
-          <BreachAlertBanner count={unacknowledgedBreaches.length} onPress={() => {}} />
+          <BreachAlertBanner
+            count={unacknowledgedBreaches.length}
+            onPress={() => {
+              // Security actions (audit logs, data deletion, session lock) live on the profile tab.
+              try {
+                router.push('/(tabs)/profile' as any);
+              } catch (e) {
+                console.log('[BreachAlertBanner] navigation failed', e);
+              }
+            }}
+          />
           {children}
         </>
       )}
@@ -116,7 +125,9 @@ function RootLayoutInner() {
                             <NutritionProvider>
                               <SupplementsProvider>
                                 <WearablesProvider>
-                                  <StatusBar style="light" />
+                                  {/* Default: dark icons on the app's light (#F8FAFB) backgrounds.
+                                      Screens with dark gradient headers override with <StatusBar style="light" />. */}
+                                  <StatusBar style="dark" />
                                   <RootLayoutNav />
                                 </WearablesProvider>
                               </SupplementsProvider>

@@ -264,7 +264,7 @@ function ProductDetailModal({
   const hasMajorWarning = safetyFlags.some(f => f.includes('MAJOR') || f.includes('CONTRAINDICATED'));
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
@@ -272,7 +272,7 @@ function ProductDetailModal({
               <Text style={styles.modalTitle}>{product.name}</Text>
               <Text style={styles.modalSubtitle}>{product.brand}</Text>
             </View>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
               <X color={Colors.text} size={24} />
             </TouchableOpacity>
           </View>
@@ -387,12 +387,12 @@ function DisclosureModal({
   onClose: () => void;
 }) {
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.disclosureModal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Important Information</Text>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
               <X color={Colors.text} size={24} />
             </TouchableOpacity>
           </View>

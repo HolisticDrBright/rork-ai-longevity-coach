@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,11 +12,29 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import { ChevronRight, User, Target, Heart } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { healthGoals } from '@/mocks/questionnaire';
+import { supabase } from '@/lib/supabase';
+
+/** Validate MM/DD/YYYY: real month, day valid for that month, year 1900–now. */
+function validateDateOfBirth(value: string): string | null {
+  if (!value) return null; // optional field
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!m) return 'Enter your date of birth as MM/DD/YYYY.';
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  const currentYear = new Date().getFullYear();
+  if (month < 1 || month > 12) return 'Month must be between 01 and 12.';
+  if (year < 1900 || year > currentYear) return `Year must be between 1900 and ${currentYear}.`;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (day < 1 || day > daysInMonth) return 'That day does not exist for the selected month.';
+  return null;
+}
 
 export default function OnboardingProfileScreen() {
   const { userProfile, updateUserProfile } = useUser();
@@ -24,6 +42,25 @@ export default function OnboardingProfileScreen() {
   const [lastName, setLastName] = useState(userProfile.lastName);
   const [email, setEmail] = useState(userProfile.email);
   const [dateOfBirth, setDateOfBirth] = useState(userProfile.dateOfBirth);
+  const [dobError, setDobError] = useState<string | null>(null);
+
+  // Prefill email from the Supabase session when the field is empty
+  // (non-blocking; ignored if the user has already typed something).
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        const sessionEmail = data.session?.user?.email;
+        if (!cancelled && sessionEmail) {
+          setEmail(prev => (prev ? prev : sessionEmail));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleDateOfBirthChange = (text: string) => {
     const digits = text.replace(/\D/g, '');
@@ -36,6 +73,7 @@ export default function OnboardingProfileScreen() {
       formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
     }
     setDateOfBirth(formatted);
+    if (dobError) setDobError(null);
   };
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(userProfile.sex);
   const [height, setHeight] = useState(userProfile.height ? String(userProfile.height) : '');
@@ -49,6 +87,11 @@ export default function OnboardingProfileScreen() {
   };
 
   const handleContinue = () => {
+    const dobValidation = validateDateOfBirth(dateOfBirth);
+    if (dobValidation) {
+      setDobError(dobValidation);
+      return;
+    }
     updateUserProfile({
       firstName,
       lastName,
@@ -66,6 +109,7 @@ export default function OnboardingProfileScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.primary, Colors.primaryLight]}
         style={styles.headerGradient}
@@ -77,7 +121,7 @@ export default function OnboardingProfileScreen() {
             </View>
             <Text style={styles.headerTitle}>Your Profile</Text>
             <Text style={styles.headerSubtitle}>
-              Let's personalize your health journey
+              Let&apos;s personalize your health journey
             </Text>
           </View>
         </SafeAreaView>
@@ -130,7 +174,7 @@ export default function OnboardingProfileScreen() {
 
             <Text style={styles.label}>Date of Birth</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, dobError ? styles.inputError : null]}
               value={dateOfBirth}
               onChangeText={handleDateOfBirthChange}
               placeholder="MM/DD/YYYY"
@@ -138,6 +182,7 @@ export default function OnboardingProfileScreen() {
               keyboardType="number-pad"
               maxLength={10}
             />
+            {dobError ? <Text style={styles.dobErrorText}>{dobError}</Text> : null}
 
             <Text style={styles.label}>Sex</Text>
             <View style={styles.sexRow}>
@@ -320,6 +365,15 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 16,
     color: Colors.text,
+    marginBottom: 16,
+  },
+  inputError: {
+    borderColor: Colors.danger,
+    marginBottom: 6,
+  },
+  dobErrorText: {
+    fontSize: 13,
+    color: Colors.danger,
     marginBottom: 16,
   },
   sexRow: {

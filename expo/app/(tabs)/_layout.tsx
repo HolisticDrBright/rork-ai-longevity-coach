@@ -1,11 +1,46 @@
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf, Watch } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
+import { PRACTITIONER_INTENT_KEY } from '@/app/signin';
 
 export default function TabLayout() {
-  const { isClinician } = useUser();
+  const { isClinician, userProfile, isLoading: userLoading } = useUser();
+  const redirectedRef = useRef(false);
+
+  // Gate the whole tab group: whichever tab the app enters on, users who have
+  // not finished onboarding are sent to it (previously only the Today tab
+  // performed this check). Guarded by the provider loading state and a ref so
+  // it fires at most once and cannot loop.
+  useEffect(() => {
+    if (userLoading || redirectedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const practitionerIntent = await AsyncStorage.getItem(PRACTITIONER_INTENT_KEY);
+        if (cancelled) return;
+        if (practitionerIntent && !isClinician) {
+          redirectedRef.current = true;
+          await AsyncStorage.removeItem(PRACTITIONER_INTENT_KEY);
+          router.replace('/practitioner' as any);
+          return;
+        }
+      } catch (e) {
+        console.log('[TabLayout] practitioner intent check failed', e);
+      }
+      if (cancelled) return;
+      if (!isClinician && !userProfile.onboardingCompleted) {
+        redirectedRef.current = true;
+        router.replace('/onboarding' as any);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userLoading, isClinician, userProfile.onboardingCompleted]);
 
   return (
     <Tabs
@@ -78,12 +113,6 @@ export default function TabLayout() {
         options={{
           title: 'Labs',
           tabBarIcon: ({ color, size }) => <FlaskConical color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="hormones"
-        options={{
-          href: null,
         }}
       />
       <Tabs.Screen

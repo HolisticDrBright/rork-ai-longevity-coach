@@ -37,6 +37,13 @@ export default function ClinicLayout() {
         }}
       />
       <Stack.Screen
+        name="patient/new"
+        options={{
+          title: 'New Patient',
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
         name="supplements-admin"
         options={{
           title: 'Supplements Admin',

@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
-  Alert,
   TextInput,
   Animated,
   Easing,
@@ -43,6 +42,7 @@ import { MealType } from '@/types';
 import { trpc } from '@/lib/trpc';
 import { parseMealText } from '@/utils/nutrition/parseMealText';
 import { transcribeAudio } from '@/utils/nutrition/transcribeAudio';
+import { showAlert } from '@/lib/ui/appAlert';
 
 type InputMode = 'photo' | 'text' | 'voice';
 
@@ -106,6 +106,20 @@ export default function NewMealCapture() {
     }
   }, [recorderState.isRecording, pulseAnim]);
 
+  // Stop the audio recorder if the screen unmounts mid-recording so the
+  // mic is released and no orphaned recording session is left behind.
+  useEffect(() => {
+    return () => {
+      try {
+        if (recorder.isRecording) {
+          void recorder.stop();
+        }
+      } catch (e) {
+        console.log('[NewMealCapture] recorder cleanup failed', e);
+      }
+    };
+  }, [recorder]);
+
   const analyzePhotoMutation = trpc.nutrition.analyzePhoto.useMutation({
     onSuccess: (data) => {
       console.log('Analysis successful:', data.foodLogId);
@@ -119,7 +133,7 @@ export default function NewMealCapture() {
     },
     onError: (error) => {
       console.error('Analysis failed:', error);
-      Alert.alert('Analysis Failed', 'Could not analyze the photo. Please try again.');
+      showAlert('Analysis Failed', 'Could not analyze the photo. Please try again.');
     },
     onSettled: () => {
       setIsAnalyzing(false);
@@ -133,20 +147,20 @@ export default function NewMealCapture() {
         : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permissionResult.granted) {
-        Alert.alert('Permission Required', `Please grant ${useCamera ? 'camera' : 'photo library'} access to continue.`);
+        showAlert('Permission Required', `Please grant ${useCamera ? 'camera' : 'photo library'} access to continue.`);
         return;
       }
 
       const result = useCamera
         ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes: ['images'],
           allowsEditing: true,
           aspect: [4, 3],
           quality: 0.8,
           base64: true,
         })
         : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes: ['images'],
           allowsEditing: true,
           aspect: [4, 3],
           quality: 0.8,
@@ -159,17 +173,17 @@ export default function NewMealCapture() {
       }
     } catch (error) {
       console.error('Image picker error:', error);
-      Alert.alert('Error', 'Failed to capture image. Please try again.');
+      showAlert('Error', 'Failed to capture image. Please try again.');
     }
   }, []);
 
   const handleAnalyzePhoto = useCallback(async () => {
     if (!selectedMeal) {
-      Alert.alert('Select Meal Type', 'Please select whether this is breakfast, lunch, dinner, or a snack.');
+      showAlert('Select Meal Type', 'Please select whether this is breakfast, lunch, dinner, or a snack.');
       return;
     }
     if (!photoBase64) {
-      Alert.alert('Add Photo', 'Please take or upload a photo of your meal.');
+      showAlert('Add Photo', 'Please take or upload a photo of your meal.');
       return;
     }
     setIsAnalyzing(true);
@@ -197,11 +211,11 @@ export default function NewMealCapture() {
 
   const handleParseText = useCallback(async () => {
     if (!selectedMeal) {
-      Alert.alert('Select Meal Type', 'Please choose which meal this is.');
+      showAlert('Select Meal Type', 'Please choose which meal this is.');
       return;
     }
     if (!mealText.trim()) {
-      Alert.alert('Describe your meal', 'Type what you ate so we can break it down.');
+      showAlert('Describe your meal', 'Type what you ate so we can break it down.');
       return;
     }
 
@@ -211,7 +225,7 @@ export default function NewMealCapture() {
       goToConfirm(items);
     } catch (error) {
       console.error('Parse text failed:', error);
-      Alert.alert('Could not parse', 'Try rephrasing what you ate or use the photo option.');
+      showAlert('Could not parse', 'Try rephrasing what you ate or use the photo option.');
     } finally {
       setIsParsingText(false);
     }
@@ -219,13 +233,13 @@ export default function NewMealCapture() {
 
   const handleStartRecording = useCallback(async () => {
     if (!selectedMeal) {
-      Alert.alert('Select Meal Type', 'Please choose which meal this is first.');
+      showAlert('Select Meal Type', 'Please choose which meal this is first.');
       return;
     }
     try {
       const perm = await requestRecordingPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Microphone Required', 'Please grant microphone access to log meals by voice.');
+        showAlert('Microphone Required', 'Please grant microphone access to log meals by voice.');
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
@@ -234,7 +248,7 @@ export default function NewMealCapture() {
       setTranscript('');
     } catch (error) {
       console.error('Start recording failed:', error);
-      Alert.alert('Recording Error', 'Could not start the recording. Please try again.');
+      showAlert('Recording Error', 'Could not start the recording. Please try again.');
     }
   }, [recorder, selectedMeal]);
 
@@ -249,7 +263,7 @@ export default function NewMealCapture() {
       const text = await transcribeAudio(uri);
       setTranscript(text);
       if (!text.trim()) {
-        Alert.alert('No speech detected', 'We could not hear anything. Try recording again.');
+        showAlert('No speech detected', 'We could not hear anything. Try recording again.');
         setIsProcessingVoice(false);
         return;
       }
@@ -257,7 +271,7 @@ export default function NewMealCapture() {
       goToConfirm(items);
     } catch (error) {
       console.error('Voice processing failed:', error);
-      Alert.alert('Voice Logging Failed', 'Could not understand the recording. Please try again.');
+      showAlert('Voice Logging Failed', 'Could not understand the recording. Please try again.');
     } finally {
       setIsProcessingVoice(false);
     }
@@ -265,7 +279,7 @@ export default function NewMealCapture() {
 
   const handleSkipPhoto = useCallback(() => {
     if (!selectedMeal) {
-      Alert.alert('Select Meal Type', 'Please select whether this is breakfast, lunch, dinner, or a snack.');
+      showAlert('Select Meal Type', 'Please select whether this is breakfast, lunch, dinner, or a snack.');
       return;
     }
     goToConfirm([]);
@@ -274,7 +288,7 @@ export default function NewMealCapture() {
   const renderPhotoMode = () => (
     <View style={styles.modePanel}>
       <Text style={styles.panelTitle}>Snap your meal</Text>
-      <Text style={styles.panelSubtitle}>We'll identify the foods automatically</Text>
+      <Text style={styles.panelSubtitle}>We&apos;ll identify the foods automatically</Text>
 
       {photoUri ? (
         <View style={styles.photoPreviewContainer}>
@@ -352,7 +366,7 @@ export default function NewMealCapture() {
     <View style={styles.modePanel}>
       <Text style={styles.panelTitle}>Type what you ate</Text>
       <Text style={styles.panelSubtitle}>
-        Plain English works — e.g. "2 eggs, half avocado on sourdough toast and a coffee"
+        Plain English works — e.g. &quot;2 eggs, half avocado on sourdough toast and a coffee&quot;
       </Text>
 
       <TextInput
@@ -422,7 +436,7 @@ export default function NewMealCapture() {
       <View style={styles.modePanel}>
         <Text style={styles.panelTitle}>Tell me what you ate</Text>
         <Text style={styles.panelSubtitle}>
-          Tap the mic and speak naturally. We'll transcribe and break down the macros.
+          Tap the mic and speak naturally. We&apos;ll transcribe and break down the macros.
         </Text>
 
         <View style={styles.voiceContainer}>
@@ -517,7 +531,7 @@ export default function NewMealCapture() {
                   testID={`mode-${opt.mode}`}
                 >
                   <View style={styles.modeTabIcon}>
-                    {React.cloneElement(opt.icon as React.ReactElement, {
+                    {React.cloneElement(opt.icon as React.ReactElement<{ color?: string }>, {
                       color: active ? Colors.primary : Colors.textSecondary,
                     })}
                   </View>

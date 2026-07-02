@@ -9,6 +9,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import {
   ChevronRight,
   ChevronLeft,
@@ -133,6 +134,7 @@ export default function OnboardingQuestionnaireScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.primary, Colors.primaryDark]}
         style={styles.headerGradient}

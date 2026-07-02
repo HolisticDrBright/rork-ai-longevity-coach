@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   Modal,
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
@@ -20,13 +19,30 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 import { useNutrition } from '@/providers/NutritionProvider';
-import { DetectedFoodItem, FoodLog, MealType } from '@/types';
+import { DetectedFoodItem, FoodLog } from '@/types';
 import { trpc } from '@/lib/trpc';
+import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
 
 const PORTION_UNITS = ['g', 'oz', 'cup', 'tbsp', 'tsp', 'piece', 'serving', 'slice', 'medium', 'large', 'small'];
 
 interface EditableItem extends DetectedFoodItem {
   isEditing?: boolean;
+  /**
+   * Raw text of the portion field while the user is typing. A controlled
+   * String(portionQty) + parseFloat round-trip makes intermediate input like
+   * "0." impossible to type; the numeric value is committed on blur/submit.
+   */
+  portionText?: string;
+}
+
+function commitPortionValue(item: EditableItem): EditableItem {
+  if (item.portionText === undefined) return item;
+  const { portionText, ...rest } = item;
+  const num = parseFloat(portionText);
+  return {
+    ...rest,
+    portionQty: Number.isFinite(num) && num > 0 ? num : item.portionQty,
+  };
 }
 
 export default function ConfirmFoods() {
@@ -36,10 +52,8 @@ export default function ConfirmFoods() {
 
   const [items, setItems] = useState<EditableItem[]>(pendingAnalysis?.detectedItems || []);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItemName, setNewItemName] = useState('');
-  const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (pendingAnalysis?.detectedItems) {
@@ -85,7 +99,7 @@ export default function ConfirmFoods() {
         (error as any).meta.response.text().then(console.log);
       }
 
-      Alert.alert('Error', 'Failed to calculate nutrition. Please try again.');
+      showAlert('Error', 'Failed to calculate nutrition. Please try again.');
     },
     onSettled: () => {
       setIsCalculating(false);
@@ -122,14 +136,15 @@ export default function ConfirmFoods() {
 
   const handleCalculate = useCallback(() => {
     if (items.length === 0) {
-      Alert.alert('No Foods', 'Please add at least one food item.');
+      showAlert('No Foods', 'Please add at least one food item.');
       return;
     }
 
     setIsCalculating(true);
     calculateMutation.mutate({
       foodLogId: pendingAnalysis?.foodLogId || `log_${Date.now()}`,
-      confirmedItems: items.map(item => ({
+      // Commit any in-progress portion text that has not been blurred yet.
+      confirmedItems: items.map(commitPortionValue).map(item => ({
         id: item.id,
         name: item.name,
         passioFoodId: item.passioFoodId,
@@ -141,22 +156,16 @@ export default function ConfirmFoods() {
     });
   }, [items, pendingAnalysis, dietProfile, calculateMutation]);
 
-  const handleCancel = useCallback(() => {
-    Alert.alert(
+  const handleCancel = useCallback(async () => {
+    const discard = await confirmAsync(
       'Discard Changes?',
       'Are you sure you want to discard this meal?',
-      [
-        { text: 'Keep Editing', style: 'cancel' },
-        {
-          text: 'Discard',
-          style: 'destructive',
-          onPress: () => {
-            setPendingMealAnalysis(null);
-            router.back();
-          },
-        },
-      ]
+      { confirmText: 'Discard', cancelText: 'Keep Editing', destructive: true }
     );
+    if (discard) {
+      setPendingMealAnalysis(null);
+      router.back();
+    }
   }, [setPendingMealAnalysis, router]);
 
   const getConfidenceColor = (confidence: number) => {
@@ -199,10 +208,10 @@ export default function ConfirmFoods() {
           <View style={styles.portionQtyContainer}>
             <TextInput
               style={styles.portionQtyInput}
-              value={String(item.portionQty)}
-              onChangeText={(text) => {
-                const num = parseFloat(text) || 0;
-                handleUpdateItem(item.id, { portionQty: num });
+              value={item.portionText !== undefined ? item.portionText : String(item.portionQty)}
+              onChangeText={(text) => handleUpdateItem(item.id, { portionText: text })}
+              onBlur={() => {
+                setItems(prev => prev.map(it => (it.id === item.id ? commitPortionValue(it) : it)));
               }}
               keyboardType="decimal-pad"
               placeholder="1"
@@ -340,7 +349,11 @@ export default function ConfirmFoods() {
               <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>Add Food Item</Text>
-                  <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                  <TouchableOpacity
+                    onPress={() => setShowAddModal(false)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
+                  >
                     <X size={24} color={Colors.text} />
                   </TouchableOpacity>
                 </View>
@@ -367,7 +380,7 @@ export default function ConfirmFoods() {
                   activeOpacity={0.8}
                 >
                   <Plus size={20} color={Colors.textInverse} />
-                  <Text style={styles.addModalButtonText}>Add "{newItemName || '...'}"</Text>
+                  <Text style={styles.addModalButtonText}>Add &quot;{newItemName || '...'}&quot;</Text>
                 </TouchableOpacity>
               </View>
             </View>

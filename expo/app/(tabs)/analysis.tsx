@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import {
   Stethoscope,
   Leaf,
@@ -172,6 +173,7 @@ export default function AnalysisScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={['#065F46', '#059669']}
         style={styles.headerGradient}
@@ -530,6 +532,7 @@ export default function AnalysisScreen() {
         visible={showIntakeModal}
         animationType="slide"
         presentationStyle="pageSheet"
+        onRequestClose={() => setShowIntakeModal(false)}
       >
         <SafeAreaView style={styles.modalContainer} edges={['top']}>
           <View style={styles.modalHeader}>

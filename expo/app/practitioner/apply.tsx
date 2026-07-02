@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -28,14 +27,15 @@ import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
+import { showAlert } from '@/lib/ui/appAlert';
 
 type Credential = 'MD' | 'DO' | 'NP' | 'PA' | 'ND' | 'DC' | 'RD' | 'Other';
 
 const CREDENTIALS: Credential[] = ['MD', 'DO', 'NP', 'PA', 'ND', 'DC', 'RD', 'Other'];
 
-const PRACTITIONER_PROFILE_KEY = 'longevity_practitioner_profile';
+export const PRACTITIONER_PROFILE_KEY = 'longevity_practitioner_profile';
 
-interface PractitionerProfile {
+export interface PractitionerProfile {
   fullName: string;
   credential: Credential;
   licenseNumber: string;
@@ -49,7 +49,7 @@ interface PractitionerProfile {
 
 export default function PractitionerApplyScreen() {
   const insets = useSafeAreaInsets();
-  const { userProfile, setUserRole } = useUser();
+  const { userProfile } = useUser();
 
   const [fullName, setFullName] = useState<string>(
     [userProfile.firstName, userProfile.lastName].filter(Boolean).join(' ')
@@ -73,7 +73,7 @@ export default function PractitionerApplyScreen() {
 
   const handleSubmit = useCallback(async () => {
     if (!isValid) {
-      Alert.alert(
+      showAlert(
         'Missing information',
         'Please complete all required fields and accept the verification agreement.'
       );
@@ -91,7 +91,7 @@ export default function PractitionerApplyScreen() {
         specialty: specialty.trim(),
         clinicName: clinicName.trim(),
         submittedAt: new Date().toISOString(),
-        status: 'approved',
+        status: 'pending',
       };
 
       await secureSetJSON(PRACTITIONER_PROFILE_KEY, profile);
@@ -101,28 +101,29 @@ export default function PractitionerApplyScreen() {
         userProfile.id || 'unknown'
       );
 
-      setUserRole('clinician');
-
       if (Platform.OS !== 'web') {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
 
-      Alert.alert(
-        'Application Approved',
-        'Your practitioner credentials have been verified. The Clinic tab is now unlocked.',
+      showAlert(
+        'Application received',
+        'Your credentials are under review by our compliance team. Expect a decision within 1–2 business days.',
         [
           {
-            text: 'Enter Portal',
+            text: 'OK',
             onPress: () => {
-              router.dismissAll();
-              router.replace('/(tabs)/(clinic)/dashboard' as any);
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/practitioner' as any);
+              }
             },
           },
         ]
       );
     } catch (e) {
       console.log('[PractitionerApply] submit error', e);
-      Alert.alert('Submission failed', 'Please try again in a moment.');
+      showAlert('Submission failed', 'Please try again in a moment.');
     } finally {
       setSubmitting(false);
     }
@@ -135,7 +136,6 @@ export default function PractitionerApplyScreen() {
     npi,
     specialty,
     clinicName,
-    setUserRole,
     userProfile.id,
   ]);
 

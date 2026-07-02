@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Linking,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -14,8 +13,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 import { useNutrition } from '@/providers/NutritionProvider';
-import { FoodLogItem, TherapeuticDiet } from '@/types';
-import { dietDescriptions, swapSuggestions } from '@/mocks/foodRules';
+import { FoodLogItem } from '@/types';
+import { dietDescriptions } from '@/mocks/foodRules';
+import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
 
 const FULLSCRIPT_URL = 'https://us.fullscript.com/welcome/drbright/signup';
 
@@ -34,22 +34,16 @@ export default function MealDetail() {
 
   const log = getLogById(logId);
 
-  const handleDelete = () => {
-    Alert.alert(
+  const handleDelete = async () => {
+    const confirmed = await confirmAsync(
       'Delete Meal',
       'Are you sure you want to delete this meal log?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteFoodLog(logId);
-            router.back();
-          },
-        },
-      ]
+      { confirmText: 'Delete', destructive: true }
     );
+    if (confirmed) {
+      deleteFoodLog(logId);
+      router.back();
+    }
   };
 
   const getComplianceColor = (score: number) => {
@@ -223,7 +217,11 @@ export default function MealDetail() {
             </View>
             <TouchableOpacity
               style={styles.fullscriptButton}
-              onPress={() => Linking.openURL(FULLSCRIPT_URL)}
+              onPress={() => {
+                Linking.openURL(FULLSCRIPT_URL).catch(() => {
+                  showAlert('Could not open link', 'Please try again later.');
+                });
+              }}
               activeOpacity={0.7}
             >
               <Text style={styles.fullscriptButtonText}>Browse Supplements on Fullscript</Text>

@@ -9,6 +9,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import { ChevronRight, ChevronLeft, Dumbbell, Moon, Utensils } from 'lucide-react-native';
 import Slider from '@react-native-community/slider';
 
@@ -63,6 +64,7 @@ export default function OnboardingLifestyleScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.secondary, Colors.primaryLight]}
         style={styles.headerGradient}

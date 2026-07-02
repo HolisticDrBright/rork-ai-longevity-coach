@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   Switch,
-  Alert,
 } from 'react-native';
 import { Stack } from 'expo-router';
 import { Check, Info, Leaf, Wheat, Flame, AlertCircle } from 'lucide-react-native';
@@ -17,6 +16,7 @@ import Colors from '@/constants/colors';
 import { useNutrition } from '@/providers/NutritionProvider';
 import { TherapeuticDiet } from '@/types';
 import { dietDescriptions } from '@/mocks/foodRules';
+import { showAlert } from '@/lib/ui/appAlert';
 
 const DIET_ICONS: Record<TherapeuticDiet, React.ReactNode> = {
   AIP: <Leaf size={22} color={Colors.success} />,
@@ -47,7 +47,7 @@ export default function DietSettings() {
       allergies,
       notes,
     });
-    Alert.alert('Saved', 'Your diet preferences have been updated.');
+    showAlert('Saved', 'Your diet preferences have been updated.');
   };
 
   const handleToggleDiet = (diet: TherapeuticDiet) => {
@@ -99,7 +99,7 @@ export default function DietSettings() {
             <TouchableOpacity
               style={styles.infoButton}
               onPress={() => {
-                Alert.alert(
+                showAlert(
                   info?.name || diet,
                   `${info?.description}\n\nThis diet will track your meals and flag any foods that don't comply with the ${info?.name} guidelines.`
                 );
@@ -127,7 +127,7 @@ export default function DietSettings() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Therapeutic Diets</Text>
           <Text style={styles.sectionSubtitle}>
-            Enable the diets you're following. We'll track compliance for each meal.
+            Enable the diets you&apos;re following. We&apos;ll track compliance for each meal.
           </Text>
           
           <View style={styles.dietsContainer}>
@@ -175,7 +175,7 @@ export default function DietSettings() {
           <View style={styles.activeSection}>
             <Text style={styles.activeSectionTitle}>Active Diet Summary</Text>
             <Text style={styles.activeSectionText}>
-              You're tracking: {activeDiets.map(d => dietDescriptions[d]?.name || d).join(', ')}
+              You&apos;re tracking: {activeDiets.map(d => dietDescriptions[d]?.name || d).join(', ')}
             </Text>
             <Text style={styles.activeSectionNote}>
               Foods violating these diets will be flagged when you log meals.

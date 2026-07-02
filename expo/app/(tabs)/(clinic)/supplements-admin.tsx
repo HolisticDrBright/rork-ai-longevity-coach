@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
   Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +28,7 @@ import {
 import Colors from '@/constants/colors';
 import { useSupplements } from '@/providers/SupplementsProvider';
 import { CuratedProduct, SupplementCategory, SupplementForm } from '@/types/supplements';
+import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
 
 const FORM_OPTIONS: SupplementForm[] = [
   'capsule', 'softgel', 'liquid', 'powder', 'transdermal', 'liposomal', 'chewable', 'sublingual'
@@ -55,19 +55,15 @@ export default function SupplementsAdminScreen() {
     return matchesSearch && matchesCategory;
   });
 
-  const handleDelete = useCallback((product: CuratedProduct) => {
-    Alert.alert(
+  const handleDelete = useCallback(async (product: CuratedProduct) => {
+    const confirmed = await confirmAsync(
       'Delete Product',
       `Are you sure you want to delete "${product.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteProduct(product.id),
-        },
-      ]
+      { confirmText: 'Delete', destructive: true }
     );
+    if (confirmed) {
+      deleteProduct(product.id);
+    }
   }, [deleteProduct]);
 
   const stats = getClickStats();
@@ -359,7 +355,7 @@ function ProductFormModal({
 
   const handleSave = () => {
     if (!name.trim() || !brand.trim()) {
-      Alert.alert('Error', 'Name and brand are required');
+      showAlert('Error', 'Name and brand are required');
       return;
     }
 

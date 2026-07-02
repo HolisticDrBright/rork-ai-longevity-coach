@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import Slider from '@react-native-community/slider';
 import {
@@ -94,7 +95,35 @@ export default function TrackingScreen() {
   });
   const [expandedCategory, setExpandedCategory] = useState<SymptomCategory | null>('high_testosterone_dhea');
 
+  // The providers load persisted data asynchronously, so the useState
+  // initializers above only capture mount-time values (often undefined).
+  // Sync local form state when the provider value arrives — but never
+  // clobber edits the user has already made (dirty flags).
+  const dailyDirtyRef = useRef(false);
+  const hormonesDirtyRef = useRef(false);
+
+  useEffect(() => {
+    if (dailyDirtyRef.current || !todayAdherence?.symptoms) return;
+    setSymptoms(todayAdherence.symptoms);
+    setSymptomNotes(todayAdherence.symptoms.notes || '');
+  }, [todayAdherence]);
+
+  useEffect(() => {
+    if (hormonesDirtyRef.current || !todayEntry) return;
+    setCycleDay(todayEntry.cycleDay?.toString() || '');
+    setHormoneNotes(todayEntry.notes || '');
+    setHormoneSymptomValues(() => {
+      const synced: Record<string, number> = {};
+      hormoneSymptoms.forEach(s => {
+        const existing = todayEntry.symptoms.find(ts => ts.symptomId === s.id);
+        synced[s.id] = existing?.severity || 0;
+      });
+      return synced;
+    });
+  }, [todayEntry]);
+
   const handleSymptomChange = async (key: keyof Omit<DailySymptoms, 'notes'>, value: number) => {
+    dailyDirtyRef.current = true;
     await Haptics.selectionAsync();
     const updated = { ...symptoms, [key]: Math.round(value) };
     setSymptoms(updated);
@@ -118,6 +147,7 @@ export default function TrackingScreen() {
   };
 
   const handleHormoneSymptomChange = useCallback(async (symptomId: string, severity: number) => {
+    hormonesDirtyRef.current = true;
     await Haptics.selectionAsync();
     setHormoneSymptomValues(prev => ({ ...prev, [symptomId]: severity }));
   }, []);
@@ -219,6 +249,7 @@ export default function TrackingScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.secondary, Colors.primaryLight]}
         style={styles.headerGradient}
@@ -306,7 +337,10 @@ export default function TrackingScreen() {
               <TextInput
                 style={styles.notesInput}
                 value={symptomNotes}
-                onChangeText={setSymptomNotes}
+                onChangeText={(text) => {
+                  dailyDirtyRef.current = true;
+                  setSymptomNotes(text);
+                }}
                 placeholder="Any symptoms, observations, or notes for today..."
                 placeholderTextColor={Colors.textTertiary}
                 multiline
@@ -323,7 +357,7 @@ export default function TrackingScreen() {
                       <Pill color={Colors.chartTeal} size={18} />
                     </View>
                     <View style={styles.supplementTitleInfo}>
-                      <Text style={styles.sectionTitle}>Today's Supplements</Text>
+                      <Text style={styles.sectionTitle}>Today&apos;s Supplements</Text>
                       <Text style={styles.supplementProgress}>
                         {completedSupplementCount} of {supplementActions.length} taken
                       </Text>
@@ -512,7 +546,10 @@ export default function TrackingScreen() {
                 <TextInput
                   style={styles.cycleDayField}
                   value={cycleDay}
-                  onChangeText={setCycleDay}
+                  onChangeText={(text) => {
+                    hormonesDirtyRef.current = true;
+                    setCycleDay(text);
+                  }}
                   placeholder="—"
                   placeholderTextColor={Colors.textTertiary}
                   keyboardType="numeric"
@@ -562,7 +599,10 @@ export default function TrackingScreen() {
               <TextInput
                 style={styles.notesInput}
                 value={hormoneNotes}
-                onChangeText={setHormoneNotes}
+                onChangeText={(text) => {
+                  hormonesDirtyRef.current = true;
+                  setHormoneNotes(text);
+                }}
                 placeholder="Any additional observations..."
                 placeholderTextColor={Colors.textTertiary}
                 multiline

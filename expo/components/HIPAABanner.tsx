@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { Shield, AlertTriangle, X } from 'lucide-react-native';
+import { Shield, AlertTriangle } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 
 interface HIPAAConsentBannerProps {

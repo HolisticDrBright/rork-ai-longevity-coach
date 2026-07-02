@@ -5,12 +5,13 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Switch,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import {
   User,
@@ -18,10 +19,8 @@ import {
   ChevronRight,
   LogOut,
   FileText,
-  Bell,
   Shield,
   HelpCircle,
-  BarChart3,
   Stethoscope,
   Lock,
   Trash2,
@@ -38,6 +37,9 @@ import { useProtocol } from '@/providers/ProtocolProvider';
 import { useAuth } from '@/providers/AuthProvider';
 import { useHIPAA } from '@/providers/HIPAAProvider';
 import { sendCoachingInterest, CoachingInterest } from '@/lib/webhooks';
+import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
+
+const SUPPORT_EMAIL = 'support@ailongevitycoach.app';
 
 export default function ProfileScreen() {
   const { userProfile, lifestyleProfile, categoryScores, resetOnboarding, isLoading, isClinician, setUserRole } = useUser();
@@ -46,67 +48,62 @@ export default function ProfileScreen() {
   const { requestDataDeletion, isDeleting, fetchAuditLogs, auditLogs, checkAuditIntegrity, auditIntegrity, unacknowledgedBreaches } = useHIPAA();
   const [showAuditLogs, setShowAuditLogs] = useState(false);
 
-  const handleCoachingInterest = (program: CoachingInterest) => {
+  const handleCoachingInterest = async (program: CoachingInterest, label: string) => {
+    const confirmed = await confirmAsync(
+      label,
+      'Share your email with our team so we can follow up with more information about this program?',
+      { confirmText: 'Yes, contact me' }
+    );
+    if (!confirmed) return;
     sendCoachingInterest({
       userId: userProfile.id || 'unknown',
       email: userProfile.email || '',
       interestedIn: program,
     });
-    Alert.alert('Interest Recorded', 'We\'ll be in touch with more information about this program!');
+    showAlert('Interest Recorded', "We'll be in touch with more information about this program!");
   };
 
   const handleResetOnboarding = async () => {
-    Alert.alert(
+    const confirmed = await confirmAsync(
       'Reset Profile',
       'This will clear all your data and restart the onboarding process. Are you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await resetOnboarding();
-            router.replace('/onboarding');
-          },
-        },
-      ]
+      { confirmText: 'Reset', destructive: true }
     );
+    if (!confirmed) return;
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    await resetOnboarding();
+    router.replace('/onboarding');
   };
 
-  const handleDeleteAllData = () => {
-    Alert.alert(
+  const handleDeleteAllData = async () => {
+    const first = await confirmAsync(
       'Delete All Health Data',
       'This will permanently delete ALL your Protected Health Information (PHI) including lab results, protocols, hormone entries, nutrition logs, and personal information. This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Everything',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Final Confirmation',
-              'Are you absolutely sure? All encrypted health data will be permanently erased.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Yes, Delete All PHI',
-                  style: 'destructive',
-                  onPress: () => requestDataDeletion(),
-                },
-              ]
-            );
-          },
-        },
-      ]
+      { confirmText: 'Delete Everything', destructive: true }
     );
+    if (!first) return;
+    const second = await confirmAsync(
+      'Final Confirmation',
+      'Are you absolutely sure? All encrypted health data will be permanently erased.',
+      { confirmText: 'Yes, Delete All PHI', destructive: true }
+    );
+    if (!second) return;
+    requestDataDeletion();
   };
 
-  const handleLogout = () => {
-    Alert.alert('Lock Session', 'Lock the app and require PIN to re-enter?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Lock', onPress: () => logout() },
-    ]);
+  const handleLogout = async () => {
+    const confirmed = await confirmAsync(
+      'Lock Session',
+      'Lock the app and require PIN to re-enter?',
+      { confirmText: 'Lock' }
+    );
+    if (confirmed) logout();
+  };
+
+  const handleHelpSupport = () => {
+    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=AI%20Longevity%20Coach%20Support`).catch(() => {
+      showAlert('Could not open email', `Please email us at ${SUPPORT_EMAIL}.`);
+    });
   };
 
   const handleViewAuditLogs = () => {
@@ -140,6 +137,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.primary, Colors.primaryLight]}
         style={styles.headerGradient}
@@ -257,7 +255,7 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Settings</Text>
           <View style={styles.menuContainer}>
-            <TouchableOpacity style={styles.menuItem}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/onboarding' as any)}>
               <View style={[styles.menuIcon, { backgroundColor: `${Colors.primary}15` }]}>
                 <User color={Colors.primary} size={18} />
               </View>
@@ -265,23 +263,7 @@ export default function ProfileScreen() {
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem}>
-              <View style={[styles.menuIcon, { backgroundColor: `${Colors.accent}15` }]}>
-                <Bell color={Colors.accent} size={18} />
-              </View>
-              <Text style={styles.menuText}>Notifications</Text>
-              <ChevronRight color={Colors.textTertiary} size={20} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItem}>
-              <View style={[styles.menuIcon, { backgroundColor: `${Colors.success}15` }]}>
-                <BarChart3 color={Colors.success} size={18} />
-              </View>
-              <Text style={styles.menuText}>Progress Reports</Text>
-              <ChevronRight color={Colors.textTertiary} size={20} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('longevity_program')}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('longevity_program', 'Longevity Coaching')}>
               <View style={[styles.menuIcon, { backgroundColor: `${Colors.accent}15` }]}>
                 <Target color={Colors.accent} size={18} />
               </View>
@@ -289,7 +271,7 @@ export default function ProfileScreen() {
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('peptide_program')}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleCoachingInterest('peptide_program', 'Peptide Program')}>
               <View style={[styles.menuIcon, { backgroundColor: `${Colors.secondary ?? Colors.primary}15` }]}>
                 <Activity color={Colors.secondary ?? Colors.primary} size={18} />
               </View>
@@ -297,7 +279,7 @@ export default function ProfileScreen() {
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem}>
+            <TouchableOpacity style={styles.menuItem} onPress={handleHelpSupport}>
               <View style={[styles.menuIcon, { backgroundColor: `${Colors.chartPurple}15` }]}>
                 <HelpCircle color={Colors.chartPurple} size={18} />
               </View>
@@ -417,19 +399,13 @@ export default function ProfileScreen() {
           {isClinician && (
             <TouchableOpacity
               style={styles.disablePractitioner}
-              onPress={() => {
-                Alert.alert(
+              onPress={async () => {
+                const confirmed = await confirmAsync(
                   'Disable Clinician Mode',
                   'This will hide the clinic tab. You can reactivate by re-applying.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Disable',
-                      style: 'destructive',
-                      onPress: () => setUserRole('patient'),
-                    },
-                  ]
+                  { confirmText: 'Disable', destructive: true }
                 );
+                if (confirmed) setUserRole('patient');
               }}
             >
               <Text style={styles.disablePractitionerText}>Disable clinician mode</Text>

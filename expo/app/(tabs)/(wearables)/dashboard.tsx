@@ -179,7 +179,7 @@ export default function WearablesTodayScreen() {
         >
           <View style={styles.heroTop}>
             <View>
-              <Text style={styles.heroLabel}>TODAY'S RECOVERY</Text>
+              <Text style={styles.heroLabel}>TODAY&apos;S RECOVERY</Text>
               <Text style={styles.heroScore}>{rec?.recoveryScore ?? '--'}</Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: 'rgba(255,255,255,0.25)' }]}>
@@ -371,7 +371,7 @@ export default function WearablesTodayScreen() {
           <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/plan')} testID="plan-nav">
             <Target size={22} color={Colors.accent} />
             <Text style={styles.navCardTitle}>Plan</Text>
-            <Text style={styles.navCardSub}>Today's full guidance</Text>
+            <Text style={styles.navCardSub}>Today&apos;s full guidance</Text>
             <ChevronRight size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/insights-detail')} testID="insights-nav">
@@ -403,12 +403,18 @@ function MetricChip({ icon, label, value, baselineVal, currentVal, inverted }: {
   let trendIcon = <Minus size={10} color="rgba(255,255,255,0.7)" />;
   if (baselineVal != null && currentVal != null) {
     const diff = currentVal - baselineVal;
-    const isGood = inverted ? diff < 0 : diff > 0;
-    trendIcon = isGood
-      ? <TrendingUp size={10} color="rgba(255,255,255,0.9)" />
-      : diff === 0
-        ? <Minus size={10} color="rgba(255,255,255,0.7)" />
-        : <TrendingDown size={10} color="rgba(255,255,255,0.9)" />;
+    if (diff === 0) {
+      trendIcon = <Minus size={10} color="rgba(255,255,255,0.7)" />;
+    } else {
+      // Arrow shows the direction the data moved; color shows whether that
+      // is good. For inverted metrics (e.g. resting HR), a drop is good —
+      // green down-arrow — matching the pattern used in trends.tsx.
+      const isGood = inverted ? diff < 0 : diff > 0;
+      const color = isGood ? '#6EE7B7' : '#FCA5A5';
+      trendIcon = diff > 0
+        ? <TrendingUp size={10} color={color} />
+        : <TrendingDown size={10} color={color} />;
+    }
   }
 
   return (

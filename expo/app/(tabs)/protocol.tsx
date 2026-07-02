@@ -7,10 +7,10 @@ import {
   TouchableOpacity,
   Linking,
   Modal,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import {
   Pill,
   Clock,
@@ -52,6 +52,7 @@ import {
   PeptideProtocolTemplate,
 } from '@/types';
 import { PEPTIDE_DISCLAIMER } from '@/mocks/peptides';
+import { showAlert } from '@/lib/ui/appAlert';
 
 const taskIconMap: Record<string, any> = {
   sauna: Flame,
@@ -64,7 +65,6 @@ const taskIconMap: Record<string, any> = {
   sleep_routine: Clock,
 };
 
-const FULLSCRIPT_URL = 'https://us.fullscript.com/welcome/drbright/signup';
 
 const GOAL_LABELS: Record<PeptideGoal, string> = {
   fat_loss: 'Fat Loss',
@@ -261,7 +261,7 @@ export default function ProtocolScreen() {
 
   const handleAddToProtocol = (peptide: PeptideData) => {
     if (peptide.clinicianOnly) {
-      Alert.alert(
+      showAlert(
         'Clinician Review Required',
         'This peptide requires consultation with a healthcare provider before use.',
         [{ text: 'OK' }]
@@ -279,7 +279,7 @@ export default function ProtocolScreen() {
       acknowledgedAt: new Date().toISOString(),
     });
     
-    Alert.alert('Added', `${peptide.name} has been added to your protocol.`);
+    showAlert('Added', `${peptide.name} has been added to your protocol.`);
   };
 
   if (isLoading) {
@@ -292,6 +292,7 @@ export default function ProtocolScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={['#1a5f4a', '#2d8a6e']}
         style={styles.headerGradient}
@@ -1014,12 +1015,12 @@ function PeptideCalculatorModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.calculatorModal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Peptide Calculator</Text>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
               <X color={Colors.text} size={24} />
             </TouchableOpacity>
           </View>
@@ -1218,12 +1219,12 @@ function DisclaimerModal({
   onClose: () => void;
 }) {
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.disclaimerModal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Medical Disclaimer</Text>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
               <X color={Colors.text} size={24} />
             </TouchableOpacity>
           </View>

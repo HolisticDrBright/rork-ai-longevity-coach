@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Plus, Settings, TrendingUp, Flame, Beef, Wheat, Droplets, ChevronRight, AlertTriangle, CheckCircle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,18 +31,29 @@ export default function NutritionDashboard() {
     todaySummary,
     dietProfile,
     getRecentLogs,
-    isLoading: _isLoading,
   } = useNutrition();
 
   const recentLogs = getRecentLogs(5);
   const activeDiets = dietProfile.activeDiets || [];
 
   const [refreshing, setRefreshing] = React.useState(false);
+  const queryClient = useQueryClient();
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
-  }, []);
+    try {
+      // NutritionProvider reads through these react-query keys; refetching
+      // them reloads diet profile and food logs from storage/network.
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['foodLogs'] }),
+        queryClient.refetchQueries({ queryKey: ['dietProfile'] }),
+      ]);
+    } catch (e) {
+      console.log('[NutritionDashboard] refresh failed', e);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [queryClient]);
 
   const getComplianceColor = (score: number) => {
     if (score >= 80) return Colors.success;
@@ -134,13 +146,17 @@ export default function NutritionDashboard() {
         style={styles.scrollView}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
         showsVerticalScrollIndicator={false}
+        // Lets iOS lay content out below the native large-title header;
+        // Android/web headers already reserve their own space, so no
+        // hardcoded margin is needed (the old marginTop:150 left a blank band).
+        contentInsetAdjustmentBehavior="automatic"
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
       >
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Today's Nutrition</Text>
+            <Text style={styles.greeting}>Today&apos;s Nutrition</Text>
             <Text style={styles.date}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </Text>
@@ -256,7 +272,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
-    marginTop:150,
   },
   header: {
     flexDirection: 'row',

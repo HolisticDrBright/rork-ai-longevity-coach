@@ -6,15 +6,16 @@ import {
   TouchableOpacity,
   Animated,
   Platform,
-  Vibration,
 } from 'react-native';
-import { Shield, Fingerprint, Lock, Delete, Eye, EyeOff } from 'lucide-react-native';
+import { Shield, Fingerprint, Lock, Delete } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/providers/AuthProvider';
 
 const PIN_LENGTH = 6;
+// Mirrors MAX_ATTEMPTS_BEFORE_LOCKOUT in providers/AuthProvider.tsx.
+const MAX_PIN_ATTEMPTS = 5;
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -151,9 +152,14 @@ export default function AuthScreen() {
           } else {
             const success = await verifyPin(newPin);
             if (!success) {
+              // failedAttempts in this closure is the pre-attempt count (the
+              // provider updates it asynchronously), so derive the new count
+              // locally to avoid an off-by-one lockout message.
+              const newAttempts = failedAttempts + 1;
+              const remaining = Math.max(0, MAX_PIN_ATTEMPTS - newAttempts);
               setError(
-                failedAttempts >= 3
-                  ? `Incorrect PIN. ${5 - failedAttempts - 1} attempts remaining.`
+                newAttempts >= 3 && remaining > 0
+                  ? `Incorrect PIN. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
                   : 'Incorrect PIN'
               );
               shakeError();
@@ -291,6 +297,8 @@ export default function AuthScreen() {
                     onPress={handleDelete}
                     testID="pin-delete"
                     disabled={isLockedOut}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete"
                   >
                     <Delete size={24} color={isLockedOut ? Colors.textTertiary : Colors.text} />
                   </TouchableOpacity>
@@ -303,6 +311,8 @@ export default function AuthScreen() {
                     style={styles.keySpecial}
                     onPress={attemptBiometric}
                     testID="biometric-auth"
+                    accessibilityRole="button"
+                    accessibilityLabel="Use biometrics"
                   >
                     <Fingerprint size={24} color={Colors.primary} />
                   </TouchableOpacity>
@@ -315,6 +325,8 @@ export default function AuthScreen() {
                   onPress={() => handlePinInput(key)}
                   testID={`pin-key-${key}`}
                   disabled={isLockedOut}
+                  accessibilityRole="button"
+                  accessibilityLabel={key}
                 >
                   <Text style={[styles.keyText, isLockedOut && styles.keyTextDisabled]}>
                     {key}

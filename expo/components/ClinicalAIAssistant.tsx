@@ -203,22 +203,26 @@ Remember: Always anchor your analysis to the chief complaint. Explain correlatio
     detectedPatterns
   ]);
 
-  const { messages, sendMessage } = useRorkAgent({
+  const { messages, sendMessage, status } = useRorkAgent({
     tools: {},
   });
 
+  const isResponding = status === 'submitted' || status === 'streaming';
+
   const handleSendMessage = useCallback((message?: string) => {
     const text = message || chatInput.trim();
-    if (!text) return;
-    
-    const messageWithContext = messages.length === 0 
+    if (!text || isResponding) return;
+
+    // The context prefix is stripped back out of the user's bubble at render
+    // time (see displayText below) so the blob is never shown to the user.
+    const messageWithContext = messages.length === 0
       ? `Context: ${healthContext}\n\nUser Question: ${text}`
       : text;
-    
+
     sendMessage(messageWithContext);
     setChatInput('');
     setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-  }, [chatInput, healthContext, messages.length, sendMessage]);
+  }, [chatInput, healthContext, messages.length, sendMessage, isResponding]);
 
   const suggestedQuestions = useMemo(() => {
     const questions: string[] = [];
@@ -271,7 +275,12 @@ Remember: Always anchor your analysis to the chief complaint. Explain correlatio
               <Text style={styles.headerSubtitle}>Functional Medicine & TCM Framework</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.closeButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close assistant"
+          >
             <X color={Colors.text} size={24} />
           </TouchableOpacity>
         </View>
@@ -425,11 +434,17 @@ Remember: Always anchor your analysis to the chief complaint. Explain correlatio
             maxLength={500}
           />
           <TouchableOpacity
-            style={[styles.sendButton, !chatInput.trim() && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (!chatInput.trim() || isResponding) && styles.sendButtonDisabled]}
             onPress={() => handleSendMessage()}
-            disabled={!chatInput.trim()}
+            disabled={!chatInput.trim() || isResponding}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
           >
-            <Send color="#fff" size={18} />
+            {isResponding ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Send color="#fff" size={18} />
+            )}
           </TouchableOpacity>
         </View>
 

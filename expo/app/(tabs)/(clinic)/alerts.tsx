@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { 
@@ -21,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
 import type { AlertSeverity, AlertEventStatus } from '@/types/clinic';
+import { confirmAsync } from '@/lib/ui/appAlert';
 
 interface AlertItemProps {
   id: string;
@@ -161,18 +161,15 @@ export default function AlertsScreen() {
     setRefreshing(false);
   }, [alertsQuery]);
 
-  const handleAcknowledge = useCallback((alertId: string) => {
-    Alert.alert(
+  const handleAcknowledge = useCallback(async (alertId: string) => {
+    const confirmed = await confirmAsync(
       'Acknowledge Alert',
       'Mark this alert as acknowledged?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Acknowledge', 
-          onPress: () => acknowledgeMutation.mutate({ id: alertId, acknowledgedBy: 'clinician' })
-        },
-      ]
+      { confirmText: 'Acknowledge' }
     );
+    if (confirmed) {
+      acknowledgeMutation.mutate({ id: alertId, acknowledgedBy: 'clinician' });
+    }
   }, [acknowledgeMutation]);
 
   const severityFilters: { label: string; value: AlertSeverity | undefined; color: string }[] = [

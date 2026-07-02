@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,9 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import {
@@ -24,10 +25,13 @@ import {
   Sparkles,
   CheckCircle2,
   Lock,
+  Clock,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
+import { secureGetJSON } from '@/lib/secureStorage';
+import { PRACTITIONER_PROFILE_KEY, type PractitionerProfile } from './apply';
 
 interface FeatureCardProps {
   icon: React.ReactNode;
@@ -53,7 +57,26 @@ function FeatureCard({ icon, title, description, color }: FeatureCardProps) {
 export default function PractitionerPortalLanding() {
   const insets = useSafeAreaInsets();
   const { isClinician, userProfile } = useUser();
+  const [application, setApplication] = useState<PractitionerProfile | null>(null);
 
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const stored = await secureGetJSON<PractitionerProfile>(PRACTITIONER_PROFILE_KEY);
+          if (!cancelled) setApplication(stored);
+        } catch (e) {
+          console.log('[PractitionerPortal] could not read application', e);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
+  const hasPendingApplication = !isClinician && application?.status === 'pending';
   const firstName = userProfile.firstName || 'Practitioner';
 
   const features = useMemo(
@@ -123,6 +146,7 @@ export default function PractitionerPortalLanding() {
   return (
     <View style={styles.container} testID="practitioner-portal-landing">
       <Stack.Screen options={{ headerShown: false }} />
+      <StatusBar style="light" />
 
       <LinearGradient
         colors={[Colors.primaryDark, Colors.primary, Colors.primaryLight]}
@@ -145,6 +169,12 @@ export default function PractitionerPortalLanding() {
                 <Text style={styles.statusPillText}>Verified</Text>
               </View>
             )}
+            {hasPendingApplication && (
+              <View style={styles.statusPill}>
+                <Clock size={12} color={Colors.textInverse} />
+                <Text style={styles.statusPillText}>Under Review</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.heroContent}>
@@ -158,7 +188,9 @@ export default function PractitionerPortalLanding() {
             <Text style={styles.heroSubtitle}>
               {isClinician
                 ? `Welcome back, Dr. ${userProfile.lastName || firstName}. Your clinic command center is ready.`
-                : 'A clinician-grade workspace for managing patients, reviewing labs, and orchestrating personalized longevity protocols.'}
+                : hasPendingApplication
+                  ? 'Your application has been received and is under review by our compliance team.'
+                  : 'A clinician-grade workspace for managing patients, reviewing labs, and orchestrating personalized longevity protocols.'}
             </Text>
           </View>
         </SafeAreaView>
@@ -254,6 +286,19 @@ export default function PractitionerPortalLanding() {
             <Text style={styles.ctaPrimaryText}>Enter Clinic Dashboard</Text>
             <ChevronRight size={18} color={Colors.textInverse} />
           </TouchableOpacity>
+        ) : hasPendingApplication ? (
+          <View style={styles.pendingCard} testID="pending-application-card">
+            <View style={styles.pendingIconWrap}>
+              <Clock size={18} color={Colors.warning} />
+            </View>
+            <View style={styles.pendingContent}>
+              <Text style={styles.pendingTitle}>Application under review</Text>
+              <Text style={styles.pendingDesc}>
+                Our compliance team is verifying your credentials. You will get access
+                within 1–2 business days of approval.
+              </Text>
+            </View>
+          </View>
         ) : (
           <>
             <TouchableOpacity
@@ -573,5 +618,37 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textAlign: 'center',
     marginTop: 10,
+  },
+  pendingCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: Colors.warning + '12',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.warning + '30',
+  },
+  pendingIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: Colors.warning + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingContent: {
+    flex: 1,
+  },
+  pendingTitle: {
+    fontSize: 14,
+    fontWeight: '700' as const,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  pendingDesc: {
+    fontSize: 12.5,
+    color: Colors.textSecondary,
+    lineHeight: 18,
   },
 });

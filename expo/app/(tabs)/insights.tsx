@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import {
   Brain,
   AlertTriangle,
@@ -50,6 +51,17 @@ import { useProtocol } from '@/providers/ProtocolProvider';
 import { useRorkAgent } from '@rork-ai/toolkit-sdk';
 import PeptideEducation from '@/components/PeptideEducation';
 import { CategoryScore, HealthDisorder, LabRecommendation } from '@/types';
+import { showAlert } from '@/lib/ui/appAlert';
+
+/**
+ * Health context is prepended to every outgoing message so the model sees it,
+ * but it must never be rendered in the user's own chat bubble. Strip it back
+ * out at render time.
+ */
+const CONTEXT_PREFIX_REGEX = /^Context:[\s\S]*?\n\nUser Question:\s*/;
+function stripContextPrefix(text: string): string {
+  return text.replace(CONTEXT_PREFIX_REGEX, '');
+}
 
 const categoryIcons: Record<string, any> = {
   thyroid: Thermometer,
@@ -322,16 +334,25 @@ export default function InsightsScreen() {
 You are a functional medicine health assistant. Provide helpful, personalized advice based on the user's health data. Be supportive and educational. Always remind users to consult their healthcare provider for medical decisions.`;
   }, [disorders, flaggedBiomarkers, todayAdherence]);
 
-  const { messages, sendMessage } = useRorkAgent({
+  const { messages, sendMessage, status } = useRorkAgent({
     tools: {},
   });
 
+  const isResponding = status === 'submitted' || status === 'streaming';
+
+  const sendQuestion = (question: string) => {
+    const trimmed = question.trim();
+    if (!trimmed || isResponding) return;
+    // Send the health context with the question, but only the question is
+    // rendered in the user's bubble (see stripContextPrefix).
+    sendMessage(`Context: ${healthContext}\n\nUser Question: ${trimmed}`);
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
   const handleSendMessage = () => {
     if (!chatInput.trim()) return;
-    const messageWithContext = `Context: ${healthContext}\n\nUser Question: ${chatInput}`;
-    sendMessage(messageWithContext);
+    sendQuestion(chatInput);
     setChatInput('');
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
   const hasCompletedQuestionnaire = questionnaireResponses.length > 0;
@@ -346,7 +367,9 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
 
   const handleOpenLink = (url: string) => {
     if (url) {
-      Linking.openURL(url);
+      Linking.openURL(url).catch(() => {
+        showAlert('Could not open link', 'Please try again later.');
+      });
     }
   };
 
@@ -396,6 +419,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={['#1E3A5F', '#2D5A87']}
         style={styles.headerGradient}
@@ -645,7 +669,11 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                 <Sparkles color="#7C3AED" size={20} />
                 <Text style={styles.chatHeaderTitle}>AI Health Assistant</Text>
               </View>
-              <TouchableOpacity onPress={() => setShowAIChat(false)}>
+              <TouchableOpacity
+                onPress={() => setShowAIChat(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close chat"
+              >
                 <X color={Colors.text} size={24} />
               </TouchableOpacity>
             </View>
@@ -666,21 +694,21 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                     Ask me about your health data, supplements, symptoms, or get personalized recommendations.
                   </Text>
                   <View style={styles.chatSuggestions}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.chatSuggestion}
-                      onPress={() => sendMessage("What should I focus on based on my health data?")}
+                      onPress={() => sendQuestion("What should I focus on based on my health data?")}
                     >
                       <Text style={styles.chatSuggestionText}>What should I focus on?</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.chatSuggestion}
-                      onPress={() => sendMessage("Can you explain my risk areas?")}
+                      onPress={() => sendQuestion("Can you explain my risk areas?")}
                     >
                       <Text style={styles.chatSuggestionText}>Explain my risk areas</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.chatSuggestion}
-                      onPress={() => sendMessage("What supplements might help me?")}
+                      onPress={() => sendQuestion("What supplements might help me?")}
                     >
                       <Text style={styles.chatSuggestionText}>Supplement suggestions</Text>
                     </TouchableOpacity>
@@ -706,7 +734,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                             m.role === 'user' && styles.chatBubbleTextUser
                           ]}
                         >
-                          {part.text}
+                          {m.role === 'user' ? stripContextPrefix(part.text) : part.text}
                         </Text>
                       );
                     }
@@ -734,12 +762,18 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                 multiline
                 maxLength={500}
               />
-              <TouchableOpacity 
-                style={[styles.chatSendButton, !chatInput.trim() && styles.chatSendButtonDisabled]}
+              <TouchableOpacity
+                style={[styles.chatSendButton, (!chatInput.trim() || isResponding) && styles.chatSendButtonDisabled]}
                 onPress={handleSendMessage}
-                disabled={!chatInput.trim()}
+                disabled={!chatInput.trim() || isResponding}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
               >
-                <Send color="#fff" size={18} />
+                {isResponding ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Send color="#fff" size={18} />
+                )}
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>

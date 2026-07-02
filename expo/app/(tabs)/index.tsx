@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import {
   Sun,
@@ -29,7 +30,7 @@ import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useLabs } from '@/providers/LabsProvider';
 import { TodayAction } from '@/types';
-import { CategoryScore } from '@/types';
+import { weekdayLabel, toLocalDateString } from '@/utils/date';
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -59,22 +60,20 @@ const getActionIcon = (type: TodayAction['type']) => {
 };
 
 export default function TodayScreen() {
-  const { userProfile, questionnaireResponses, categoryScores, isLoading: userLoading, isClinician } = useUser();
+  const { userProfile, questionnaireResponses, isLoading: userLoading, isClinician } = useUser();
   const { todayActions, adherencePercentage, weeklyAdherenceStats, toggleActionComplete, isLoading: protocolLoading } = useProtocol();
   const { flaggedBiomarkers } = useLabs();
 
   const progressAnim = useRef(new Animated.Value(0)).current;
 
+  // Note: the incomplete-onboarding redirect lives in app/(tabs)/_layout.tsx
+  // so that any entry tab is gated, not just Today.
   useEffect(() => {
     if (userLoading) return;
     if (isClinician) {
       router.replace('/(tabs)/(clinic)/dashboard' as any);
-      return;
     }
-    if (!userProfile.onboardingCompleted) {
-      router.replace('/onboarding' as any);
-    }
-  }, [userProfile.onboardingCompleted, userLoading, isClinician]);
+  }, [userLoading, isClinician]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -107,6 +106,7 @@ export default function TodayScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <LinearGradient
         colors={[Colors.primary, Colors.primaryLight]}
         style={styles.headerGradient}
@@ -123,7 +123,7 @@ export default function TodayScreen() {
 
             <View style={styles.progressCard}>
               <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>Today's Progress</Text>
+                <Text style={styles.progressLabel}>Today&apos;s Progress</Text>
                 <Text style={styles.progressPercentage}>{adherencePercentage}%</Text>
               </View>
               <View style={styles.progressBarContainer}>
@@ -191,7 +191,7 @@ export default function TodayScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Today's Actions</Text>
+            <Text style={styles.sectionTitle}>Today&apos;s Actions</Text>
             <TouchableOpacity onPress={() => router.push('/(tabs)/protocol' as any)}>
               <Text style={styles.seeAllText}>See Protocol</Text>
             </TouchableOpacity>
@@ -256,12 +256,9 @@ export default function TodayScreen() {
           </View>
 
           <View style={styles.weekChart}>
-            {weeklyAdherenceStats.map((day, index) => {
-              const dayName = new Date(day.date).toLocaleDateString('en-US', {
-                weekday: 'short',
-              });
-              const isToday =
-                day.date === new Date().toISOString().split('T')[0];
+            {weeklyAdherenceStats.map(day => {
+              const dayName = weekdayLabel(day.date);
+              const isToday = day.date === toLocalDateString();
 
               return (
                 <View key={day.date} style={styles.dayColumn}>
