@@ -1,99 +1,50 @@
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 
-const OPENAI_API_KEY =
-  process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? '';
+import { trpcClient } from '@/lib/trpc';
 
-export async function transcribeAudio(
-  uri: string
-): Promise<string> {
+/**
+ * Transcribe a voice memo via the authenticated server-side AI proxy
+ * (backend/trpc/routes/ai.ts). No API keys ship in the client bundle and
+ * the transcript (PHI) is never logged.
+ */
+export async function transcribeAudio(uri: string): Promise<string> {
+  const startedAt = Date.now();
+
   try {
-    console.log('[transcribeAudio] Transcribing:', uri);
+    const fileName = uri.split('/').pop() || 'recording.m4a';
 
-    if (!OPENAI_API_KEY) {
-      throw new Error(
-        'EXPO_PUBLIC_OPENAI_API_KEY is missing'
-      );
-    }
-
-    const formData = new FormData();
-
-    // OpenAI transcription model
-    formData.append(
-      'model',
-      'gpt-4o-mini-transcribe'
-    );
-
-    const fileName =
-      uri.split('/').pop() || 'recording.m4a';
+    let base64: string;
+    let mimeType: string;
 
     if (Platform.OS === 'web') {
       const blob = await (await fetch(uri)).blob();
-
-      formData.append(
-        'file',
-        blob,
-        fileName
-      );
+      mimeType = blob.type || 'audio/mp4';
+      base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1] ?? '');
+        };
+        reader.onerror = () => reject(new Error('Could not read audio file.'));
+        reader.readAsDataURL(blob);
+      });
     } else {
-      formData.append('file', {
-        uri,
-        name: fileName,
-        type: 'audio/mp4',
-      } as any);
+      mimeType = 'audio/mp4';
+      base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
     }
 
-    console.log(
-      '[transcribeAudio] Uploading to OpenAI...'
-    );
+    const { text } = await trpcClient.ai.transcribeAudio.mutate({
+      base64,
+      mimeType,
+      fileName,
+    });
 
-    const response = await fetch(
-      'https://api.openai.com/v1/audio/transcriptions',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          Accept: 'application/json',
-        },
-        body: formData,
-      }
-    );
-
-    const responseText =
-      await response.text();
-
-    console.log(
-      '[transcribeAudio] Status:',
-      response.status
-    );
-
-    console.log(
-      '[transcribeAudio] Response:',
-      responseText
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `OpenAI transcription failed: ${response.status} ${responseText}`
-      );
-    }
-
-    const data = JSON.parse(responseText);
-
-    const text: string =
-      data.text ?? '';
-
-    console.log(
-      '[transcribeAudio] Transcript:',
-      text
-    );
-
+    console.log(`[transcribeAudio] Success in ${Date.now() - startedAt}ms`);
     return text;
   } catch (error) {
-    console.error(
-      '[transcribeAudio] ERROR:',
-      error
-    );
-
+    const message = error instanceof Error ? error.message : 'unknown error';
+    console.log(`[transcribeAudio] Failed after ${Date.now() - startedAt}ms: ${message}`);
     throw error;
   }
 }

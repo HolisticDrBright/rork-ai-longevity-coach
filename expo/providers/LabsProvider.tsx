@@ -5,306 +5,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
-import { generateText, generateObject } from '@rork-ai/toolkit-sdk';
-import { createGateway, generateText as aiGenerateText, generateObject as aiGenerateObject } from 'ai';
 import { z } from 'zod';
-import axios from "axios";
 
-const TOOLKIT_URL = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-const SECRET_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY;
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-
-const openaiGateway = createGateway({
-  baseURL: `${TOOLKIT_URL}/v2/vercel/v3/ai`,
-  apiKey: SECRET_KEY,
-});
-
-const OPENAI_MODEL_ID = 'openai/gpt-5-mini' as const;
-const OPENAI_DIRECT_MODEL = 'gpt-4.1' as const;
-
-async function uploadPdfToOpenAI(fileUri: string, fileName: string): Promise<string> {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-  console.log('[Labs] Uploading PDF to OpenAI Files API:', fileName);
-
-  if (Platform.OS !== 'web') {
-
-    console.log('[Labs] Reading file for upload (mobile)...', fileUri,fileName);
-    const result = await FileSystem.uploadAsync('https://api.openai.com/v1/files', fileUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: 'application/pdf',
-      parameters: { purpose: 'user_data' },
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    });
-
-    if (result.status < 200 || result.status >= 300) {
-      console.log('[Labs] OpenAI upload failed:', result.status, result.body);
-      throw new Error(`OpenAI file upload failed (${result.status}).`);
-    }
-    console.log('[Labs] OpenAI upload response:', result.body);
-    const json = JSON.parse(result.body) as { id: string };
-    console.log('[Labs] OpenAI file uploaded, id:', json.id);
-    return json.id;
-    // const formData = new FormData();
-
-    // formData.append('file', {
-    //   uri: fileUri,
-    //   name: 'file.pdf',
-    //   type: 'application/pdf',
-    // });
-
-    // formData.append('purpose', 'user_data');
-
-    // const response = await fetch('https://api.openai.com/v1/files', {
-    //   method: 'POST',
-    //   headers: {
-    //     Authorization: `Bearer ${OPENAI_API_KEY}`,
-    //     // 'Content-Type': 'multipart/form-data',
-    //   },
-    //   body: formData,
-    // });
-
-    // const result = await response.json();
-
-    // if (!response.ok) {
-    //   console.log('Upload failed:', result);
-    //   throw new Error('Upload failed');
-    // }
-
-    // console.log('Uploaded file ID:', result.id);
-    // return result.id;
-
-    // try {
-
-    //   const info = await FileSystem.getInfoAsync(fileUri);
-    //   console.log("✅ File exists. Size:", info.exists, "bytes");
-    //   // STEP 1: Convert file → blob (CRITICAL FIX)
-
-
-    //   // STEP 2: Create form data
-
-    //   console.log(fileUri)
-    //   const formdata = new FormData();
-    //   formdata.append('file', {
-    //     uri: fileUri,
-    //     name: 'file.pdf',
-    //     type: 'application/pdf',
-    //   });
-
-
-    //   formdata.append("purpose", "user_data");
-
-    //   // STEP 3: Upload
-    //   const response = await fetch("https://api.openai.com/v1/files", {
-    //     method: "POST",
-    //     headers: {
-          
-    //       Authorization: `Bearer ${OPENAI_API_KEY}`,
-    //       "Content-Type": 'multipart/form-data',
-    //     },
-    //     body: formdata,
-    //   });
-
-    //   const result = await response.json();
-
-    //   if (!response.ok) {
-    //     console.log("Upload failed:", result);
-    //     throw new Error("Upload failed");
-    //   }
-
-    //   console.log("Uploaded file ID:", result.id);
-    //   return result.id;
-    // } catch (err) {
-    //   console.log("ERROR:", err);
-    //   console.log("❌ UPLOAD FAILED FULL ERROR:");
-    //   console.log("Message:", err?.message);
-    //   console.log("Stack:", err?.stack);
-    //   console.log("Raw:", err);
-    //   throw err;
-    // }
-
-
-
-  }
-
-  const response = await fetch(fileUri);
-  const blob = await response.blob();
-  const formData = new FormData();
-  formData.append('file', new File([blob], fileName, { type: 'application/pdf' }));
-  formData.append('purpose', 'user_data');
-  const res = await fetch('https://api.openai.com/v1/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    console.log('[Labs] OpenAI web upload failed:', res.status, t);
-    throw new Error(`OpenAI file upload failed (${res.status}).`);
-  }
-  const json = (await res.json()) as { id: string };
-  console.log('[Labs] OpenAI file uploaded (web), id:', json.id);
-  return json.id;
-}
-
-// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-//   if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-//   const body: Record<string, unknown> = {
-//     model: OPENAI_DIRECT_MODEL,
-//     messages: [
-//       {
-//         role: 'user',
-//         content: [
-//           { type: 'file', file: { file_id: fileId } },
-//           { type: 'text', text: prompt },
-//         ],
-//       },
-//     ],
-//   };
-//   if (expectJson) {
-//     body.response_format = { type: 'json_object' };
-//   }
-//   const res = await fetch('https://api.openai.com/v1/chat/completions', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify(body),
-//   });
-//   if (!res.ok) {
-//     const t = await res.text();
-//     console.log('[Labs] OpenAI chat call failed:', res.status, t);
-//     throw new Error(`OpenAI request failed (${res.status}).`);
-//   }
-//   const json = (await res.json()) as { choices: { message: { content: string } }[] };
-//   return json.choices[0]?.message?.content ?? '';
-// }
-
-// async function callOpenAIWithFile(fileId: string, prompt: string) {
-//   const res = await fetch('https://api.openai.com/v1/responses', {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify({
-//       model: 'gpt-4.1',
-//       input: [
-//         {
-//           role: 'user',
-//           content: [
-//             { type: 'input_file', file_id: fileId },
-//             { type: 'input_text', text: prompt },
-//           ],
-//         },
-//       ],
-//     }),
-//   });
-
-//   const json = await res.json();
-
-//   if (!res.ok) {
-//     throw new Error(json.error?.message || 'OpenAI request failed');
-//   }
-
-//   return json.output?.[0]?.content?.[0]?.text ?? '';
-// }
-
-// async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-//   const body: Record<string, unknown> = {
-//     model: OPENAI_DIRECT_MODEL,
-//     messages: [
-//       {
-//         role: "user",
-//         content: `File ID: ${fileId}\n\n${prompt}`
-
-//       }
-//     ],
-//   };
-
-//   if (expectJson) {
-//     body.response_format = { type: "json_object" };
-//   }
-
-//   const res = await fetch("https://api.openai.com/v1/chat/completions", {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/json",
-//       Authorization: `Bearer ${OPENAI_API_KEY}`,
-//     },
-//     body: JSON.stringify(body),
-//   });
-
-//   if (!res.ok) {
-//     const t = await res.text();
-//     console.log("[Labs] OpenAI chat call failed:", res.status, t);
-//     throw new Error(`OpenAI request failed (${res.status}).`);
-//   }
-
-//   const json = await res.json();
-//   return json.choices?.[0]?.message?.content ?? "";
-// }
-
-async function callOpenAIWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI API key is not configured.');
-  const body: Record<string, unknown> = {
-    model: OPENAI_DIRECT_MODEL,
-    temperature: 0,
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a meticulous medical data extractor. When reading lab PDFs you transcribe numbers VERBATIM from the document. Never round, never infer, never substitute. If a value is unclear, omit it rather than guess. Match each numeric value to the row label and unit it appears on in the PDF.',
-      },
-      {
-        role: 'user',
-        content: [
-          { type: 'file', file: { file_id: fileId } },
-          { type: 'text', text: prompt },
-        ],
-      },
-    ],
-  };
-
-  if (expectJson) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const t = await res.text();
-    console.log('[Labs] OpenAI chat call failed:', res.status, t);
-    throw new Error(`OpenAI request failed (${res.status}).`);
-  }
-
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  return json.choices?.[0]?.message?.content ?? '';
-}
-
-async function deleteOpenAIFile(fileId: string): Promise<void> {
-  if (!OPENAI_API_KEY) return;
-  try {
-    await fetch(`https://api.openai.com/v1/files/${fileId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    });
-    console.log('[Labs] Cleaned up OpenAI file:', fileId);
-  } catch (e) {
-    console.log('[Labs] Cleanup of OpenAI file failed (non-blocking):', e);
-  }
-}
-void generateText;
-void generateObject;
+import { trpcClient } from '@/lib/trpc';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
@@ -370,6 +73,7 @@ const labExtractionSchema = z.object({
 
 const STORAGE_KEY = 'longevity_lab_panels';
 const LATEST_ANALYSIS_KEY = 'longevity_latest_lab_analysis';
+const CROSS_LAB_SYNTHESIS_KEY = 'longevity_cross_lab_synthesis';
 
 export interface StoredLabAnalysis {
   panelId?: string;
@@ -380,10 +84,269 @@ export interface StoredLabAnalysis {
   flaggedBiomarkerNames: string[];
 }
 
+export interface CrossLabPattern {
+  name: string;
+  description: string;
+  panels?: string[];
+}
+
+export interface CrossLabSynthesis {
+  patterns: CrossLabPattern[];
+  narrative: string;
+  panelCount: number;
+  generatedAt: string;
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function revokeIfObjectUrl(uri: string): void {
+  if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+    try { URL.revokeObjectURL(uri); } catch { /* already revoked */ }
+  }
+}
+
+/** Read a local file (native path or web blob/object URL) as raw base64. */
+async function readFileAsBase64(fileUri: string): Promise<string> {
+  if (Platform.OS !== 'web') {
+    return FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+  }
+  const response = await fetch(fileUri);
+  const blob = await response.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1] ?? '');
+    };
+    reader.onerror = () => reject(new Error('Could not read file.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * All AI traffic goes through the authenticated server-side proxy
+ * (backend/trpc/routes/ai.ts). No API keys ship in the client bundle and
+ * lab documents (PHI) are never sent to third parties from the device.
+ */
+async function uploadPdfForAnalysis(fileUri: string, fileName: string): Promise<string> {
+  console.log('[Labs] Uploading PDF for server-side analysis');
+  const base64 = await readFileAsBase64(fileUri);
+  const { fileId } = await trpcClient.ai.uploadPdf.mutate({ base64, fileName });
+  console.log('[Labs] PDF uploaded for analysis');
+  return fileId;
+}
+
+async function callAiWithFile(fileId: string, prompt: string, expectJson: boolean): Promise<string> {
+  const res = await trpcClient.ai.promptWithFile.mutate({ fileId, prompt, expectJson });
+  return res.text;
+}
+
+async function callAiWithImages(prompt: string, images: string[], expectJson: boolean): Promise<string> {
+  const res = await trpcClient.ai.promptWithImages.mutate({ prompt, images, expectJson });
+  return res.text;
+}
+
+/** Best-effort cleanup of a server-uploaded AI file. Never throws. */
+async function deleteAiFile(fileId: string): Promise<void> {
+  try {
+    await trpcClient.ai.deleteFile.mutate({ fileId });
+    console.log('[Labs] Cleaned up uploaded AI file');
+  } catch {
+    console.log('[Labs] AI file cleanup failed (non-blocking)');
+  }
+}
+
+/**
+ * Explicit JSON shape appended to extraction prompts. json_object mode has no
+ * schema enforcement server-side, so the prompt must fully describe the shape;
+ * responses are validated client-side with labExtractionSchema.
+ */
+const EXTRACTION_JSON_SHAPE = `
+
+Return ONLY valid JSON (no markdown fences, no commentary) with this exact shape:
+{
+  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],
+  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
+  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
+  "priorityActions": [string]
+}
+Every array must be present (use [] when empty).`;
+
+/** Parse + zod-validate an extraction response. Returns null when invalid. */
+function parseExtraction(text: string): z.infer<typeof labExtractionSchema> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const result = labExtractionSchema.safeParse(parsed);
+    if (!result.success) {
+      console.log('[Labs] Extraction response failed schema validation');
+      return null;
+    }
+    return result.data;
+  } catch {
+    console.log('[Labs] Extraction response was not valid JSON');
+    return null;
+  }
+}
+
+const LAB_ANALYSIS_PROMPT = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
+
+You are a world-class functional medicine, longevity, and systems-biology physician.
+
+Analyze the lab results shown in this document using a root-cause, pattern-recognition, and longevity-optimization framework.
+
+For your response, structure it exactly as follows:
+
+1. BIG-PICTURE SUMMARY (TOP PRIORITIES)
+In 3–6 bullets, identify the most important physiological imbalances.
+Rank them by impact on: Energy, Hormones, Metabolism, Brain, Immune system, Inflammation, Longevity
+
+2. PATTERN RECOGNITION
+Identify patterns: Mitochondrial dysfunction, Insulin resistance, Thyroid resistance, HPA axis dysregulation, Estrogen dominance, Methylation issues, Oxidative stress, Inflammation, Immune issues, Detox congestion, Gut issues, Chronic infections
+Explain how markers connect as systems.
+
+3. MARKER-BY-MARKER ANALYSIS
+For each abnormal marker: What it means, system it belongs to, functional range, root causes, consequences, links to other markers
+
+4. FUNCTIONAL OPTIMAL TARGETS
+Current value, lab range, functional optimal range, gap from optimal, clinical meaning
+
+5. ROOT-CAUSE ACTION PLAN
+A) Diet - foods to emphasize/avoid, therapeutic diet style
+B) Lifestyle - sleep, circadian, stress, training, sauna/cold, light
+C) Supplements - foundational, targeted, doses, timing, mechanism
+D) Peptides/Advanced Tools - if appropriate
+E) Detox & Gut Repair - Phase I/II support, binders, microbiome
+
+6. LONGEVITY INTERPRETATION
+Biological age, cardiometabolic risk, neurodegeneration, cancer terrain, hormone aging, mitochondrial resilience, inflammaging
+
+7. PATIENT-FRIENDLY EXPLANATION
+Explain simply: What's off, why it matters, what fixing it changes. Speak directly to "you".
+
+8. PRIORITY SUMMARY
+Top 3 Things to Fix First
+If You Do Nothing Else, Do These 3 Things
+
+Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
+
+const STATUS_RANK: Record<Biomarker['status'], number> = {
+  optimal: 0,
+  normal: 1,
+  suboptimal: 2,
+  critical: 3,
+};
+
+/**
+ * Deterministic cross-panel pattern detector. No AI, no network: flags
+ * biomarkers that are abnormal across multiple panels and status trends for
+ * the same biomarker across panels (worsening/improving by status rank).
+ */
+function buildCrossLabSynthesis(panels: LabPanel[]): CrossLabSynthesis {
+  const sorted = [...panels].sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+
+  interface Occurrence {
+    panelId: string;
+    panelName: string;
+    status: Biomarker['status'];
+    displayName: string;
+  }
+  const byName = new Map<string, Occurrence[]>();
+  sorted.forEach((panel) => {
+    panel.biomarkers.forEach((b) => {
+      const key = b.name.toLowerCase().trim();
+      if (!key) return;
+      const list = byName.get(key) ?? [];
+      list.push({
+        panelId: panel.id,
+        panelName: panel.name,
+        status: b.status,
+        displayName: b.name,
+      });
+      byName.set(key, list);
+    });
+  });
+
+  const patterns: CrossLabPattern[] = [];
+  let recurringCount = 0;
+  let worseningCount = 0;
+  let improvingCount = 0;
+
+  byName.forEach((occurrences) => {
+    const displayName = occurrences[occurrences.length - 1].displayName;
+
+    // Recurring abnormality across >= 2 distinct panels
+    const abnormal = occurrences.filter(
+      (o) => o.status === 'suboptimal' || o.status === 'critical'
+    );
+    const abnormalPanelNames = Array.from(new Set(abnormal.map((o) => o.panelName)));
+    if (abnormalPanelNames.length >= 2) {
+      recurringCount += 1;
+      patterns.push({
+        name: `${displayName} flagged in multiple labs`,
+        description: `${displayName} is outside the optimal range in ${abnormalPanelNames.length} separate panels, which makes it a consistent finding rather than a one-off result.`,
+        panels: abnormalPanelNames,
+      });
+    }
+
+    // Status trend across panels (earliest vs latest measurement)
+    const distinctPanelIds = new Set(occurrences.map((o) => o.panelId));
+    if (distinctPanelIds.size >= 2) {
+      const first = occurrences[0];
+      const last = occurrences[occurrences.length - 1];
+      const firstRank = STATUS_RANK[first.status];
+      const lastRank = STATUS_RANK[last.status];
+      if (lastRank > firstRank) {
+        worseningCount += 1;
+        patterns.push({
+          name: `${displayName} trending away from optimal`,
+          description: `${displayName} moved from "${first.status}" (${first.panelName}) to "${last.status}" (${last.panelName}) across your panels.`,
+          panels: [first.panelName, last.panelName],
+        });
+      } else if (lastRank < firstRank) {
+        improvingCount += 1;
+        patterns.push({
+          name: `${displayName} improving`,
+          description: `${displayName} improved from "${first.status}" (${first.panelName}) to "${last.status}" (${last.panelName}) across your panels.`,
+          panels: [first.panelName, last.panelName],
+        });
+      }
+    }
+  });
+
+  const narrativeParts: string[] = [];
+  if (recurringCount > 0) {
+    narrativeParts.push(
+      `${recurringCount} biomarker${recurringCount === 1 ? ' is' : 's are'} consistently outside the optimal range across multiple panels`
+    );
+  }
+  if (worseningCount > 0) {
+    narrativeParts.push(`${worseningCount} moved away from optimal between panels`);
+  }
+  if (improvingCount > 0) {
+    narrativeParts.push(`${improvingCount} improved between panels`);
+  }
+  const narrative =
+    narrativeParts.length > 0
+      ? `Comparing your ${sorted.length} lab panels: ${narrativeParts.join('; ')}. Recurring and worsening markers are the highest-leverage places to focus your protocol.`
+      : `Comparing your ${sorted.length} lab panels: no biomarker was flagged in more than one panel and no cross-panel status changes were detected.`;
+
+  return {
+    patterns,
+    narrative,
+    panelCount: sorted.length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export const [LabsProvider, useLabs] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [labPanels, setLabPanels] = useState<LabPanel[]>([]);
   const [latestAnalysis, setLatestAnalysis] = useState<StoredLabAnalysis | null>(null);
+  const [crossLabSynthesis, setCrossLabSynthesis] = useState<CrossLabSynthesis | null>(null);
 
   const labsQuery = useQuery({
     queryKey: ['labPanels'],
@@ -402,6 +365,14 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     },
   });
 
+  const crossLabSynthesisQuery = useQuery({
+    queryKey: ['crossLabSynthesis'],
+    queryFn: async () => {
+      const stored = await secureGetJSON<CrossLabSynthesis>(CROSS_LAB_SYNTHESIS_KEY);
+      return stored ?? null;
+    },
+  });
+
   useEffect(() => {
     if (labsQuery.data) setLabPanels(labsQuery.data);
   }, [labsQuery.data]);
@@ -409,6 +380,10 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   useEffect(() => {
     if (latestAnalysisQuery.data !== undefined) setLatestAnalysis(latestAnalysisQuery.data);
   }, [latestAnalysisQuery.data]);
+
+  useEffect(() => {
+    if (crossLabSynthesisQuery.data !== undefined) setCrossLabSynthesis(crossLabSynthesisQuery.data);
+  }, [crossLabSynthesisQuery.data]);
 
   const saveLatestAnalysisMutation = useMutation({
     mutationFn: async (analysis: StoredLabAnalysis) => {
@@ -418,6 +393,17 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     onSuccess: (data) => {
       setLatestAnalysis(data);
       void queryClient.invalidateQueries({ queryKey: ['latestLabAnalysis'] });
+    },
+  });
+
+  const saveCrossLabSynthesisMutation = useMutation({
+    mutationFn: async (synthesis: CrossLabSynthesis) => {
+      await secureSetJSON(CROSS_LAB_SYNTHESIS_KEY, synthesis);
+      return synthesis;
+    },
+    onSuccess: (data) => {
+      setCrossLabSynthesis(data);
+      void queryClient.invalidateQueries({ queryKey: ['crossLabSynthesis'] });
     },
   });
 
@@ -440,7 +426,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
           });
         }
       } catch (e) {
-        console.log('[Labs] Supabase sync failed (non-blocking):', e);
+        console.log('[Labs] Supabase sync failed (non-blocking):', errMsg(e));
       }
 
       return panels;
@@ -480,6 +466,25 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     if (!latestPanel) return [];
     return latestPanel.biomarkers.filter(b => b.status === 'optimal');
   }, [latestPanel]);
+
+  /** Latest value per biomarker (deduped by name) across ALL panels. */
+  const allBiomarkers = useMemo<Biomarker[]>(() => {
+    if (labPanels.length === 0) return [];
+    const sorted = [...labPanels].sort((a, b) =>
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    const seen = new Set<string>();
+    const deduped: Biomarker[] = [];
+    sorted.forEach(panel => {
+      panel.biomarkers.forEach(b => {
+        const key = b.name.toLowerCase().trim();
+        if (seen.has(key)) return;
+        seen.add(key);
+        deduped.push(b);
+      });
+    });
+    return deduped;
+  }, [labPanels]);
 
   const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
     if (!latestPanel || !previousPanel) return null;
@@ -533,6 +538,21 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     saveLabsMutation.mutate(updated);
   }, [labPanels, saveLabsMutation]);
 
+  /**
+   * Deterministic cross-panel synthesis (no AI, no network). Persisted so
+   * labs.tsx can render it across sessions.
+   */
+  const runCrossLabSynthesis = useCallback(async (): Promise<CrossLabSynthesis | null> => {
+    if (labPanels.length < 2) {
+      console.log('[Labs] Cross-lab synthesis skipped: fewer than 2 panels');
+      return null;
+    }
+    const synthesis = buildCrossLabSynthesis(labPanels);
+    await saveCrossLabSynthesisMutation.mutateAsync(synthesis);
+    console.log('[Labs] Cross-lab synthesis complete:', synthesis.patterns.length, 'patterns across', synthesis.panelCount, 'panels');
+    return synthesis;
+  }, [labPanels, saveCrossLabSynthesisMutation]);
+
   const pickLabImages = useCallback(async (): Promise<{ uri: string; name: string; mimeType: string }[]> => {
     try {
       if (Platform.OS === 'web') {
@@ -542,6 +562,24 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
           input.accept = 'image/*';
           input.multiple = true;
           input.style.display = 'none';
+
+          let settled = false;
+          let cancelTimer: ReturnType<typeof setTimeout> | null = null;
+          const finish = (results: { uri: string; name: string; mimeType: string }[]) => {
+            if (settled) return;
+            settled = true;
+            if (cancelTimer) clearTimeout(cancelTimer);
+            window.removeEventListener('focus', onFocus);
+            try { document.body.removeChild(input); } catch { /* already removed */ }
+            resolve(results);
+          };
+          // Fallback for browsers that never fire `oncancel`: when the file
+          // dialog closes the window regains focus; if no change event follows
+          // shortly, settle the promise as a cancel.
+          const onFocus = () => {
+            cancelTimer = setTimeout(() => finish([]), 1500);
+          };
+
           input.onchange = () => {
             const files = Array.from(input.files ?? []);
             const validImages = files.filter((f) => (f.type || '').startsWith('image/'));
@@ -555,13 +593,11 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
               mimeType: f.type || 'image/jpeg',
             }));
             console.log('[Labs] Picked', results.length, 'images (web)');
-            document.body.removeChild(input);
-            resolve(results);
+            finish(results);
           };
-          input.oncancel = () => {
-            try { document.body.removeChild(input); } catch { }
-            resolve([]);
-          };
+          input.oncancel = () => finish([]);
+
+          window.addEventListener('focus', onFocus, { once: true });
           document.body.appendChild(input);
           input.click();
         });
@@ -587,7 +623,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
         mimeType: a.mimeType || 'image/jpeg',
       }));
     } catch (e) {
-      console.log('[Labs] Error picking images:', e);
+      console.log('[Labs] Error picking images:', errMsg(e));
       return [];
     }
   }, []);
@@ -629,28 +665,12 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
 
       let base64Content = '';
       if (isImage) {
-        if (Platform.OS !== 'web') {
-          try {
-            base64Content = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-          } catch {
-            throw new Error('Could not read the uploaded file. Please try again.');
-          }
-        } else {
-          try {
-            const response = await fetch(fileUri);
-            const blob = await response.blob();
-            base64Content = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                const result = reader.result as string;
-                resolve(result.split(',')[1]);
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
-          } catch {
-            throw new Error('Could not read the uploaded file. Please try again.');
-          }
+        try {
+          base64Content = await readFileAsBase64(fileUri);
+        } catch {
+          throw new Error('Could not read the uploaded file. Please try again.');
+        } finally {
+          revokeIfObjectUrl(fileUri);
         }
       }
 
@@ -694,19 +714,19 @@ Also provide:
 
 Be thorough and extract every biomarker visible in the document. Base ALL recommendations on the patient's actual biomarker values — not generic advice.`;
 
-      let openaiFileId: string | null = null;
+      let aiFileId: string | null = null;
 
       if (isPdf) {
-        console.log('[Labs] PDF detected — uploading directly to OpenAI Files API');
+        console.log('[Labs] PDF detected — uploading via secure server proxy');
         try {
-          openaiFileId = await uploadPdfToOpenAI(fileUri, fileName ?? 'lab-results.pdf');
+          aiFileId = await uploadPdfForAnalysis(fileUri, fileName ?? 'lab-results.pdf');
         } catch (uploadErr) {
-          console.log(uploadErr)
-          const msg = uploadErr instanceof Error ? uploadErr.message : '';
-          console.log('[Labs] OpenAI PDF upload failed:', msg);
+          console.log('[Labs] PDF upload failed:', errMsg(uploadErr));
           throw new Error(
             'Could not upload this PDF for analysis. Please check your connection and try again.'
           );
+        } finally {
+          revokeIfObjectUrl(fileUri);
         }
 
         try {
@@ -736,14 +756,14 @@ Return ONLY valid JSON with this exact shape:
   ]
 }`;
 
-          const verbatimJson = await callOpenAIWithFile(openaiFileId, verbatimExtractionPrompt, true);
-          console.log('[Labs] Verbatim extraction raw:', verbatimJson.slice(0, 500));
+          const verbatimJson = await callAiWithFile(aiFileId, verbatimExtractionPrompt, true);
           const verbatimParsed = JSON.parse(verbatimJson) as {
             biomarkers?: { name: string; value: number; unit: string; referenceMin: number | null; referenceMax: number | null }[];
           };
           const verbatimBiomarkers = (verbatimParsed.biomarkers ?? []).filter(
             (b) => typeof b?.value === 'number' && Number.isFinite(b.value) && typeof b?.name === 'string' && b.name.trim().length > 0
           );
+          console.log('[Labs] Verbatim extraction complete:', verbatimBiomarkers.length, 'biomarkers');
 
           if (verbatimBiomarkers.length === 0) {
             throw new Error('PDF_UNREADABLE');
@@ -757,19 +777,11 @@ The biomarker values below were transcribed VERBATIM from the patient's lab PDF.
 
 VERBATIM BIOMARKERS (do not modify):
 ${JSON.stringify(verbatimBiomarkers, null, 2)}
-
-Return ONLY valid JSON with this exact shape:
-{
-  "biomarkers": [{"name": string, "value": number, "unit": string, "referenceMin": number|null, "referenceMax": number|null, "functionalMin": number|null, "functionalMax": number|null, "status": "optimal"|"normal"|"suboptimal"|"critical"}],
-  "supplements": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
-  "herbs": [{"name": string, "dose": string, "timing": string, "reason": string, "mechanism": string}],
-  "priorityActions": [string]
-}
+${EXTRACTION_JSON_SHAPE}
 
 The "biomarkers" array MUST contain exactly the same entries (same name/value/unit/referenceMin/referenceMax) as the verbatim list above, in the same order, only with functionalMin/functionalMax/status added.`;
 
-          const jsonText = await callOpenAIWithFile(openaiFileId, enrichmentPrompt, true);
-          console.log('[Labs] Enrichment raw length:', jsonText.length);
+          const jsonText = await callAiWithFile(aiFileId, enrichmentPrompt, true);
           const parsed = JSON.parse(jsonText) as { biomarkers?: unknown[] } & Record<string, unknown>;
 
           // Safety: if the enrichment pass drifted any values, force-restore the verbatim numbers.
@@ -792,51 +804,48 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
             });
           }
 
-          extractedData = labExtractionSchema.parse(parsed);
-          console.log('[Labs] OpenAI direct PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
+          const validated = labExtractionSchema.safeParse(parsed);
+          if (!validated.success) {
+            console.log('[Labs] PDF enrichment response failed schema validation');
+            throw new Error('PDF_UNREADABLE');
+          }
+          extractedData = validated.data;
+          console.log('[Labs] PDF extraction complete:', extractedData.biomarkers.length, 'biomarkers');
 
           if (extractedData.biomarkers.length === 0) {
             throw new Error('PDF_UNREADABLE');
           }
         } catch (pdfError) {
           const msg = pdfError instanceof Error ? pdfError.message : '';
-          if (openaiFileId) void deleteOpenAIFile(openaiFileId);
+          if (aiFileId) void deleteAiFile(aiFileId);
           if (msg === 'PDF_UNREADABLE') {
             throw new Error(
               'We couldn\'t extract biomarkers from this PDF. The file may be a scan without selectable text — try uploading a digital PDF or screenshots of the results pages.'
             );
           }
-          console.log('[Labs] OpenAI direct PDF extraction failed:', msg);
+          console.log('[Labs] PDF extraction failed:', msg);
           throw new Error(
             'Failed to analyze this PDF. Please try again or upload screenshots of the results pages.'
           );
         }
       } else {
-        // Image file — send directly to OpenAI vision
+        // Image file — extract via the server-side vision proxy and validate
+        // the JSON against the zod schema locally.
         const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
 
-        console.log('[Labs] Extracting biomarkers from image via OpenAI gpt-5-mini...');
+        console.log('[Labs] Extracting biomarkers from image via server AI proxy...');
 
         try {
-          const { object } = await aiGenerateObject({
-            model: openaiGateway(OPENAI_MODEL_ID),
-            schema: labExtractionSchema,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: extractionPrompt },
-                  { type: 'image', image: imageDataUrl },
-                ],
-              },
-            ],
-          });
-          extractedData = object;
+          const raw = await callAiWithImages(extractionPrompt + EXTRACTION_JSON_SHAPE, [imageDataUrl], true);
+          const parsed = parseExtraction(raw);
+          if (!parsed) {
+            throw new Error('Extraction response did not match the expected format.');
+          }
+          extractedData = parsed;
           console.log('[Labs] Image extraction complete');
         } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.log('[Labs] Extraction error occurred:', errorMessage);
-          extractionError = errorMessage;
+          console.log('[Labs] Extraction error occurred:', errMsg(error));
+          extractionError = errMsg(error);
         }
       }
 
@@ -847,16 +856,16 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
 
       let analysisText = '';
 
-      if (isPdf && openaiFileId) {
-        console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
+      if (isPdf && aiFileId) {
+        console.log('[Labs] Generating analysis from PDF via server AI proxy...');
         try {
-          analysisText = await callOpenAIWithFile(openaiFileId, labAnalysisPrompt, false);
+          analysisText = await callAiWithFile(aiFileId, LAB_ANALYSIS_PROMPT, false);
         } catch (e) {
-          console.log('[Labs] PDF analysis generation failed:', e);
+          console.log('[Labs] PDF analysis generation failed:', errMsg(e));
           analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
         }
-        void deleteOpenAIFile(openaiFileId);
-        openaiFileId = null;
+        void deleteAiFile(aiFileId);
+        aiFileId = null;
 
         const biomarkers: Biomarker[] = extractedData.biomarkers.map((b, index) => ({
           id: `bio_${Date.now()}_${index}`,
@@ -892,67 +901,14 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
         };
       }
 
-      const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
-
-You are a world-class functional medicine, longevity, and systems-biology physician.
-
-Analyze the lab results shown in this image using a root-cause, pattern-recognition, and longevity-optimization framework.
-
-For your response, structure it exactly as follows:
-
-1. BIG-PICTURE SUMMARY (TOP PRIORITIES)
-In 3–6 bullets, identify the most important physiological imbalances.
-Rank them by impact on: Energy, Hormones, Metabolism, Brain, Immune system, Inflammation, Longevity
-
-2. PATTERN RECOGNITION
-Identify patterns: Mitochondrial dysfunction, Insulin resistance, Thyroid resistance, HPA axis dysregulation, Estrogen dominance, Methylation issues, Oxidative stress, Inflammation, Immune issues, Detox congestion, Gut issues, Chronic infections
-Explain how markers connect as systems.
-
-3. MARKER-BY-MARKER ANALYSIS
-For each abnormal marker: What it means, system it belongs to, functional range, root causes, consequences, links to other markers
-
-4. FUNCTIONAL OPTIMAL TARGETS
-Current value, lab range, functional optimal range, gap from optimal, clinical meaning
-
-5. ROOT-CAUSE ACTION PLAN
-A) Diet - foods to emphasize/avoid, therapeutic diet style
-B) Lifestyle - sleep, circadian, stress, training, sauna/cold, light
-C) Supplements - foundational, targeted, doses, timing, mechanism
-D) Peptides/Advanced Tools - if appropriate
-E) Detox & Gut Repair - Phase I/II support, binders, microbiome
-
-6. LONGEVITY INTERPRETATION
-Biological age, cardiometabolic risk, neurodegeneration, cancer terrain, hormone aging, mitochondrial resilience, inflammaging
-
-7. PATIENT-FRIENDLY EXPLANATION
-Explain simply: What's off, why it matters, what fixing it changes. Speak directly to "you".
-
-8. PRIORITY SUMMARY
-Top 3 Things to Fix First
-If You Do Nothing Else, Do These 3 Things
-
-Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
-
-      console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
+      console.log('[Labs] Generating analysis via server AI proxy...');
 
       const imageDataUrl = `data:${mimeType};base64,${base64Content}`;
 
       try {
-        const { text } = await aiGenerateText({
-          model: openaiGateway(OPENAI_MODEL_ID),
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: labAnalysisPrompt },
-                { type: 'image', image: imageDataUrl },
-              ],
-            },
-          ],
-        });
-        analysisText = text;
+        analysisText = await callAiWithImages(LAB_ANALYSIS_PROMPT, [imageDataUrl], false);
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = errMsg(error);
         console.log('[Labs] Analysis generation error');
 
         if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network')) {
@@ -1051,18 +1007,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       onProgress?.(`Reading ${images.length} images...`);
 
       const readImage = async (img: { uri: string; mimeType: string }): Promise<string> => {
-        if (Platform.OS !== 'web') {
-          const b64 = await FileSystem.readAsStringAsync(img.uri, { encoding: 'base64' });
-          return `data:${img.mimeType};base64,${b64}`;
-        }
-        const response = await fetch(img.uri);
-        const blob = await response.blob();
-        return await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
+        const b64 = await readFileAsBase64(img.uri);
+        return `data:${img.mimeType};base64,${b64}`;
       };
 
       const dataUrls: string[] = [];
@@ -1070,12 +1016,14 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         try {
           dataUrls.push(await readImage(img));
         } catch (e) {
-          console.log('[Labs] Failed to read image:', e);
+          console.log('[Labs] Failed to read image:', errMsg(e));
+        } finally {
+          revokeIfObjectUrl(img.uri);
         }
       }
       if (dataUrls.length === 0) throw new Error('Could not read any of the uploaded images.');
 
-      const extractionPrompt = `You are analyzing pages from a lab report for a functional medicine practice. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\nIMPORTANT — When recommending supplements, PRIORITIZE these specific products:\n- ProOmega 2000 (Nordic Naturals) — for omega-3, cardiovascular\n- GlucoPrime (Healthgevity) — for blood sugar, insulin resistance\n- Protect+ 10 (Healthgevity) — foundational multi\n- Liver Sauce (Quicksilver Scientific) — liver support, detox\n- Liposomal Glutathione (Quicksilver Scientific) — glutathione, oxidative stress\n- MitoCore (Orthomolecular) — mitochondrial support, energy\n- NAC 900+ (Healthgevity) — liver, glutathione precursor\n- Gut Shield (Healthgevity) — gut repair\n- ProBiota HistaminX (Seeking Health) — probiotics, histamine\n- Sleep Deep (Healthgevity) — sleep support\n- Magnesium Glycinate 300 (Healthgevity) — magnesium\n- Methyl B Complex (Healthgevity) — B vitamins, methylation\n- D3+K2 5000 (Healthgevity) — vitamin D\n- Adrenal Restore (Healthgevity) — adrenal, cortisol\n\nUse exact product name and brand when the condition matches. Base ALL recommendations on actual biomarker values.\n\nAlso provide:\n- herbs: Recommended herbs with dose, timing, reason, mechanism\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.`;
+      const extractionPrompt = `You are analyzing pages from a lab report for a functional medicine practice. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\nIMPORTANT — When recommending supplements, PRIORITIZE these specific products:\n- ProOmega 2000 (Nordic Naturals) — for omega-3, cardiovascular\n- GlucoPrime (Healthgevity) — for blood sugar, insulin resistance\n- Protect+ 10 (Healthgevity) — foundational multi\n- Liver Sauce (Quicksilver Scientific) — liver support, detox\n- Liposomal Glutathione (Quicksilver Scientific) — glutathione, oxidative stress\n- MitoCore (Orthomolecular) — mitochondrial support, energy\n- NAC 900+ (Healthgevity) — liver, glutathione precursor\n- Gut Shield (Healthgevity) — gut repair\n- ProBiota HistaminX (Seeking Health) — probiotics, histamine\n- Sleep Deep (Healthgevity) — sleep support\n- Magnesium Glycinate 300 (Healthgevity) — magnesium\n- Methyl B Complex (Healthgevity) — B vitamins, methylation\n- D3+K2 5000 (Healthgevity) — vitamin D\n- Adrenal Restore (Healthgevity) — adrenal, cortisol\n\nUse exact product name and brand when the condition matches. Base ALL recommendations on actual biomarker values.\n\nAlso provide:\n- herbs: Recommended herbs with dose, timing, reason, mechanism\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.${EXTRACTION_JSON_SHAPE}`;
 
       const BATCH = 4;
       const batches: string[][] = [];
@@ -1091,25 +1039,18 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         onProgress?.(`Extracting biomarkers from pages ${i * BATCH + 1}-${i * BATCH + batch.length} of ${dataUrls.length}...`);
         console.log(`[Labs] Batch ${i + 1}/${batches.length} with ${batch.length} images`);
         try {
-          const { object } = await aiGenerateObject({
-            model: openaiGateway(OPENAI_MODEL_ID),
-            schema: labExtractionSchema,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: extractionPrompt },
-                  ...batch.map((url) => ({ type: 'image' as const, image: url })),
-                ],
-              },
-            ],
-          });
-          allBiomarkers.push(...object.biomarkers);
-          allSupps.push(...object.supplements);
-          allHerbs.push(...object.herbs);
-          allActions.push(...object.priorityActions);
+          const raw = await callAiWithImages(extractionPrompt, batch, true);
+          const parsed = parseExtraction(raw);
+          if (!parsed) {
+            console.log('[Labs] Batch response invalid, skipping batch');
+            continue;
+          }
+          allBiomarkers.push(...parsed.biomarkers);
+          allSupps.push(...parsed.supplements);
+          allHerbs.push(...parsed.herbs);
+          allActions.push(...parsed.priorityActions);
         } catch (e) {
-          console.log('[Labs] Batch failed:', e);
+          console.log('[Labs] Batch failed:', errMsg(e));
         }
       }
 
@@ -1152,13 +1093,11 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
       let analysisText = '';
       try {
-        const { text } = await aiGenerateText({
-          model: openaiGateway(OPENAI_MODEL_ID),
-          messages: [{ role: 'user', content: [{ type: 'text', text: labAnalysisPrompt }] }],
-        });
-        analysisText = text;
+        // The AI proxy requires at least one image; the first page gives the
+        // model visual context alongside the extracted-summary prompt.
+        analysisText = await callAiWithImages(labAnalysisPrompt, [dataUrls[0]], false);
       } catch (e) {
-        console.log('[Labs] Final analysis failed, using fallback');
+        console.log('[Labs] Final analysis failed, using fallback:', errMsg(e));
         analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
       }
 
@@ -1210,8 +1149,11 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
     biomarkersByCategory,
     latestAnalysis,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     isLoading: labsQuery.isLoading,
     getBiomarkerTrend,
     addLabPanel,
@@ -1233,8 +1175,11 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
     biomarkersByCategory,
     latestAnalysis,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     labsQuery.isLoading,
     getBiomarkerTrend,
     addLabPanel,

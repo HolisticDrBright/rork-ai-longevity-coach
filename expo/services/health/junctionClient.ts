@@ -14,11 +14,11 @@
  */
 
 import { Platform } from 'react-native';
+import { trpcClient } from '@/lib/trpc';
 import type { HealthSource } from './types';
 
 const VITAL_ENVIRONMENT = (process.env.EXPO_PUBLIC_VITAL_ENVIRONMENT ?? 'sandbox') as string;
 const VITAL_REGION = (process.env.EXPO_PUBLIC_VITAL_REGION ?? 'us') as string;
-const VITAL_API_KEY = process.env.EXPO_PUBLIC_VITAL_API_KEY ?? '';
 
 let initialized = false;
 
@@ -29,10 +29,6 @@ let initialized = false;
 // ────────────────────────────────────────────────────────────
 
 export async function initializeJunction(userId: string): Promise<void> {
-  if (!VITAL_API_KEY) {
-    console.warn('[Junction] EXPO_PUBLIC_VITAL_API_KEY not set — wearable features disabled');
-    return;
-  }
   console.log('[Junction] SDK not installed — running in stub mode. Wearable features disabled.');
   initialized = true;
 }
@@ -50,9 +46,26 @@ export async function connectOnDeviceHealth(): Promise<void> {
   // no-op without SDK
 }
 
-export function buildLinkUrl(vitalUserId: string): string {
-  const env = VITAL_ENVIRONMENT === 'production' ? '' : 'sandbox.';
-  return `https://link.${env}tryvital.io/?token=${VITAL_API_KEY}&user_id=${vitalUserId}`;
+/**
+ * Get a Vital Link URL for the current (authenticated) user.
+ *
+ * Link tokens are short-lived and generated server-side
+ * (backend/trpc/routes/ai.ts → integrations.createVitalLinkToken); the Vital
+ * API key never ships in the client bundle.
+ */
+export async function getLinkUrl(provider?: string): Promise<string> {
+  const { linkToken, linkWebUrl } = await trpcClient.integrations.createVitalLinkToken.mutate({
+    provider,
+  });
+
+  if (linkWebUrl) return linkWebUrl;
+
+  if (linkToken) {
+    const env = VITAL_ENVIRONMENT === 'production' ? '' : 'sandbox.';
+    return `https://link.${env}tryvital.io/?token=${encodeURIComponent(linkToken)}`;
+  }
+
+  throw new Error('Could not start device connection: no link token returned by the server.');
 }
 
 export async function disconnectProvider(provider: string): Promise<void> {

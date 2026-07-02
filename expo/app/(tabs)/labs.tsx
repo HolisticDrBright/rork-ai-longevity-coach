@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Alert,
   Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -34,10 +33,12 @@ import {
 import * as Haptics from 'expo-haptics';
 
 import Colors from '@/constants/colors';
-import { useLabs, LabAnalysisResult } from '@/providers/LabsProvider';
+import { useLabs, LabAnalysisResult, CrossLabPattern } from '@/providers/LabsProvider';
 import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { Biomarker, Supplement } from '@/types';
+import { showAlert } from '@/lib/ui/appAlert';
+import { formatLocalDate } from '@/utils/date';
 
 const statusColors = {
   optimal: Colors.success,
@@ -57,6 +58,7 @@ export default function LabsScreen() {
   const {
     labPanels,
     latestPanel,
+    previousPanel,
     biomarkersByCategory,
     flaggedBiomarkers,
     optimalBiomarkers,
@@ -93,7 +95,7 @@ export default function LabsScreen() {
     };
     addSupplementToProtocol(supplement);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Added to Protocol', `${supp.name} has been added to your active protocol.`);
+    showAlert('Added to Protocol', `${supp.name} has been added to your active protocol.`);
   }, [addSupplementToProtocol]);
 
   const [expandedCategories, setExpandedCategories] = useState<string[]>(['Metabolic', 'Inflammation']);
@@ -148,7 +150,7 @@ export default function LabsScreen() {
 
   const handleAnalyzeImages = async () => {
     if (uploadedImages.length === 0) {
-      Alert.alert('No Images', 'Please select lab screenshots first.');
+      showAlert('No Images', 'Please select lab screenshots first.');
       return;
     }
     try {
@@ -166,13 +168,13 @@ export default function LabsScreen() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setShowAnalysisModal(true);
       } else {
-        Alert.alert('No Biomarkers Found', 'We could not extract biomarkers. Try clearer screenshots.');
+        showAlert('No Biomarkers Found', 'We could not extract biomarkers. Try clearer screenshots.');
       }
     } catch (error) {
       setAnalysisProgress('');
       const msg = error instanceof Error ? error.message : 'Failed to analyze images.';
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Analysis Failed', msg, [
+      showAlert('Analysis Failed', msg, [
         { text: 'Try Again', onPress: handleAnalyzeImages },
         { text: 'Cancel', style: 'cancel' },
       ]);
@@ -181,19 +183,19 @@ export default function LabsScreen() {
 
   const handleSaveLabUpload = () => {
     if (!labName.trim()) {
-      Alert.alert('Error', 'Please enter a name for your lab panel');
+      showAlert('Error', 'Please enter a name for your lab panel');
       return;
     }
 
     if (!uploadedDocument && uploadedImages.length === 0) {
-      Alert.alert('Error', 'Please upload a lab document or images first');
+      showAlert('Error', 'Please upload a lab document or images first');
       return;
     }
 
     const biomarkers = analysisResult?.biomarkers || [];
 
     if (biomarkers.length === 0) {
-      Alert.alert(
+      showAlert(
         'No Biomarkers',
         'No biomarkers have been extracted. Would you like to analyze the document with AI first?',
         [
@@ -212,7 +214,7 @@ export default function LabsScreen() {
     void saveLabWithBiomarkers(biomarkers).then((id) => {
       if (id) {
         resetUploadState();
-        Alert.alert('Lab Saved', `${biomarkers.length} biomarkers saved.`);
+        showAlert('Lab Saved', `${biomarkers.length} biomarkers saved.`);
       }
     });
   };
@@ -234,10 +236,10 @@ export default function LabsScreen() {
         notes: `Uploaded: ${uploadedDocument?.name || 'No file'} (not analyzed)`,
       });
       resetUploadState();
-      Alert.alert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
+      showAlert('Lab Uploaded', 'Your lab has been uploaded. You can analyze it later to extract biomarkers.');
     } catch (err) {
-      console.log('[Labs UI] saveLabWithoutBiomarkers failed:', err);
-      Alert.alert('Save Failed', 'Could not save the lab. Please try again.');
+      console.log('[Labs UI] saveLabWithoutBiomarkers failed:', err instanceof Error ? err.message : String(err));
+      showAlert('Save Failed', 'Could not save the lab. Please try again.');
     }
   };
 
@@ -261,9 +263,9 @@ export default function LabsScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       return panelId;
     } catch (err) {
-      console.log('[Labs UI] saveLabWithBiomarkers failed:', err);
+      console.log('[Labs UI] saveLabWithBiomarkers failed:', err instanceof Error ? err.message : String(err));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Save Failed', 'Could not save the lab panel. Please try again.');
+      showAlert('Save Failed', 'Could not save the lab panel. Please try again.');
       return null;
     }
   };
@@ -282,7 +284,7 @@ export default function LabsScreen() {
 
   const handleAnalyzeLab = async () => {
     if (!uploadedDocument) {
-      Alert.alert('No File', 'Please upload a lab document first to analyze.');
+      showAlert('No File', 'Please upload a lab document first to analyze.');
       return;
     }
 
@@ -305,7 +307,7 @@ export default function LabsScreen() {
         setShowAnalysisModal(true);
       } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        Alert.alert(
+        showAlert(
           'No Biomarkers Found',
           'AI could not extract biomarkers from this document. The image may be unclear or the format unrecognized. You can still save the document for reference.',
           [
@@ -316,11 +318,11 @@ export default function LabsScreen() {
         );
       }
     } catch (error) {
-      console.error('[Labs UI] Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unable to analyze the lab document.';
-      
+      console.log('[Labs UI] Analysis error:', errorMessage);
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert(
+      showAlert(
         'Analysis Failed',
         errorMessage + '\n\nYou can try again or save the document without analysis.',
         [
@@ -334,7 +336,7 @@ export default function LabsScreen() {
 
   const handleSaveAnalysisResults = async () => {
     if (!analysisResult || analysisResult.biomarkers.length === 0) {
-      Alert.alert('No Results', 'No biomarkers were extracted. Please try again with a clearer image.');
+      showAlert('No Results', 'No biomarkers were extracted. Please try again with a clearer image.');
       return;
     }
 
@@ -378,18 +380,17 @@ export default function LabsScreen() {
     // Auto-trigger cross-lab synthesis if user has multiple panels
     const totalPanels = labPanels.length + 1; // +1 for the one we just saved
     if (totalPanels >= 2) {
-      Alert.alert(
+      showAlert(
         'Lab Saved',
-        `${snapshot.biomarkers.length} biomarkers saved. You now have ${totalPanels} lab panels — running cross-lab pattern analysis...`,
+        `${snapshot.biomarkers.length} biomarkers saved. You now have ${totalPanels} lab panels — cross-lab patterns will appear on this screen once detected.`,
       );
-      // Run synthesis in background
-      runCrossLabSynthesis().then(() => {
-        Alert.alert('Cross-Lab Analysis Complete', 'Your protocol has been updated with insights from all your labs combined.');
-      }).catch(() => {
+      // Run synthesis silently in the background; its completion surfaces via
+      // the Cross-Lab Patterns card (crossLabSynthesis state), not a second alert.
+      runCrossLabSynthesis().catch(() => {
         // Non-blocking — individual lab results are still saved
       });
     } else {
-      Alert.alert(
+      showAlert(
         'Lab Saved',
         `${snapshot.biomarkers.length} biomarkers saved. Upload more lab types (DUTCH, Gut Zoomer, TruAge, etc.) to unlock cross-lab pattern detection.`,
       );
@@ -558,7 +559,8 @@ export default function LabsScreen() {
         {renderAnalysisModal()}
       </View>
     );
-  
+  }
+
   function renderAnalysisModal() {
     return (
       <Modal
@@ -699,7 +701,6 @@ export default function LabsScreen() {
       </Modal>
     );
   }
-}
 
   return (
     <View style={styles.container}>
@@ -724,7 +725,7 @@ export default function LabsScreen() {
             <View style={styles.panelInfo}>
               <Calendar color="rgba(255,255,255,0.7)" size={14} />
               <Text style={styles.panelDate}>
-                {new Date(latestPanel.date).toLocaleDateString('en-US', {
+                {formatLocalDate(latestPanel.date, {
                   month: 'long',
                   day: 'numeric',
                   year: 'numeric',
@@ -772,6 +773,7 @@ export default function LabsScreen() {
                 key={biomarker.id}
                 biomarker={biomarker}
                 trend={getBiomarkerTrend(biomarker.id)}
+                previousStatus={previousPanel?.biomarkers.find(b => b.name === biomarker.name)?.status ?? null}
                 highlighted
               />
             ))}
@@ -784,11 +786,11 @@ export default function LabsScreen() {
             <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 8 }}>
               Your Lab Panels ({labPanels.length})
             </Text>
-            {labPanels.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((panel, idx) => (
+            {[...labPanels].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((panel, idx) => (
               <View key={panel.id || idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: idx < labPanels.length - 1 ? 1 : 0, borderBottomColor: Colors.borderLight }}>
                 <View>
                   <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.text }}>{panel.name}</Text>
-                  <Text style={{ fontSize: 11, color: Colors.textTertiary }}>{new Date(panel.date).toLocaleDateString()} · {panel.biomarkers.length} biomarkers</Text>
+                  <Text style={{ fontSize: 11, color: Colors.textTertiary }}>{formatLocalDate(panel.date)} · {panel.biomarkers.length} biomarkers</Text>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 4 }}>
                   {panel?.biomarkers?.filter(b => b.status === 'critical').length > 0 && (
@@ -817,10 +819,16 @@ export default function LabsScreen() {
               <Sparkles color={Colors.primary} size={18} />
               <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.primary }}>Cross-Lab Patterns Detected</Text>
             </View>
-            {crossLabSynthesis.patterns.map((pattern, idx) => (
+            {crossLabSynthesis.patterns.map((pattern: CrossLabPattern, idx: number) => (
               <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
                 <AlertTriangle color={Colors.warning} size={14} style={{ marginTop: 2 }} />
-                <Text style={{ flex: 1, fontSize: 13, color: Colors.text, lineHeight: 18 }}>{pattern}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.text, lineHeight: 18 }}>{pattern.name}</Text>
+                  <Text style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 17 }}>{pattern.description}</Text>
+                  {pattern.panels && pattern.panels.length > 0 ? (
+                    <Text style={{ fontSize: 11, color: Colors.textTertiary, marginTop: 2 }}>Panels: {pattern.panels.join(', ')}</Text>
+                  ) : null}
+                </View>
               </View>
             ))}
             {crossLabSynthesis.narrative ? (
@@ -862,6 +870,7 @@ export default function LabsScreen() {
                       key={biomarker.id}
                       biomarker={biomarker}
                       trend={getBiomarkerTrend(biomarker.id)}
+                      previousStatus={previousPanel?.biomarkers.find(b => b.name === biomarker.name)?.status ?? null}
                     />
                   ))}
                 </View>
@@ -875,154 +884,62 @@ export default function LabsScreen() {
     </View>
   );
 
-  function renderAnalysisModal() {
-    return (
-      <Modal
-        visible={showAnalysisModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAnalysisModal(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowAnalysisModal(false)}>
-              <X color={Colors.text} size={24} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Lab Analysis</Text>
-            <TouchableOpacity onPress={handleSaveAnalysisResults}>
-              <Text style={styles.saveText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.analysisContent} showsVerticalScrollIndicator={false}>
-            {analysisResult ? (
-              <>
-                <View style={styles.summarySection}>
-                  <Text style={styles.summaryTitle}>What Needs Attention</Text>
-                  <Text style={styles.summaryText}>
-                    {analysisResult.biomarkers.filter(b => b.status === 'suboptimal' || b.status === 'critical').length > 0
-                      ? analysisResult.biomarkers
-                          .filter(b => b.status === 'suboptimal' || b.status === 'critical')
-                          .map(b => `• ${b.name}: ${b.value} ${b.unit}`)
-                          .join('\n')
-                      : 'All markers within optimal range!'}
-                  </Text>
-                </View>
-
-                {analysisResult.priorityActions.length > 0 && (
-                  <View style={styles.prioritySectionClean}>
-                    <Text style={styles.priorityTitleClean}>Top Priorities</Text>
-                    {analysisResult.priorityActions.slice(0, 3).map((action, idx) => (
-                      <View key={idx} style={styles.priorityItemClean}>
-                        <View style={styles.priorityNumberClean}>
-                          <Text style={styles.priorityNumberTextClean}>{idx + 1}</Text>
-                        </View>
-                        <Text style={styles.priorityTextClean}>{action}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {(analysisResult.supplements.length > 0 || analysisResult.herbs.length > 0) && (
-                  <View style={styles.supplementPlanSection}>
-                    <Text style={styles.supplementPlanTitle}>Recommended Supplements</Text>
-                    
-                    {analysisResult.supplements.map((supp, idx) => (
-                      <View key={`supp-${idx}`} style={styles.supplementItemClean}>
-                        <View style={styles.supplementHeaderClean}>
-                          <Text style={styles.supplementNameClean}>{supp.name}</Text>
-                          <Text style={styles.supplementDoseClean}>{supp.dose}</Text>
-                        </View>
-                        <Text style={styles.supplementTimingClean}>{supp.timing}</Text>
-                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                          {supp.affiliateLink && (
-                            <TouchableOpacity
-                              style={styles.shopButtonClean}
-                              onPress={() => Linking.openURL(supp.affiliateLink!.url)}
-                            >
-                              <ExternalLink color="#fff" size={12} />
-                              <Text style={styles.shopButtonText}>Shop</Text>
-                            </TouchableOpacity>
-                          )}
-                          <TouchableOpacity
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
-                            onPress={() => handleAddToProtocol(supp)}
-                          >
-                            <Plus color="#fff" size={12} />
-                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-
-                    {analysisResult.herbs.map((herb, idx) => (
-                      <View key={`herb-${idx}`} style={styles.supplementItemClean}>
-                        <View style={styles.supplementHeaderClean}>
-                          <Text style={styles.supplementNameClean}>{herb.name}</Text>
-                          <Text style={styles.supplementDoseClean}>{herb.dose}</Text>
-                        </View>
-                        <Text style={styles.supplementTimingClean}>{herb.timing}</Text>
-                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                          {herb.affiliateLink && (
-                            <TouchableOpacity
-                              style={styles.shopButtonClean}
-                              onPress={() => Linking.openURL(herb.affiliateLink!.url)}
-                            >
-                              <ExternalLink color="#fff" size={12} />
-                              <Text style={styles.shopButtonText}>Shop</Text>
-                            </TouchableOpacity>
-                          )}
-                          <TouchableOpacity
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.success, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}
-                            onPress={() => handleAddToProtocol(herb)}
-                          >
-                            <Plus color="#fff" size={12} />
-                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Add to Protocol</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                <View style={styles.disclaimerCardClean}>
-                  <AlertTriangle color={Colors.warning} size={16} />
-                  <Text style={styles.disclaimerTextClean}>
-                    For educational purposes only. Consult your healthcare provider.
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <View style={styles.analysisLoading}>
-                <Loader color={Colors.primary} size={24} />
-                <Text style={styles.analysisLoadingText}>Analyzing...</Text>
-              </View>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-    );
-  }
 }
+
+const STATUS_RANK: Record<Biomarker['status'], number> = {
+  optimal: 0,
+  normal: 1,
+  suboptimal: 2,
+  critical: 3,
+};
 
 function BiomarkerCard({
   biomarker,
   trend,
+  previousStatus = null,
   highlighted = false,
 }: {
   biomarker: Biomarker;
   trend: 'up' | 'down' | 'stable' | null;
+  previousStatus?: Biomarker['status'] | null;
   highlighted?: boolean;
 }) {
   const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus;
   const statusColor = statusColors[biomarker.status];
 
-  const valuePosition =
-    ((biomarker.value - biomarker.referenceRange.min) /
-      (biomarker.referenceRange.max - biomarker.referenceRange.min)) *
-    100;
+  // Values may arrive as strings from older stored panels — coerce safely.
+  const numericValue = Number(biomarker.value);
+  const hasNumericValue = Number.isFinite(numericValue);
+  const displayValue = hasNumericValue ? numericValue.toFixed(1) : String(biomarker.value);
 
-  const clampedPosition = Math.max(0, Math.min(100, valuePosition));
+  const refMin = Number(biomarker.referenceRange?.min);
+  const refMax = Number(biomarker.referenceRange?.max);
+  const refSpan = refMax - refMin;
+  const hasValidRange =
+    Number.isFinite(refMin) && Number.isFinite(refMax) && refSpan > 0;
+
+  const clampPct = (pct: number) => Math.max(0, Math.min(100, pct));
+  const clampedPosition =
+    hasValidRange && hasNumericValue ? clampPct(((numericValue - refMin) / refSpan) * 100) : 50;
+
+  const funcMin = Number(biomarker.functionalRange?.min);
+  const funcMax = Number(biomarker.functionalRange?.max);
+  const hasFunctionalRange =
+    hasValidRange && Number.isFinite(funcMin) && Number.isFinite(funcMax) && funcMax > funcMin;
+  const functionalLeft = hasFunctionalRange ? clampPct(((funcMin - refMin) / refSpan) * 100) : 0;
+  const functionalWidth = hasFunctionalRange
+    ? Math.max(0, clampPct(((funcMax - refMin) / refSpan) * 100) - functionalLeft)
+    : 0;
+
+  // Status-aware trend color: "improving" means moving toward optimal
+  // (lower status rank than the previous panel), not simply "up".
+  let trendColor = Colors.textTertiary;
+  if (trend && trend !== 'stable' && previousStatus) {
+    const currentRank = STATUS_RANK[biomarker.status];
+    const previousRank = STATUS_RANK[previousStatus];
+    if (currentRank < previousRank) trendColor = Colors.success;
+    else if (currentRank > previousRank) trendColor = Colors.danger;
+  }
 
   return (
     <View style={[styles.biomarkerCard, highlighted && styles.biomarkerCardHighlighted]}>
@@ -1037,53 +954,44 @@ function BiomarkerCard({
         </View>
         <View style={styles.biomarkerValue}>
           <Text style={[styles.valueText, { color: statusColor }]}>
-            {biomarker.value.toFixed(1)}
+            {displayValue}
           </Text>
           <Text style={styles.unitText}>{biomarker.unit}</Text>
           {trend && (
-            <TrendIcon
-              color={
-                trend === 'up'
-                  ? Colors.success
-                  : trend === 'down'
-                  ? Colors.danger
-                  : Colors.textTertiary
-              }
-              size={16}
-            />
+            <TrendIcon color={trendColor} size={16} />
           )}
         </View>
       </View>
 
       <View style={styles.rangeContainer}>
         <View style={styles.rangeBar}>
-          <View
-            style={[
-              styles.functionalRange,
-              {
-                left: `${((biomarker.functionalRange.min - biomarker.referenceRange.min) /
-                  (biomarker.referenceRange.max - biomarker.referenceRange.min)) *
-                  100}%`,
-                width: `${((biomarker.functionalRange.max - biomarker.functionalRange.min) /
-                  (biomarker.referenceRange.max - biomarker.referenceRange.min)) *
-                  100}%`,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.valueMarker,
-              {
-                left: `${clampedPosition}%`,
-                backgroundColor: statusColor,
-              },
-            ]}
-          />
+          {hasFunctionalRange && (
+            <View
+              style={[
+                styles.functionalRange,
+                {
+                  left: `${functionalLeft}%`,
+                  width: `${functionalWidth}%`,
+                },
+              ]}
+            />
+          )}
+          {hasValidRange && hasNumericValue && (
+            <View
+              style={[
+                styles.valueMarker,
+                {
+                  left: `${clampedPosition}%`,
+                  backgroundColor: statusColor,
+                },
+              ]}
+            />
+          )}
         </View>
         <View style={styles.rangeLabels}>
-          <Text style={styles.rangeValue}>{biomarker.referenceRange.min}</Text>
+          <Text style={styles.rangeValue}>{hasValidRange ? refMin : '—'}</Text>
           <Text style={styles.rangeLabel}>Reference Range</Text>
-          <Text style={styles.rangeValue}>{biomarker.referenceRange.max}</Text>
+          <Text style={styles.rangeValue}>{hasValidRange ? refMax : '—'}</Text>
         </View>
       </View>
     </View>

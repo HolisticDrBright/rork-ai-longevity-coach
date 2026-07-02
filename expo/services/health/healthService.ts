@@ -11,7 +11,7 @@ import {
   requestHealthPermissions,
   hasHealthPermissions,
   connectOnDeviceHealth,
-  buildLinkUrl,
+  getLinkUrl,
   disconnectProvider as junctionDisconnect,
   listConnectedProviders,
   triggerSync,
@@ -130,8 +130,15 @@ export async function connectDevice(): Promise<{
   const preSnapshot = await listConnectedProviders();
   const preSlugs = new Set(preSnapshot.map(p => p.slug));
 
-  // 2. Open Link FIRST — user picks their provider
-  const linkUrl = buildLinkUrl(userId);
+  // 2. Open Link FIRST — user picks their provider.
+  // The short-lived link token is generated server-side; no API key on device.
+  let linkUrl: string;
+  try {
+    linkUrl = await getLinkUrl();
+  } catch (err) {
+    console.log('[Health] Could not get link token:', err instanceof Error ? err.message : String(err));
+    return { success: false };
+  }
   const redirectUrl = `${APP_SCHEME}://vital-callback`;
 
   let resultUrl: string | null = null;
@@ -204,9 +211,12 @@ export async function connectDevice(): Promise<{
 
 export async function disconnectProvider(provider: string): Promise<void> {
   await junctionDisconnect(provider);
+  const userId = await getCurrentUserId();
+  if (!userId) return;
   await supabase
     .from('wearable_connections')
     .update({ status: 'revoked' })
+    .eq('user_id', userId)
     .eq('provider', provider);
 }
 
@@ -270,9 +280,12 @@ export async function getDailyRecords(
   fromDate: string,
   toDate: string,
 ): Promise<DailyBiometricRecord[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
   const { data, error } = await supabase
     .from('daily_biometric_records')
     .select('*')
+    .eq('user_id', userId)
     .gte('date', fromDate)
     .lte('date', toDate)
     .order('date', { ascending: false });
