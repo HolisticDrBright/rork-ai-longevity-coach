@@ -32,6 +32,12 @@ const STORAGE_KEYS = {
 
 const PENDING_ROLE_KEY = 'longevity_pending_role';
 
+// Persisted "dirty" flags: set when a local edit hasn't been confirmed
+// synced to Supabase yet, so a remote refetch (e.g. on TOKEN_REFRESHED)
+// doesn't clobber offline edits.
+const LIFESTYLE_DIRTY_KEY = 'longevity_lifestyle_pending_sync';
+const CONTRA_DIRTY_KEY = 'longevity_contraindications_pending_sync';
+
 const defaultUserProfile: UserProfile = {
   id: '',
   firstName: '',
@@ -117,6 +123,37 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   const pendingRoleAppliedRef = useRef<boolean>(false);
 
+  // Refs mirroring the latest values synchronously, so rapid successive
+  // writes don't build on stale state (state only updates in onSuccess).
+  const lifestyleRef = useRef<LifestyleProfile>(defaultLifestyleProfile);
+  const contraRef = useRef<Contraindication>(defaultContraindications);
+  const responsesRef = useRef<QuestionnaireResponse[]>([]);
+
+  // Pending-sync (dirty) flags, persisted so they survive restarts.
+  const lifestyleDirtyRef = useRef<boolean>(false);
+  const contraDirtyRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        lifestyleDirtyRef.current = (await AsyncStorage.getItem(LIFESTYLE_DIRTY_KEY)) === '1';
+        contraDirtyRef.current = (await AsyncStorage.getItem(CONTRA_DIRTY_KEY)) === '1';
+      } catch {
+        // noop — default to not dirty
+      }
+    })();
+  }, []);
+
+  const markDirty = useCallback((ref: React.MutableRefObject<boolean>, key: string) => {
+    ref.current = true;
+    AsyncStorage.setItem(key, '1').catch(() => {});
+  }, []);
+
+  const clearDirty = useCallback((ref: React.MutableRefObject<boolean>, key: string) => {
+    ref.current = false;
+    AsyncStorage.removeItem(key).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (userQuery.data) setUserProfile(userQuery.data);
   }, [userQuery.data]);
@@ -142,6 +179,60 @@ export const [UserProvider, useUser] = createContextHook(() => {
     },
     staleTime: 30_000,
   });
+
+  // Push the latest local lifestyle profile to Supabase; clears the dirty
+  // flag on success. Used by the save mutation and by the remote-merge
+  // effect to re-attempt pending offline edits.
+  const pushLifestyleToRemote = useCallback(async (): Promise<boolean> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return false;
+      const profile = lifestyleRef.current;
+      const res = await lifestyleService.upsert({
+        user_id: session.user.id,
+        sleep_hours: profile.sleepHours,
+        sleep_quality: profile.sleepQuality,
+        stress_level: profile.stressLevel,
+        diet_type: profile.dietType,
+        cooking_skill: profile.cookingSkill,
+        shopping_cadence: profile.shoppingCadence,
+        exercise_frequency: profile.exerciseFrequency,
+        exercise_types: profile.exerciseTypes,
+      });
+      if (!res.error) {
+        clearDirty(lifestyleDirtyRef, LIFESTYLE_DIRTY_KEY);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.log('[UserProvider] Supabase lifestyle sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
+      return false;
+    }
+  }, [clearDirty]);
+
+  const pushContraindicationsToRemote = useCallback(async (): Promise<boolean> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return false;
+      const data = contraRef.current;
+      const res = await contraindicationService.upsert({
+        user_id: session.user.id,
+        pregnant: data.pregnant,
+        nursing: data.nursing,
+        medications: data.medications,
+        allergies: data.allergies,
+        conditions: data.conditions,
+      });
+      if (!res.error) {
+        clearDirty(contraDirtyRef, CONTRA_DIRTY_KEY);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.log('[UserProvider] Supabase contraindications sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
+      return false;
+    }
+  }, [clearDirty]);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
@@ -195,32 +286,46 @@ export const [UserProvider, useUser] = createContextHook(() => {
     }
 
     if (remote.lifestyle) {
-      const l = remote.lifestyle;
-      const mergedLifestyle: LifestyleProfile = {
-        sleepHours: l.sleep_hours ?? defaultLifestyleProfile.sleepHours,
-        sleepQuality: l.sleep_quality ?? defaultLifestyleProfile.sleepQuality,
-        stressLevel: l.stress_level ?? defaultLifestyleProfile.stressLevel,
-        dietType: (l.diet_type as LifestyleProfile['dietType']) ?? defaultLifestyleProfile.dietType,
-        cookingSkill: (l.cooking_skill as LifestyleProfile['cookingSkill']) ?? defaultLifestyleProfile.cookingSkill,
-        shoppingCadence: (l.shopping_cadence as LifestyleProfile['shoppingCadence']) ?? defaultLifestyleProfile.shoppingCadence,
-        exerciseFrequency: l.exercise_frequency ?? defaultLifestyleProfile.exerciseFrequency,
-        exerciseTypes: l.exercise_types ?? [],
-      };
-      setLifestyleProfile(mergedLifestyle);
-      void secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, mergedLifestyle);
+      if (lifestyleDirtyRef.current) {
+        // Local offline edits are pending sync — don't clobber them with
+        // the remote copy; re-attempt the push instead.
+        console.log('[UserProvider] Lifestyle has pending local edits — skipping remote overwrite, re-pushing');
+        void pushLifestyleToRemote();
+      } else {
+        const l = remote.lifestyle;
+        const mergedLifestyle: LifestyleProfile = {
+          sleepHours: l.sleep_hours ?? defaultLifestyleProfile.sleepHours,
+          sleepQuality: l.sleep_quality ?? defaultLifestyleProfile.sleepQuality,
+          stressLevel: l.stress_level ?? defaultLifestyleProfile.stressLevel,
+          dietType: (l.diet_type as LifestyleProfile['dietType']) ?? defaultLifestyleProfile.dietType,
+          cookingSkill: (l.cooking_skill as LifestyleProfile['cookingSkill']) ?? defaultLifestyleProfile.cookingSkill,
+          shoppingCadence: (l.shopping_cadence as LifestyleProfile['shoppingCadence']) ?? defaultLifestyleProfile.shoppingCadence,
+          exerciseFrequency: l.exercise_frequency ?? defaultLifestyleProfile.exerciseFrequency,
+          exerciseTypes: l.exercise_types ?? [],
+        };
+        lifestyleRef.current = mergedLifestyle;
+        setLifestyleProfile(mergedLifestyle);
+        void secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, mergedLifestyle);
+      }
     }
 
     if (remote.contraindications) {
-      const c = remote.contraindications;
-      const mergedContra: Contraindication = {
-        pregnant: c.pregnant ?? false,
-        nursing: c.nursing ?? false,
-        medications: c.medications ?? [],
-        allergies: c.allergies ?? [],
-        conditions: c.conditions ?? [],
-      };
-      setContraindications(mergedContra);
-      void secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, mergedContra);
+      if (contraDirtyRef.current) {
+        console.log('[UserProvider] Contraindications have pending local edits — skipping remote overwrite, re-pushing');
+        void pushContraindicationsToRemote();
+      } else {
+        const c = remote.contraindications;
+        const mergedContra: Contraindication = {
+          pregnant: c.pregnant ?? false,
+          nursing: c.nursing ?? false,
+          medications: c.medications ?? [],
+          allergies: c.allergies ?? [],
+          conditions: c.conditions ?? [],
+        };
+        contraRef.current = mergedContra;
+        setContraindications(mergedContra);
+        void secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, mergedContra);
+      }
     }
 
     if (remote.questionnaire && remote.questionnaire.length > 0) {
@@ -230,10 +335,11 @@ export const [UserProvider, useUser] = createContextHook(() => {
         severity: row.severity as 0 | 1 | 2 | 3 | 4,
         timestamp: row.timestamp,
       }));
+      responsesRef.current = responses;
       setQuestionnaireResponses(responses);
       void secureSetJSON(STORAGE_KEYS.QUESTIONNAIRE_RESPONSES, responses);
     }
-  }, [supabaseProfileQuery.data, userQuery.isLoading, userQuery.data]);
+  }, [supabaseProfileQuery.data, userQuery.isLoading, userQuery.data, pushLifestyleToRemote, pushContraindicationsToRemote]);
 
   useEffect(() => {
     if (userQuery.isLoading || pendingRoleAppliedRef.current) return;
@@ -265,21 +371,30 @@ export const [UserProvider, useUser] = createContextHook(() => {
         }
         await AsyncStorage.removeItem(PENDING_ROLE_KEY);
       } catch (e) {
-        console.log('[UserProvider] pending role apply failed', e);
+        console.log('[UserProvider] pending role apply failed:', e instanceof Error ? e.message : 'unknown error');
       }
     })();
   }, [userQuery.isLoading, userQuery.data, queryClient]);
 
   useEffect(() => {
-    if (lifestyleQuery.data) setLifestyleProfile(lifestyleQuery.data);
+    if (lifestyleQuery.data) {
+      lifestyleRef.current = lifestyleQuery.data;
+      setLifestyleProfile(lifestyleQuery.data);
+    }
   }, [lifestyleQuery.data]);
 
   useEffect(() => {
-    if (contraindicationsQuery.data) setContraindications(contraindicationsQuery.data);
+    if (contraindicationsQuery.data) {
+      contraRef.current = contraindicationsQuery.data;
+      setContraindications(contraindicationsQuery.data);
+    }
   }, [contraindicationsQuery.data]);
 
   useEffect(() => {
-    if (responsesQuery.data) setQuestionnaireResponses(responsesQuery.data);
+    if (responsesQuery.data) {
+      responsesRef.current = responsesQuery.data;
+      setQuestionnaireResponses(responsesQuery.data);
+    }
   }, [responsesQuery.data]);
 
   useEffect(() => {
@@ -310,7 +425,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
           });
         }
       } catch (e) {
-        console.log('[UserProvider] Supabase sync failed (non-blocking):', e);
+        console.log('[UserProvider] Supabase sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
       }
 
       return profile;
@@ -326,25 +441,9 @@ export const [UserProvider, useUser] = createContextHook(() => {
       await secureSetJSON(STORAGE_KEYS.LIFESTYLE_PROFILE, profile);
       await writeAuditLog('PHI_UPDATE', 'lifestyle_profile', 'user');
 
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          console.log('[UserProvider] Syncing lifestyle to Supabase...');
-          await lifestyleService.upsert({
-            user_id: session.user.id,
-            sleep_hours: profile.sleepHours,
-            sleep_quality: profile.sleepQuality,
-            stress_level: profile.stressLevel,
-            diet_type: profile.dietType,
-            cooking_skill: profile.cookingSkill,
-            shopping_cadence: profile.shoppingCadence,
-            exercise_frequency: profile.exerciseFrequency,
-            exercise_types: profile.exerciseTypes,
-          });
-        }
-      } catch (e) {
-        console.log('[UserProvider] Supabase lifestyle sync failed (non-blocking):', e);
-      }
+      // Non-blocking sync; clears the pending-sync flag on success.
+      console.log('[UserProvider] Syncing lifestyle to Supabase...');
+      await pushLifestyleToRemote();
 
       return profile;
     },
@@ -359,22 +458,9 @@ export const [UserProvider, useUser] = createContextHook(() => {
       await secureSetJSON(STORAGE_KEYS.CONTRAINDICATIONS, data);
       await writeAuditLog('PHI_UPDATE', 'contraindications', 'user');
 
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          console.log('[UserProvider] Syncing contraindications to Supabase...');
-          await contraindicationService.upsert({
-            user_id: session.user.id,
-            pregnant: data.pregnant,
-            nursing: data.nursing,
-            medications: data.medications,
-            allergies: data.allergies,
-            conditions: data.conditions,
-          });
-        }
-      } catch (e) {
-        console.log('[UserProvider] Supabase contraindications sync failed (non-blocking):', e);
-      }
+      // Non-blocking sync; clears the pending-sync flag on success.
+      console.log('[UserProvider] Syncing contraindications to Supabase...');
+      await pushContraindicationsToRemote();
 
       return data;
     },
@@ -414,20 +500,30 @@ export const [UserProvider, useUser] = createContextHook(() => {
   }, [userProfile, saveUserMutation]);
 
   const updateLifestyleProfile = useCallback((updates: Partial<LifestyleProfile>) => {
-    const updated = { ...lifestyleProfile, ...updates };
+    // Build from the ref (not state) so rapid successive updates don't lose
+    // earlier ones, and mark dirty before the async save so a remote
+    // refetch can't clobber this edit.
+    const updated = { ...lifestyleRef.current, ...updates };
+    lifestyleRef.current = updated;
+    markDirty(lifestyleDirtyRef, LIFESTYLE_DIRTY_KEY);
     saveLifestyleMutation.mutate(updated);
-  }, [lifestyleProfile, saveLifestyleMutation]);
+  }, [markDirty, saveLifestyleMutation]);
 
   const updateContraindications = useCallback((updates: Partial<Contraindication>) => {
-    const updated = { ...contraindications, ...updates };
+    const updated = { ...contraRef.current, ...updates };
+    contraRef.current = updated;
+    markDirty(contraDirtyRef, CONTRA_DIRTY_KEY);
     saveContraindicationsMutation.mutate(updated);
-  }, [contraindications, saveContraindicationsMutation]);
+  }, [markDirty, saveContraindicationsMutation]);
 
   const saveQuestionnaireResponse = useCallback((response: QuestionnaireResponse) => {
-    const existing = questionnaireResponses.filter(r => r.questionId !== response.questionId);
+    // Build from the ref (not state) so two answers submitted within ~1s
+    // don't lose the first one.
+    const existing = responsesRef.current.filter(r => r.questionId !== response.questionId);
     const updated = [...existing, response];
+    responsesRef.current = updated;
     saveResponsesMutation.mutate(updated);
-  }, [questionnaireResponses, saveResponsesMutation]);
+  }, [saveResponsesMutation]);
 
   const saveClinicalIntake = useCallback((chiefComplaint: ChiefComplaint, symptoms: AssociatedSymptom[]) => {
     const intake: ClinicalIntake = {
@@ -497,8 +593,13 @@ export const [UserProvider, useUser] = createContextHook(() => {
     setContraindications(defaultContraindications);
     setQuestionnaireResponses([]);
     setClinicalIntake(null);
+    lifestyleRef.current = defaultLifestyleProfile;
+    contraRef.current = defaultContraindications;
+    responsesRef.current = [];
+    clearDirty(lifestyleDirtyRef, LIFESTYLE_DIRTY_KEY);
+    clearDirty(contraDirtyRef, CONTRA_DIRTY_KEY);
     void queryClient.invalidateQueries();
-  }, [queryClient, userProfile.id]);
+  }, [queryClient, userProfile.id, clearDirty]);
 
   const categoryScores = useMemo((): CategoryScore[] => {
     return questionnaireCategories.map(category => {

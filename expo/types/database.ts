@@ -449,10 +449,17 @@ export interface SymptomLogRow {
   updated_at: string;
 }
 
-export type SymptomLogInsert = Omit<SymptomLogRow, 'id' | 'created_at' | 'updated_at'> & {
+// duration_minutes and notes are nullable columns with defaults, so they
+// are optional on insert.
+export type SymptomLogInsert = Omit<
+  SymptomLogRow,
+  'id' | 'created_at' | 'updated_at' | 'duration_minutes' | 'notes'
+> & {
   id?: string;
   created_at?: string;
   updated_at?: string;
+  duration_minutes?: number | null;
+  notes?: string | null;
 };
 
 export type SymptomLogUpdate = Partial<SymptomLogInsert>;

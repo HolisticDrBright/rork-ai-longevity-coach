@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
@@ -50,9 +50,20 @@ const categoryLabels: Record<string, string> = {
   high_estrogen: 'High Estrogen',
 };
 
+interface SaveEntriesVariables {
+  entries: HormoneEntry[];
+  /** The entry that was added/updated in this save, for remote sync. */
+  changed?: HormoneEntry;
+  /** The id of an entry deleted in this save, for remote delete propagation. */
+  deletedId?: string;
+}
+
 export const [HormoneProvider, useHormones] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [entries, setEntries] = useState<HormoneEntry[]>([]);
+  // Mirrors the latest entries synchronously so rapid successive writes
+  // don't build on stale state (state only updates in onSuccess).
+  const entriesRef = useRef<HormoneEntry[]>([]);
 
   const entriesQuery = useQuery({
     queryKey: ['hormoneEntries'],
@@ -65,30 +76,36 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
 
   useEffect(() => {
     if (entriesQuery.data) {
+      entriesRef.current = entriesQuery.data;
       setEntries(entriesQuery.data);
     }
   }, [entriesQuery.data]);
 
   const saveEntriesMutation = useMutation({
-    mutationFn: async (newEntries: HormoneEntry[]) => {
+    mutationFn: async ({ entries: newEntries, changed, deletedId }: SaveEntriesVariables) => {
       await secureSetJSON(STORAGE_KEY, newEntries);
       await writeAuditLog('PHI_UPDATE', 'hormone_entries', 'user');
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session && newEntries.length > 0) {
-          const latest = newEntries[0];
-          console.log('[HormoneProvider] Syncing hormone entry to Supabase...');
-          await hormoneEntryService.upsert({
-            date: latest.date,
-            cycle_day: latest.cycleDay ?? null,
-            symptoms_json: latest.symptoms as unknown as Record<string, unknown>[],
-            notes: latest.notes ?? null,
-            current_supplements_json: latest.currentSupplements as unknown as Record<string, unknown>[] ?? null,
-          });
+        if (session) {
+          if (changed) {
+            console.log('[HormoneProvider] Syncing hormone entry to Supabase...');
+            await hormoneEntryService.upsert({
+              id: changed.id,
+              date: changed.date,
+              cycle_day: changed.cycleDay ?? null,
+              symptoms_json: changed.symptoms as unknown as Record<string, unknown>[],
+              notes: changed.notes ?? null,
+              current_supplements_json: changed.currentSupplements as unknown as Record<string, unknown>[] ?? null,
+            });
+          }
+          if (deletedId) {
+            await hormoneEntryService.deleteById(deletedId);
+          }
         }
       } catch (e) {
-        console.log('[HormoneProvider] Supabase sync failed (non-blocking):', e);
+        console.log('[HormoneProvider] Supabase sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
       }
 
       return newEntries;
@@ -104,19 +121,29 @@ export const [HormoneProvider, useHormones] = createContextHook(() => {
       ...entry,
       id: `hormone_${Date.now()}`,
     };
-    const updated = [newEntry, ...entries];
-    saveEntriesMutation.mutate(updated);
-  }, [entries, saveEntriesMutation]);
+    const updated = [newEntry, ...entriesRef.current];
+    entriesRef.current = updated;
+    saveEntriesMutation.mutate({ entries: updated, changed: newEntry });
+  }, [saveEntriesMutation]);
 
   const updateEntry = useCallback((id: string, updates: Partial<HormoneEntry>) => {
-    const updated = entries.map(e => e.id === id ? { ...e, ...updates } : e);
-    saveEntriesMutation.mutate(updated);
-  }, [entries, saveEntriesMutation]);
+    let changed: HormoneEntry | undefined;
+    const updated = entriesRef.current.map(e => {
+      if (e.id === id) {
+        changed = { ...e, ...updates };
+        return changed;
+      }
+      return e;
+    });
+    entriesRef.current = updated;
+    saveEntriesMutation.mutate({ entries: updated, changed });
+  }, [saveEntriesMutation]);
 
   const deleteEntry = useCallback((id: string) => {
-    const updated = entries.filter(e => e.id !== id);
-    saveEntriesMutation.mutate(updated);
-  }, [entries, saveEntriesMutation]);
+    const updated = entriesRef.current.filter(e => e.id !== id);
+    entriesRef.current = updated;
+    saveEntriesMutation.mutate({ entries: updated, deletedId: id });
+  }, [saveEntriesMutation]);
 
   const getGuidance = useCallback((entry: HormoneEntry): HormoneGuidance[] => {
     const categoryScores: Record<string, number> = {

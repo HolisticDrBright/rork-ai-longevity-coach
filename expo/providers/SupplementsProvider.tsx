@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 
@@ -31,6 +31,9 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [customProducts, setCustomProducts] = useState<CuratedProduct[]>([]);
   const [clickEvents, setClickEvents] = useState<SupplementClickEvent[]>([]);
+  // Mirrors the latest click events synchronously so two rapid clicks don't
+  // lose the first one (state only updates in onSuccess after storage).
+  const clickEventsRef = useRef<SupplementClickEvent[]>([]);
 
   const customProductsQuery = useQuery({
     queryKey: ['customProducts'],
@@ -53,7 +56,10 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
   }, [customProductsQuery.data]);
 
   useEffect(() => {
-    if (clickEventsQuery.data) setClickEvents(clickEventsQuery.data);
+    if (clickEventsQuery.data) {
+      clickEventsRef.current = clickEventsQuery.data;
+      setClickEvents(clickEventsQuery.data);
+    }
   }, [clickEventsQuery.data]);
 
   const allProducts = useMemo(() => {
@@ -380,9 +386,10 @@ export const [SupplementsProvider, useSupplements] = createContextHook(() => {
     };
 
     console.log('[Supplements] Click tracked');
-    const updated = [...clickEvents, event];
+    const updated = [...clickEventsRef.current, event];
+    clickEventsRef.current = updated;
     saveClickEvents(updated);
-  }, [clickEvents, saveClickEvents]);
+  }, [saveClickEvents]);
 
   const addProduct = useCallback((product: Omit<CuratedProduct, 'id' | 'createdAt' | 'updatedAt'>) => {
     const newProduct: CuratedProduct = {

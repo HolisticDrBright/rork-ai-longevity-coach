@@ -36,45 +36,67 @@ async function computeChecksum(entry: Omit<AuditEntry, 'checksum'>): Promise<str
   return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payload);
 }
 
+function safeParseEntries(raw: string | null): AuditEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Serializes all read-modify-write cycles on the audit log so concurrent
+// writeAuditLog calls cannot drop each other's entries.
+let writeQueue: Promise<void> = Promise.resolve();
+
+function enqueueWrite(task: () => Promise<void>): Promise<void> {
+  const run = writeQueue.then(task, task);
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
 export async function writeAuditLog(
   action: AuditAction,
   resource: string,
   userId: string,
   details?: string
 ): Promise<void> {
-  try {
-    const id = Crypto.randomUUID();
-    const timestamp = new Date().toISOString();
+  return enqueueWrite(async () => {
+    try {
+      const id = Crypto.randomUUID();
+      const timestamp = new Date().toISOString();
 
-    const partialEntry: Omit<AuditEntry, 'checksum'> = {
-      id,
-      timestamp,
-      action,
-      resource,
-      userId,
-      details: details ? sanitizeForLog(details) : undefined,
-    };
+      const partialEntry: Omit<AuditEntry, 'checksum'> = {
+        id,
+        timestamp,
+        action,
+        resource,
+        userId,
+        details: details ? sanitizeForLog(details) : undefined,
+      };
 
-    const checksum = await computeChecksum(partialEntry);
-    const entry: AuditEntry = { ...partialEntry, checksum };
+      const checksum = await computeChecksum(partialEntry);
+      const entry: AuditEntry = { ...partialEntry, checksum };
 
-    const raw = await AsyncStorage.getItem(AUDIT_STORAGE_KEY);
-    let entries: AuditEntry[] = raw ? JSON.parse(raw) : [];
+      const raw = await AsyncStorage.getItem(AUDIT_STORAGE_KEY);
+      let entries: AuditEntry[] = safeParseEntries(raw);
 
-    entries.push(entry);
+      entries.push(entry);
 
-    if (entries.length > MAX_AUDIT_ENTRIES) {
-      entries = entries.slice(-MAX_AUDIT_ENTRIES);
+      if (entries.length > MAX_AUDIT_ENTRIES) {
+        entries = entries.slice(-MAX_AUDIT_ENTRIES);
+      }
+
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
+      entries = entries.filter((e) => new Date(e.timestamp) >= cutoff);
+
+      await AsyncStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(entries));
+    } catch {
+      console.log('[AuditLog] Failed to write audit entry');
     }
-
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
-    entries = entries.filter((e) => new Date(e.timestamp) >= cutoff);
-
-    await AsyncStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(entries));
-  } catch (error) {
-    console.log('[AuditLog] Failed to write audit entry');
-  }
+  });
 }
 
 export async function getAuditLogs(
@@ -90,7 +112,7 @@ export async function getAuditLogs(
     const raw = await AsyncStorage.getItem(AUDIT_STORAGE_KEY);
     if (!raw) return [];
 
-    let entries: AuditEntry[] = JSON.parse(raw);
+    let entries: AuditEntry[] = safeParseEntries(raw);
 
     if (filters?.action) {
       entries = entries.filter((e) => e.action === filters.action);
@@ -137,7 +159,11 @@ export async function verifyAuditIntegrity(): Promise<{
 }
 
 export async function clearAuditLogs(): Promise<void> {
-  await AsyncStorage.removeItem(AUDIT_STORAGE_KEY);
+  // Goes through the write queue so a pending write cannot resurrect
+  // entries after the clear.
+  return enqueueWrite(async () => {
+    await AsyncStorage.removeItem(AUDIT_STORAGE_KEY);
+  });
 }
 
 function sanitizeForLog(text: string): string {

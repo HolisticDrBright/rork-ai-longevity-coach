@@ -6,7 +6,18 @@
  *
  * All events are stored in the `webhook_events` table via the
  * `app-webhooks` Supabase Edge Function. No external server needed.
+ *
+ * Privacy notes:
+ * - Email is never sent when a userId is available (the server can look it
+ *   up); detailed health data (risk scores, recommended supplement lists)
+ *   is reduced to non-identifying counters before transmission.
+ * - The EXPO_PUBLIC_WEBHOOK_SECRET is bundled into the client and therefore
+ *   public by construction — it is spam protection, not authentication.
+ *   Every request also carries the user's Supabase access token in the
+ *   `x-user-jwt` header so the edge function can migrate to real auth.
  */
+
+import { supabase } from './supabase';
 
 const getWebhookUrl = (): string => {
   // Auto-detect from Supabase URL — no separate config needed
@@ -43,10 +54,28 @@ async function sendWebhook(endpoint: string, payload: WebhookPayload): Promise<b
       headers['X-Webhook-Secret'] = secret;
     }
 
+    // Attach the user's Supabase access token so the edge function can
+    // migrate from the (public) webhook secret to real per-user auth.
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        headers['x-user-jwt'] = session.access_token;
+      }
+    } catch {
+      // No session — send without the JWT header
+    }
+
+    // Never send email when a user id is available; the server can resolve
+    // the email from the id.
+    const sanitized: WebhookPayload = { ...payload };
+    if (sanitized.userId) {
+      sanitized.email = '';
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(sanitized),
     });
 
     if (response.ok) {
@@ -79,12 +108,13 @@ export interface AssessmentCompletePayload {
 }
 
 export function sendAssessmentComplete(data: AssessmentCompletePayload): void {
+  // Detailed risk scores and recommended lab categories are health data —
+  // only non-identifying counters are transmitted.
   sendWebhook('assessment-complete', {
     eventType: 'assessment_complete',
     userId: data.userId,
     email: data.email,
-    assessmentScore: data.assessmentScore,
-    recommendedLabs: data.recommendedLabs,
+    recommendedLabsCount: data.recommendedLabs.length,
     timestamp: new Date().toISOString(),
   }).catch(() => {});
 }
@@ -103,12 +133,13 @@ export interface LabsAnalyzedPayload {
 }
 
 export function sendLabsAnalyzed(data: LabsAnalyzedPayload): void {
+  // The recommended supplement list is health data — send only a count.
   sendWebhook('labs-analyzed', {
     eventType: 'labs_analyzed',
     userId: data.userId,
     email: data.email,
     labType: data.labType,
-    supplementsRecommended: data.supplementsRecommended,
+    supplementsRecommendedCount: data.supplementsRecommended.length,
     timestamp: new Date().toISOString(),
   }).catch(() => {});
 }

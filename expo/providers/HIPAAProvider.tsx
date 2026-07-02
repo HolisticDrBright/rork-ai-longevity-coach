@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { writeAuditLog, getAuditLogs, verifyAuditIntegrity, AuditEntry } from '@/lib/auditLog';
 import { getBreachEvents, getUnacknowledgedBreaches, acknowledgeBreachEvent, BreachEvent } from '@/lib/breachDetection';
 import { purgeAllPHI } from '@/lib/secureStorage';
+import { supabase } from '@/lib/supabase';
 
 const CONSENT_KEY = 'hipaa_consent_accepted';
 const PRIVACY_NOTICE_VERSION = '1.0.0';
@@ -25,9 +26,15 @@ export const [HIPAAProvider, useHIPAA] = createContextHook(() => {
     queryFn: async () => {
       const raw = await AsyncStorage.getItem(CONSENT_KEY);
       if (!raw) return null;
-      const consent: HIPAAConsent = JSON.parse(raw);
-      if (consent.version !== PRIVACY_NOTICE_VERSION) return null;
-      return consent;
+      try {
+        const consent: HIPAAConsent = JSON.parse(raw);
+        if (consent?.version !== PRIVACY_NOTICE_VERSION) return null;
+        return consent;
+      } catch {
+        // Corrupted stored consent — treat as no consent given so the
+        // consent flow re-runs instead of leaving consentLoading stuck.
+        return null;
+      }
     },
   });
 
@@ -89,8 +96,49 @@ export const [HIPAAProvider, useHIPAA] = createContextHook(() => {
 
   const purgeDataMutation = useMutation({
     mutationFn: async () => {
-      await writeAuditLog('DATA_PURGE', 'all_phi', 'user', 'User requested full PHI deletion');
+      // Purge local PHI first. purgeAllPHI retains the audit log key
+      // (HIPAA retention), so the DATA_PURGE entry is written AFTER the
+      // purge and survives it.
       await purgeAllPHI();
+
+      // TODO: server-side deletion — this only covers rows in tables the
+      // client syncs to. A proper implementation should be a server-side
+      // (edge function / RPC) cascade delete of everything keyed to the user.
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const userId = session.user.id;
+          const userTables = [
+            'meal_logs',
+            'supplement_logs',
+            'symptom_logs',
+            'daily_adherence',
+            'daily_subjective_rollups',
+            'hormone_entries',
+            'lab_panels',
+            'protocols',
+            'questionnaire_responses',
+            'clinical_intakes',
+            'lifestyle_profiles',
+            'contraindications',
+            'health_goals',
+            'wearable_connections',
+            'app_settings',
+            'daily_biometric_records',
+          ];
+          for (const table of userTables) {
+            try {
+              await supabase.from(table).delete().eq('user_id', userId);
+            } catch {
+              // best-effort, non-blocking per table
+            }
+          }
+        }
+      } catch (e) {
+        console.log('[HIPAA] Best-effort remote deletion failed:', e instanceof Error ? e.message : 'unknown error');
+      }
+
+      await writeAuditLog('DATA_PURGE', 'all_phi', 'user', 'User requested full PHI deletion');
       return true;
     },
     onSuccess: () => {

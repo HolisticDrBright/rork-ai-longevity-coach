@@ -125,7 +125,10 @@ export const lifestyleService = {
 
       const { data, error } = await supabase
         .from('lifestyle_profiles')
-        .upsert({ ...profile, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...profile, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
         .select()
         .single();
 
@@ -163,7 +166,10 @@ export const contraindicationService = {
 
       const { data, error } = await supabase
         .from('contraindications')
-        .upsert({ ...contra, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...contra, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
         .select()
         .single();
 
@@ -244,7 +250,10 @@ export const clinicalIntakeService = {
 
       const { data, error } = await supabase
         .from('clinical_intakes')
-        .upsert({ ...intake, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...intake, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
         .select()
         .single();
 
@@ -280,9 +289,14 @@ export const protocolService = {
       const userId = await getCurrentUserId();
       if (!userId) return { data: null, error: 'Not authenticated' };
 
+      // Callers should include the row's stable `id` so repeated saves
+      // update the existing row instead of inserting duplicates.
       const { data, error } = await supabase
         .from('protocols')
-        .upsert({ ...protocol, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...protocol, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        )
         .select()
         .single();
 
@@ -361,9 +375,14 @@ export const labPanelService = {
       const userId = await getCurrentUserId();
       if (!userId) return { data: null, error: 'Not authenticated' };
 
+      // Callers should include the row's stable `id` so repeated saves
+      // update the existing row instead of inserting duplicates.
       const { data, error } = await supabase
         .from('lab_panels')
-        .upsert({ ...panel, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...panel, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        )
         .select()
         .single();
 
@@ -399,14 +418,37 @@ export const hormoneEntryService = {
       const userId = await getCurrentUserId();
       if (!userId) return { data: null, error: 'Not authenticated' };
 
+      // Callers should include the row's stable `id` so repeated saves
+      // update the existing row instead of inserting duplicates.
       const { data, error } = await supabase
         .from('hormone_entries')
-        .upsert({ ...entry, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...entry, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        )
         .select()
         .single();
 
       if (error) return { data: null, error: error.message };
       return { data, error: null };
+    } catch (e) {
+      return { data: null, error: handleError(e) };
+    }
+  },
+
+  async deleteById(id: string): Promise<ServiceResult<boolean>> {
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) return { data: null, error: 'Not authenticated' };
+
+      const { error } = await supabase
+        .from('hormone_entries')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId);
+
+      if (error) return { data: null, error: error.message };
+      return { data: true, error: null };
     } catch (e) {
       return { data: null, error: handleError(e) };
     }
@@ -617,6 +659,47 @@ export const mealLogService = {
       return { data: null, error: handleError(e) };
     }
   },
+
+  async upsert(meal: Omit<MealLogInsert, 'user_id'>): Promise<ServiceResult<MealLogRow>> {
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) return { data: null, error: 'Not authenticated' };
+
+      // Callers should include the row's stable `id` so repeated saves
+      // update the existing row instead of inserting duplicates.
+      const { data, error } = await supabase
+        .from('meal_logs')
+        .upsert(
+          { ...meal, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        )
+        .select()
+        .single();
+
+      if (error) return { data: null, error: error.message };
+      return { data, error: null };
+    } catch (e) {
+      return { data: null, error: handleError(e) };
+    }
+  },
+
+  async deleteById(id: string): Promise<ServiceResult<boolean>> {
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) return { data: null, error: 'Not authenticated' };
+
+      const { error } = await supabase
+        .from('meal_logs')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId);
+
+      if (error) return { data: null, error: error.message };
+      return { data: true, error: null };
+    } catch (e) {
+      return { data: null, error: handleError(e) };
+    }
+  },
 };
 
 export const supplementLogService = {
@@ -768,7 +851,10 @@ export const healthGoalService = {
 
       const { data, error } = await supabase
         .from('health_goals')
-        .upsert({ ...goal, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...goal, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
         .select()
         .single();
 
@@ -803,9 +889,14 @@ export const wearableConnectionService = {
       const userId = await getCurrentUserId();
       if (!userId) return { data: null, error: 'Not authenticated' };
 
+      // One connection row per (user, provider) — provider is part of the
+      // natural key since a user can connect multiple wearable providers.
       const { data, error } = await supabase
         .from('wearable_connections')
-        .upsert({ ...connection, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...connection, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,provider' }
+        )
         .select()
         .single();
 
@@ -843,7 +934,10 @@ export const appSettingsService = {
 
       const { data, error } = await supabase
         .from('app_settings')
-        .upsert({ ...settings, user_id: userId, updated_at: new Date().toISOString() })
+        .upsert(
+          { ...settings, user_id: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
         .select()
         .single();
 

@@ -11,31 +11,48 @@ export const [SupabaseAuthProvider, useSupabaseAuth] = createContextHook(() => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const initializedRef = useRef(false);
+  const receivedAuthEventRef = useRef(false);
 
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
+    // Remount-safe: subscription is re-created on every effect run and torn
+    // down in cleanup (no permanent "initialized" latch).
+    let isMounted = true;
+    receivedAuthEventRef.current = false;
 
     console.log('[SupabaseAuth] Initializing...');
 
-    void supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      console.log('[SupabaseAuth] Initial session:', currentSession ? 'exists' : 'none');
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-      setIsAuthenticated(!!currentSession);
-      setIsLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: currentSession } }) => {
+        // If an onAuthStateChange event already delivered a session, the
+        // initial getSession result is stale — ignore it.
+        if (!isMounted || receivedAuthEventRef.current) return;
+        console.log('[SupabaseAuth] Initial session:', currentSession ? 'exists' : 'none');
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+        setIsAuthenticated(!!currentSession);
+        setIsLoading(false);
+      })
+      .catch((e: unknown) => {
+        console.log('[SupabaseAuth] getSession failed:', e instanceof Error ? e.message : 'unknown error');
+        if (isMounted && !receivedAuthEventRef.current) {
+          setIsLoading(false);
+        }
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      receivedAuthEventRef.current = true;
+      if (!isMounted) return;
       console.log('[SupabaseAuth] Auth state changed:', _event);
       setSession(newSession);
       setUser(newSession?.user ?? null);
       setIsAuthenticated(!!newSession);
       setAuthError(null);
+      setIsLoading(false);
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);

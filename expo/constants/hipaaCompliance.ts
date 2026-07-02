@@ -13,9 +13,9 @@ export const BAA_REQUIRED_SERVICES = [
     service: '@react-native-async-storage/async-storage',
     type: 'Local Storage',
     phiExposure: 'HIGH',
-    description: 'All PHI stored locally on device. Now encrypted via secureStorage wrapper using key from expo-secure-store.',
+    description: 'All PHI stored locally on device, obfuscated via the secureStorage XOR wrapper. On native the XOR key is held in expo-secure-store (Keychain/Keystore); on web the key is persisted in localStorage, which is obfuscation only, not encryption.',
     baaStatus: 'N/A (local only)',
-    mitigation: 'Encryption at rest implemented. Key stored in expo-secure-store (Keychain/Keystore).',
+    mitigation: 'XOR obfuscation with SecureStore-held key on native (not cryptographic-grade encryption). Upgrade to AES-256-GCM for true encryption at rest.',
   },
   {
     service: 'expo-secure-store',
@@ -65,15 +65,15 @@ export const PHI_FIELDS_INVENTORY = [
   { field: 'PeptidePlans', storage: 'longevity_user_peptide_plans', encrypted: true, phi: true, description: 'Peptide usage logs' },
   { field: 'DietProfile', storage: 'nutrition_diet_profile', encrypted: true, phi: true, description: 'Dietary restrictions, allergies' },
   { field: 'FoodLogs', storage: 'nutrition_food_logs', encrypted: true, phi: true, description: 'Meal photos, nutrition data' },
-  { field: 'SupplementClicks', storage: 'supplements_click_events', encrypted: true, phi: false, description: 'Affiliate click tracking (patient IDs referenced)' },
-  { field: 'AuditLogs', storage: 'hipaa_audit_log', encrypted: false, phi: false, description: 'Access audit trail with checksums. No PHI in log content.' },
+  { field: 'SupplementClicks', storage: 'supplements_click_events', encrypted: true, phi: true, description: 'Affiliate click tracking (patient IDs referenced, linking individuals to supplement interest)' },
+  { field: 'AuditLogs', storage: 'hipaa_audit_log', encrypted: false, phi: false, description: 'Access audit trail with checksums. No PHI in log content. Retained through PHI purge (HIPAA retention).' },
 ];
 
 export const SECURITY_CONTROLS = {
   encryptionAtRest: {
-    status: 'IMPLEMENTED',
-    method: 'XOR cipher with random key stored in expo-secure-store (Keychain/Keystore)',
-    note: 'For production HIPAA, upgrade to AES-256-GCM via a custom native module or server-side encryption.',
+    status: 'PARTIAL',
+    method: 'XOR obfuscation (UTF-8 + chunked base64) with a random key. Native: key held in expo-secure-store (Keychain/Keystore), giving at-rest protection backed by hardware key storage. Web: key persisted in localStorage — obfuscation only, NOT encryption.',
+    note: 'XOR is not cryptographic-grade. For production HIPAA, upgrade to AES-256-GCM via a custom native module or server-side encryption. Web storage should not be considered encrypted.',
   },
   encryptionInTransit: {
     status: 'ENFORCED',
@@ -81,7 +81,7 @@ export const SECURITY_CONTROLS = {
   },
   authentication: {
     status: 'IMPLEMENTED',
-    method: '6-digit PIN with SHA-256 hash + optional biometric (Face ID / Touch ID / Fingerprint)',
+    method: '6-digit PIN with per-device salted SHA-256 hash (legacy constant-salt hashes upgraded on login) + optional biometric (Face ID / Touch ID / Fingerprint). Lockout state persists across app restarts.',
   },
   sessionManagement: {
     status: 'IMPLEMENTED',
@@ -104,12 +104,12 @@ export const SECURITY_CONTROLS = {
     note: 'All stored fields are necessary for app function. Photo base64 for food logs should be purged after analysis.',
   },
   dataDeletion: {
-    status: 'IMPLEMENTED',
-    method: 'Full PHI purge via Profile > Privacy & Security > Delete All My Data. Encryption key destroyed.',
+    status: 'PARTIAL',
+    method: 'Local PHI purge via Profile > Privacy & Security > Delete All My Data. Encryption key destroyed; audit log retained per HIPAA retention. Remote rows are deleted best-effort from synced tables only — full server-side cascade deletion is not yet implemented.',
   },
   phiInLogs: {
-    status: 'SANITIZED',
-    method: 'Console.log statements stripped of PHI. SSN, email, phone patterns redacted from audit logs.',
+    status: 'PARTIAL',
+    method: 'Error objects are logged as message/code only (no row data) in the storage/state layer, and SSN, email, phone patterns are redacted from audit log details. Other layers of the app have not been fully audited for PHI in console output.',
   },
   apiSecurity: {
     status: 'IMPLEMENTED',

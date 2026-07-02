@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureGetJSON, secureSetJSON } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
@@ -43,6 +43,10 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [dailyAdherence, setDailyAdherence] = useState<DailyAdherence[]>([]);
+  // Mirrors the latest adherence synchronously so rapid successive toggles
+  // (e.g. checking two supplements within a second) don't build on stale
+  // state — state only updates in onSuccess after storage + network.
+  const dailyAdherenceRef = useRef<DailyAdherence[]>([]);
   const [weeklyCheckIns, setWeeklyCheckIns] = useState<WeeklyCheckIn[]>([]);
   const [userPeptidePlans, setUserPeptidePlans] = useState<UserPeptidePlan[]>([]);
   const [peptideAcknowledged, setPeptideAcknowledged] = useState(false);
@@ -93,7 +97,10 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
   }, [protocolsQuery.data]);
 
   useEffect(() => {
-    if (adherenceQuery.data) setDailyAdherence(adherenceQuery.data);
+    if (adherenceQuery.data) {
+      dailyAdherenceRef.current = adherenceQuery.data;
+      setDailyAdherence(adherenceQuery.data);
+    }
   }, [adherenceQuery.data]);
 
   useEffect(() => {
@@ -119,6 +126,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           console.log('[ProtocolProvider] Syncing protocols to Supabase...');
           for (const protocol of data) {
             await protocolService.upsert({
+              id: protocol.id,
               name: protocol.name,
               description: protocol.description || null,
               start_date: protocol.startDate,
@@ -133,7 +141,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           }
         }
       } catch (e) {
-        console.log('[ProtocolProvider] Supabase sync failed (non-blocking):', e);
+        console.log('[ProtocolProvider] Supabase sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
       }
 
       return data;
@@ -164,7 +172,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           });
         }
       } catch (e) {
-        console.log('[ProtocolProvider] Supabase adherence sync failed (non-blocking):', e);
+        console.log('[ProtocolProvider] Supabase adherence sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
       }
 
       return data;
@@ -281,7 +289,10 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
     if (!activeProtocol) return;
 
     const today = getTodayDate();
-    let currentAdherence = dailyAdherence.find(a => a.date === today);
+    // Read from the ref (not state) so two toggles within ~1s don't lose
+    // the first update.
+    const latestAdherence = dailyAdherenceRef.current;
+    let currentAdherence = latestAdherence.find(a => a.date === today);
 
     if (!currentAdherence) {
       currentAdherence = {
@@ -320,15 +331,18 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
         break;
     }
 
-    const otherAdherence = dailyAdherence.filter(a => a.date !== today);
-    saveAdherenceMutation.mutate([...otherAdherence, newAdherence]);
-  }, [activeProtocol, dailyAdherence, saveAdherenceMutation]);
+    const otherAdherence = latestAdherence.filter(a => a.date !== today);
+    const next = [...otherAdherence, newAdherence];
+    dailyAdherenceRef.current = next;
+    saveAdherenceMutation.mutate(next);
+  }, [activeProtocol, saveAdherenceMutation]);
 
   const updateDailySymptoms = useCallback(async (symptoms: DailySymptoms) => {
     if (!activeProtocol) return;
 
     const today = getTodayDate();
-    let currentAdherence = dailyAdherence.find(a => a.date === today);
+    const latestAdherence = dailyAdherenceRef.current;
+    let currentAdherence = latestAdherence.find(a => a.date === today);
 
     if (!currentAdherence) {
       currentAdherence = {
@@ -345,8 +359,10 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
       currentAdherence = { ...currentAdherence, symptoms };
     }
 
-    const otherAdherence = dailyAdherence.filter(a => a.date !== today);
-    saveAdherenceMutation.mutate([...otherAdherence, currentAdherence]);
+    const otherAdherence = latestAdherence.filter(a => a.date !== today);
+    const next = [...otherAdherence, currentAdherence];
+    dailyAdherenceRef.current = next;
+    saveAdherenceMutation.mutate(next);
 
     // ── Persist to Supabase for AI historical analysis ──────────
     // These are APPEND-ONLY — never overwritten. Each check-in creates
@@ -384,9 +400,9 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
 
       console.log('[Protocol] Symptom history saved to Supabase');
     } catch (e) {
-      console.log('[Protocol] Supabase symptom sync failed (non-blocking):', e);
+      console.log('[Protocol] Supabase symptom sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
     }
-  }, [activeProtocol, dailyAdherence, saveAdherenceMutation]);
+  }, [activeProtocol, saveAdherenceMutation]);
 
   const saveWeeklyCheckIn = useCallback(async (checkIn: Omit<WeeklyCheckIn, 'id' | 'date'>) => {
     const today = getTodayDate();
@@ -404,7 +420,11 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      // Log weight, resting HR, sleep score as symptom_logs for trend tracking
+      // Log weight, resting HR, sleep score as symptom_logs for trend tracking.
+      // NOTE: these are not symptoms — the numeric measurement (lbs/kg, bpm,
+      // score) is intentionally stored in the `severity` column, keyed by
+      // `symptom_name`, to reuse the append-only symptom_logs pipeline for
+      // trend analysis. Consumers must interpret `severity` by symptom_name.
       if (checkIn.weight) {
         await symptomLogService.insert({
           symptom_name: 'weight',
@@ -428,26 +448,27 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
         });
       }
 
-      // Store the full check-in as a webhook event for practitioner visibility
+      // Record that a weekly check-in happened, for practitioner visibility.
+      // The payload is intentionally reduced to ids/counters — the actual
+      // measurements and free-text notes are PHI and already live in
+      // symptom_logs / local storage, so they are not duplicated into the
+      // webhook_events table (and no email is attached).
       await supabase.from('webhook_events').insert({
         user_id: session.user.id,
-        email: session.user.email,
         event_type: 'weekly_checkin',
         payload: {
           date: today,
-          weight: checkIn.weight,
-          waistCircumference: checkIn.waistCircumference,
-          restingHeartRate: checkIn.restingHeartRate,
-          sleepScore: checkIn.sleepScore,
-          wins: checkIn.wins,
-          challenges: checkIn.challenges,
-          notes: checkIn.notes,
+          metricsLogged: [checkIn.weight, checkIn.waistCircumference, checkIn.restingHeartRate, checkIn.sleepScore]
+            .filter((v) => v !== undefined && v !== null).length,
+          hasWins: !!checkIn.wins,
+          hasChallenges: !!checkIn.challenges,
+          hasNotes: !!checkIn.notes,
         },
       });
 
       console.log('[Protocol] Weekly check-in saved to Supabase');
     } catch (e) {
-      console.log('[Protocol] Supabase weekly check-in sync failed (non-blocking):', e);
+      console.log('[Protocol] Supabase weekly check-in sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
     }
   }, [weeklyCheckIns, saveCheckInsMutation]);
 

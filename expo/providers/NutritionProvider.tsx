@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { secureGetJSON, secureSetJSON, secureRemoveItem } from '@/lib/secureStorage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { mealLogService } from '@/lib/supabaseService';
@@ -47,6 +47,9 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [dietProfile, setDietProfile] = useState<DietProfile>(defaultDietProfile);
   const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
+  // Mirrors the latest food logs synchronously so rapid successive writes
+  // don't build on stale state (state only updates in onSuccess).
+  const foodLogsRef = useRef<FoodLog[]>([]);
   const [pendingAnalysis, setPendingAnalysis] = useState<{
     foodLogId: string;
     detectedItems: DetectedFoodItem[];
@@ -83,7 +86,10 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   }, [dietProfileQuery.data]);
 
   useEffect(() => {
-    if (foodLogsQuery.data) setFoodLogs(foodLogsQuery.data);
+    if (foodLogsQuery.data) {
+      foodLogsRef.current = foodLogsQuery.data;
+      setFoodLogs(foodLogsQuery.data);
+    }
   }, [foodLogsQuery.data]);
 
   useEffect(() => {
@@ -104,32 +110,43 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   });
 
   const saveFoodLogsMutation = useMutation({
-    mutationFn: async (logs: FoodLog[]) => {
+    mutationFn: async ({ logs, changed, deletedId }: {
+      logs: FoodLog[];
+      /** The log that was added/updated in this save, for remote sync. */
+      changed?: FoodLog;
+      /** The id of a log deleted in this save, for remote delete propagation. */
+      deletedId?: string;
+    }) => {
       await secureSetJSON(STORAGE_KEYS.FOOD_LOGS, logs);
       await writeAuditLog('PHI_UPDATE', 'food_logs', 'user');
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session && logs.length > 0) {
-          const latest = logs[0];
-          console.log('[NutritionProvider] Syncing meal log to Supabase...');
-          await mealLogService.insert({
-            meal_time: latest.createdAt,
-            meal_type: latest.mealType || 'other',
-            calories: latest.totals?.calories ?? null,
-            protein_g: latest.totals?.protein_g ?? null,
-            carbs_g: latest.totals?.carbs_g ?? null,
-            fat_g: latest.totals?.fat_g ?? null,
-            fiber_g: latest.totals?.fiber_g ?? null,
-            glycemic_load_estimate: null,
-            inflammatory_load_estimate: null,
-            food_quality_score: null,
-            tags_json: null,
-            notes: latest.notes ?? null,
-          });
+        if (session) {
+          if (changed) {
+            console.log('[NutritionProvider] Syncing meal log to Supabase...');
+            await mealLogService.upsert({
+              id: changed.id,
+              meal_time: changed.createdAt,
+              meal_type: changed.mealType || 'other',
+              calories: changed.totals?.calories ?? null,
+              protein_g: changed.totals?.protein_g ?? null,
+              carbs_g: changed.totals?.carbs_g ?? null,
+              fat_g: changed.totals?.fat_g ?? null,
+              fiber_g: changed.totals?.fiber_g ?? null,
+              glycemic_load_estimate: null,
+              inflammatory_load_estimate: null,
+              food_quality_score: null,
+              tags_json: null,
+              notes: changed.notes ?? null,
+            });
+          }
+          if (deletedId) {
+            await mealLogService.deleteById(deletedId);
+          }
         }
       } catch (e) {
-        console.log('[NutritionProvider] Supabase sync failed (non-blocking):', e);
+        console.log('[NutritionProvider] Supabase sync failed (non-blocking):', e instanceof Error ? e.message : 'unknown error');
       }
 
       return logs;
@@ -181,22 +198,30 @@ export const [NutritionProvider, useNutrition] = createContextHook(() => {
   }, [savePendingAnalysisMutation]);
 
   const addFoodLog = useCallback((log: FoodLog) => {
-    const updated = [log, ...foodLogs];
-    saveFoodLogsMutation.mutate(updated);
+    const updated = [log, ...foodLogsRef.current];
+    foodLogsRef.current = updated;
+    saveFoodLogsMutation.mutate({ logs: updated, changed: log });
     savePendingAnalysisMutation.mutate(null);
-  }, [foodLogs, saveFoodLogsMutation, savePendingAnalysisMutation]);
+  }, [saveFoodLogsMutation, savePendingAnalysisMutation]);
 
   const updateFoodLog = useCallback((logId: string, updates: Partial<FoodLog>) => {
-    const updated = foodLogs.map(log => 
-      log.id === logId ? { ...log, ...updates } : log
-    );
-    saveFoodLogsMutation.mutate(updated);
-  }, [foodLogs, saveFoodLogsMutation]);
+    let changed: FoodLog | undefined;
+    const updated = foodLogsRef.current.map(log => {
+      if (log.id === logId) {
+        changed = { ...log, ...updates };
+        return changed;
+      }
+      return log;
+    });
+    foodLogsRef.current = updated;
+    saveFoodLogsMutation.mutate({ logs: updated, changed });
+  }, [saveFoodLogsMutation]);
 
   const deleteFoodLog = useCallback((logId: string) => {
-    const updated = foodLogs.filter(log => log.id !== logId);
-    saveFoodLogsMutation.mutate(updated);
-  }, [foodLogs, saveFoodLogsMutation]);
+    const updated = foodLogsRef.current.filter(log => log.id !== logId);
+    foodLogsRef.current = updated;
+    saveFoodLogsMutation.mutate({ logs: updated, deletedId: logId });
+  }, [saveFoodLogsMutation]);
 
   const getTodayLogs = useCallback(() => {
     const today = new Date().toISOString().split('T')[0];

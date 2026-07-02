@@ -4,15 +4,124 @@ import { AppState, AppStateStatus, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Crypto from 'expo-crypto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordFailedAuth, resetFailedAuthCount } from '@/lib/breachDetection';
 
 const PIN_HASH_KEY = 'hipaa_pin_hash';
 const SESSION_KEY = 'hipaa_session_active';
 const BIOMETRIC_ENABLED_KEY = 'hipaa_biometric_enabled';
+const LOCKOUT_STATE_KEY = 'hipaa_pin_lockout_state';
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS_BEFORE_LOCKOUT = 5;
+
+// Persistence helpers: SecureStore on native, AsyncStorage fallback (web).
+async function persistedGetItem(key: string): Promise<string | null> {
+  try {
+    const value = await SecureStore.getItemAsync(key);
+    if (value !== null) return value;
+  } catch {
+    // SecureStore unavailable (web) — fall through
+  }
+  try {
+    return await AsyncStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+async function persistedSetItem(key: string, value: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(key, value);
+    return;
+  } catch {
+    // SecureStore unavailable (web) — fall through
+  }
+  try {
+    await AsyncStorage.setItem(key, value);
+  } catch {
+    // noop
+  }
+}
+
+async function persistedRemoveItem(key: string): Promise<void> {
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch {
+    // noop
+  }
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch {
+    // noop
+  }
+}
+
+interface LockoutState {
+  failedAttempts: number;
+  lockedUntil: number | null;
+}
+
+async function persistLockoutState(state: LockoutState): Promise<void> {
+  if (state.failedAttempts === 0 && !state.lockedUntil) {
+    await persistedRemoveItem(LOCKOUT_STATE_KEY);
+    return;
+  }
+  await persistedSetItem(LOCKOUT_STATE_KEY, JSON.stringify(state));
+}
+
+async function loadLockoutState(): Promise<LockoutState> {
+  const raw = await persistedGetItem(LOCKOUT_STATE_KEY);
+  if (!raw) return { failedAttempts: 0, lockedUntil: null };
+  try {
+    const parsed = JSON.parse(raw) as Partial<LockoutState>;
+    return {
+      failedAttempts: typeof parsed.failedAttempts === 'number' ? parsed.failedAttempts : 0,
+      lockedUntil: typeof parsed.lockedUntil === 'number' ? parsed.lockedUntil : null,
+    };
+  } catch {
+    return { failedAttempts: 0, lockedUntil: null };
+  }
+}
+
+// ── PIN hashing ──────────────────────────────────────────────────────────
+// Current format: "v2:<salt>:<sha256(pin + salt)>" with a per-device random
+// salt. Legacy format (constant salt, plain hex hash) is still verified for
+// backward compatibility and upgraded on successful auth.
+const SALTED_HASH_PREFIX = 'v2:';
+const LEGACY_PIN_SALT = 'hipaa_salt_v1';
+
+function generateSalt(): string {
+  return Array.from(Crypto.getRandomBytes(16))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function hashPinWithSalt(pin: string, salt: string): Promise<string> {
+  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, pin + salt);
+}
+
+async function makeStoredPinHash(pin: string): Promise<string> {
+  const salt = generateSalt();
+  const hash = await hashPinWithSalt(pin, salt);
+  return `${SALTED_HASH_PREFIX}${salt}:${hash}`;
+}
+
+async function verifyPinAgainstStored(
+  pin: string,
+  stored: string
+): Promise<{ valid: boolean; isLegacyFormat: boolean }> {
+  if (stored.startsWith(SALTED_HASH_PREFIX)) {
+    const [, salt, hash] = stored.split(':');
+    if (!salt || !hash) return { valid: false, isLegacyFormat: false };
+    const inputHash = await hashPinWithSalt(pin, salt);
+    return { valid: inputHash === hash, isLegacyFormat: false };
+  }
+  // Legacy unsalted-constant format
+  const legacyHash = await hashPinWithSalt(pin, LEGACY_PIN_SALT);
+  return { valid: legacyHash === stored, isLegacyFormat: true };
+}
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -81,6 +190,22 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       const pinHash = await SecureStore.getItemAsync(PIN_HASH_KEY);
       setIsPinSet(!!pinHash);
 
+      // Restore persisted lockout state so force-quitting the app cannot
+      // bypass a lockout. If the lockout has already expired, reset the
+      // failed-attempt counter.
+      const lockout = await loadLockoutState();
+      if (lockout.lockedUntil && Date.now() < lockout.lockedUntil) {
+        setFailedAttempts(lockout.failedAttempts);
+        setLockedUntil(lockout.lockedUntil);
+      } else if (lockout.lockedUntil || lockout.failedAttempts > 0) {
+        if (lockout.lockedUntil) {
+          // Expired lockout — clear counter entirely
+          await persistLockoutState({ failedAttempts: 0, lockedUntil: null });
+        } else {
+          setFailedAttempts(lockout.failedAttempts);
+        }
+      }
+
       const bioEnabled = await SecureStore.getItemAsync(BIOMETRIC_ENABLED_KEY);
       setBiometricEnabled(bioEnabled === 'true');
 
@@ -122,13 +247,9 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     }
   };
 
-  const hashPin = async (pin: string): Promise<string> => {
-    return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, pin + 'hipaa_salt_v1');
-  };
-
   const setupPin = useCallback(async (pin: string): Promise<boolean> => {
     try {
-      const hash = await hashPin(pin);
+      const hash = await makeStoredPinHash(pin);
       await SecureStore.setItemAsync(PIN_HASH_KEY, hash);
       setIsPinSet(true);
       setIsAuthenticated(true);
@@ -141,34 +262,55 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   }, [resetInactivityTimer]);
 
   const verifyPin = useCallback(async (pin: string): Promise<boolean> => {
-    if (lockedUntil && Date.now() < lockedUntil) {
-      return false;
+    let currentAttempts = failedAttempts;
+
+    if (lockedUntil) {
+      if (Date.now() < lockedUntil) {
+        return false;
+      }
+      // Lockout expired — reset the counter so a single wrong PIN doesn't
+      // immediately re-lock.
+      currentAttempts = 0;
+      setFailedAttempts(0);
+      setLockedUntil(null);
+      await persistLockoutState({ failedAttempts: 0, lockedUntil: null });
     }
 
     try {
       const storedHash = await SecureStore.getItemAsync(PIN_HASH_KEY);
       if (!storedHash) return false;
 
-      const inputHash = await hashPin(pin);
-      if (inputHash === storedHash) {
+      const { valid, isLegacyFormat } = await verifyPinAgainstStored(pin, storedHash);
+      if (valid) {
+        if (isLegacyFormat) {
+          // Upgrade legacy constant-salt hash to per-device salted format.
+          try {
+            await SecureStore.setItemAsync(PIN_HASH_KEY, await makeStoredPinHash(pin));
+          } catch {
+            // Non-fatal: legacy hash still verifies
+          }
+        }
         setIsAuthenticated(true);
         setFailedAttempts(0);
         setLockedUntil(null);
+        await persistLockoutState({ failedAttempts: 0, lockedUntil: null });
         await resetFailedAuthCount();
         await writeAuditLog('AUTH_LOGIN', 'pin_verify', 'user', 'PIN verified');
         resetInactivityTimer();
         return true;
       }
 
-      const newAttempts = failedAttempts + 1;
+      const newAttempts = currentAttempts + 1;
+      const lockUntil =
+        newAttempts >= MAX_ATTEMPTS_BEFORE_LOCKOUT ? Date.now() + LOCKOUT_DURATION_MS : null;
       setFailedAttempts(newAttempts);
-      await recordFailedAuth('user');
-      await writeAuditLog('AUTH_FAILED', 'pin_verify', 'user', `Attempt ${newAttempts}`);
-
-      if (newAttempts >= MAX_ATTEMPTS_BEFORE_LOCKOUT) {
-        const lockUntil = Date.now() + LOCKOUT_DURATION_MS;
+      if (lockUntil) {
         setLockedUntil(lockUntil);
       }
+      // Persist so force-quitting the app cannot reset the lockout.
+      await persistLockoutState({ failedAttempts: newAttempts, lockedUntil: lockUntil });
+      await recordFailedAuth('user');
+      await writeAuditLog('AUTH_FAILED', 'pin_verify', 'user', `Attempt ${newAttempts}`);
 
       return false;
     } catch {
@@ -189,6 +331,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       if (result.success) {
         setIsAuthenticated(true);
         setFailedAttempts(0);
+        setLockedUntil(null);
+        await persistLockoutState({ failedAttempts: 0, lockedUntil: null });
         await writeAuditLog('AUTH_LOGIN', 'biometric', 'user', 'Biometric auth success');
         resetInactivityTimer();
         return true;
@@ -230,7 +374,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     const isValid = await verifyPin(currentPin);
     if (!isValid) return false;
 
-    const hash = await hashPin(newPin);
+    const hash = await makeStoredPinHash(newPin);
     await SecureStore.setItemAsync(PIN_HASH_KEY, hash);
     await writeAuditLog('PHI_UPDATE', 'pin_change', 'user', 'PIN changed');
     return true;
