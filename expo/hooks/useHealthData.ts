@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as healthService from '@/services/health/healthService';
+import { trpcClient } from '@/lib/trpc';
 import type { ProviderConnection } from '@/services/health/types';
 import type { DailyBiometricRecord } from '@/types/wearables';
 
@@ -51,17 +52,36 @@ export function useHasConnections() {
 }
 
 /**
- * Connect a device (opens Junction Link).
+ * Fetch all available providers from Junction.
  */
-export function useConnectDevice() {
+export function useJunctionProviders() {
+  return useQuery({
+    queryKey: ['junction_providers'],
+    queryFn: () => trpcClient.junction.getAllProviders.query(),
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+/**
+ * Get the Junction Link URL for a given provider.
+ * Automatically creates the Junction user if one doesn't exist yet.
+ */
+export function useGetLinkUrl() {
+  return useMutation({
+    mutationFn: (provider: string) => healthService.getLinkUrl(provider),
+  });
+}
+
+/**
+ * Record a completed provider connection in Supabase.
+ */
+export function useRecordConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => healthService.connectDevice(),
-    onSuccess: (result) => {
-      if (result.success) {
-        void qc.invalidateQueries({ queryKey: [CONNECTIONS_KEY] });
-        void qc.invalidateQueries({ queryKey: ['has_health_connections'] });
-      }
+    mutationFn: (providerSlug: string) => healthService.recordConnection(providerSlug),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [CONNECTIONS_KEY] });
+      void qc.invalidateQueries({ queryKey: ['has_health_connections'] });
     },
   });
 }

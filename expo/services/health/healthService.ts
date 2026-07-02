@@ -4,19 +4,14 @@
  * The app imports ONLY from this file. Never import junctionClient directly.
  */
 
-import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '@/lib/supabase';
+import { trpcClient } from '@/lib/trpc';
 import {
-  initializeJunction,
-  requestHealthPermissions,
-  hasHealthPermissions,
-  connectOnDeviceHealth,
   buildLinkUrl,
   disconnectProvider as junctionDisconnect,
   listConnectedProviders,
   triggerSync,
   isInitialized,
-  enableBackgroundSync,
 } from './junctionClient';
 import type { ProviderConnection, SyncResult } from './types';
 import type { DailyBiometricRecord } from '@/types/wearables';
@@ -103,108 +98,49 @@ async function getCurrentUserId(): Promise<string | null> {
 // ────────────────────────────────────────────────────────────
 
 export async function initialize(userId: string): Promise<void> {
-  await initializeJunction(userId);
+  // no-op until native SDK is installed
+}
+
+export async function getOrCreateJunctionUser(): Promise<string | null> {
+  try {
+    const result = await trpcClient.junction.getOrCreateUser.mutate();
+    return result.junctionUserId;
+  } catch (err) {
+    console.error('[Health] getOrCreateJunctionUser failed', err);
+    return null;
+  }
+}
+
+export async function getLinkUrl(provider: string): Promise<string | null> {
+  try {
+    const junctionUserId = await getOrCreateJunctionUser();
+    if (!junctionUserId) {
+      console.error('[Health] getLinkUrl: could not get or create Junction user');
+      return null;
+    }
+    return await buildLinkUrl(provider);
+  } catch (err) {
+    console.error('[Health] getLinkUrl failed', err);
+    return null;
+  }
 }
 
 /**
- * Connect a wearable device or cloud provider.
- *
- * BUG #3 FIX: Link opens FIRST. HealthKit/Health Connect permissions are
- * requested ONLY if the user connects an on-device provider (apple_health_kit
- * or health_connect). Connecting Oura does NOT trigger an Apple Health prompt.
- *
- * BUG #1 FIX: write-ahead uses status='connecting', not 'active'.
- * BUG #2 FIX: user_id is explicitly set in every upsert payload.
+ * Called after the WebView confirms a provider was connected.
+ * Writes the connection to Supabase and refreshes the list.
  */
-export async function connectDevice(): Promise<{
-  success: boolean;
-  newProvider?: string;
-  permissionResult?: 'success' | 'cancelled' | 'error';
-}> {
-  console.log('isInitialized------>>>>>>')
-//   if (!isInitialized()) return { success: false };
-// console.log('access')
+export async function recordConnection(providerSlug: string): Promise<void> {
   const userId = await getCurrentUserId();
-  if (!userId) return { success: false };
-  console.log('access2')
-
-  // 1. Snapshot pre-Link connections
-  const preSnapshot = await listConnectedProviders();
-  console.log('preSnapshot', preSnapshot)
-  const preSlugs = new Set(preSnapshot.map(p => p.slug));
-
-  // 2. Open Link FIRST — user picks their provider
-  const linkUrl =await buildLinkUrl(userId);
-
-  console.log('linkUrl', linkUrl)
-  const redirectUrl = `${APP_SCHEME}://vital-callback`;
-
-  let resultUrl: string | null = null;
-  try {
-    const result = await WebBrowser.openAuthSessionAsync(linkUrl, redirectUrl);
-    if (result.type === 'success') {
-      resultUrl = result.url;
-    }
-  } catch (err) {
-    console.log('[Health] Link flow completed or was dismissed', err);
-  }
-
-  // 3. Determine which provider was just connected
-  let newProviderSlug: string | undefined;
-
-  // 3a. Try extracting from the redirect URL query string
-  if (resultUrl) {
-    try {
-      const url = new URL(resultUrl);
-      newProviderSlug = url.searchParams.get('provider') ?? undefined;
-    } catch { /* URL parse failed — fall through */ }
-  }
-
-  // 3b. If no slug from URL, diff against pre-Link snapshot
-  if (!newProviderSlug) {
-    const postSnapshot = await listConnectedProviders();
-    const newConn = postSnapshot.find(p => !preSlugs.has(p.slug));
-    if (newConn) newProviderSlug = newConn.slug;
-  }
-
-  // 4. If the connected provider is on-device, request health permissions NOW
-  let permResult: 'success' | 'cancelled' | 'error' = 'success';
-  const isOnDevice = newProviderSlug === 'apple_health_kit' ||
-                     newProviderSlug === 'health_connect' ||
-                     newProviderSlug === 'apple_health';
-
-  if (isOnDevice) {
-    const hasPerms = await hasHealthPermissions();
-    if (!hasPerms) {
-      permResult = await requestHealthPermissions();
-      if (permResult !== 'success') {
-        return { success: false, newProvider: newProviderSlug, permissionResult: permResult };
-      }
-    }
-    try {
-      await connectOnDeviceHealth();
-      await enableBackgroundSync();
-    } catch (err) {
-      console.log('[Health] On-device connect/background sync setup:', err);
-    }
-  }
-
-  // 5. Write-ahead: insert with status='connecting' (BUG #1 + #2 fix)
-  if (newProviderSlug) {
-    await supabase
-      .from('wearable_connections')
-      .upsert({
-        user_id: userId,
-        provider: newProviderSlug,
-        source_system: 'junction',
-        status: 'connecting',
-      }, { onConflict: 'user_id,provider' });
-  }
-
-  // 6. Full refresh
+  if (!userId) return;
+  await supabase
+    .from('wearable_connections')
+    .upsert({
+      user_id: userId,
+      provider: providerSlug,
+      source_system: 'junction',
+      status: 'active',
+    }, { onConflict: 'user_id,provider' });
   await refreshConnectionList();
-
-  return { success: true, newProvider: newProviderSlug, permissionResult: permResult };
 }
 
 export async function disconnectProvider(provider: string): Promise<void> {

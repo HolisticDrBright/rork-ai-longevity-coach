@@ -178,6 +178,7 @@ export interface ProfileRow {
   weight: number | null;
   goals: string[] | null;
   onboarding_completed: boolean;
+  junction_user_id: string | null;
   created_at: string;
   updated_at: string;
 }

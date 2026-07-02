@@ -52,16 +52,9 @@ export async function connectOnDeviceHealth(): Promise<void> {
   // no-op without SDK
 }
 
-export async function buildLinkUrl(vitalUserId: string): Promise<string> {
-
-  const token = await trpcClient.junction.createLinkToken.mutate({
-    userId: vitalUserId,
-    provider: "oura",
-  });
-
-
-  console.log(token)
-
+export async function buildLinkUrl(provider: string): Promise<string> {
+  const token = await trpcClient.junction.createLinkToken.mutate({ provider });
+  return (token as unknown as { linkWebUrl: string }).linkWebUrl ?? '';
 }
 
 export async function disconnectProvider(provider: string): Promise<void> {
@@ -72,7 +65,8 @@ export async function listConnectedProviders(): Promise<
   Array<{
     name: string;
     slug: string;
-    status: string;
+    description: string;
+    logo?: string | null;
   }>
 > {
   try {

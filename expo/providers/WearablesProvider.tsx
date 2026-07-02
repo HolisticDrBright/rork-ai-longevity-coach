@@ -157,13 +157,13 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     onSuccess: (data) => setAiInsight(data),
   });
 
-  // Connect/disconnect now go through healthService
+  // Connect flow is now handled via getLinkUrl + WebView in the UI layer
   const connectDevice = useMutation({
-    mutationFn: async () => {
-      return healthService.connectDevice();
+    mutationFn: async (providerSlug: string) => {
+      return healthService.recordConnection(providerSlug);
     },
-    onSuccess: (result) => {
-      void writeAuditLog('PHI_UPDATE', 'wearable_connection', `connected:${result.newProvider ?? 'unknown'}`);
+    onSuccess: (_data, providerSlug) => {
+      void writeAuditLog('PHI_UPDATE', 'wearable_connection', `connected:${providerSlug}`);
       void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
       void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
     },

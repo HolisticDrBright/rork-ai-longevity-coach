@@ -13,7 +13,6 @@ import * as Haptics from 'expo-haptics';
 import {
   Watch,
   Wifi,
-  WifiOff,
   Clock,
   Shield,
   Plus,
@@ -22,6 +21,10 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
+import { useQueryClient } from '@tanstack/react-query';
+import { useGetLinkUrl, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
+import ProviderPickerModal from '@/components/ProviderPickerModal';
+import LinkWebViewModal from '@/components/LinkWebViewModal';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   apple_health_kit: 'Apple Health',
@@ -40,33 +43,49 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 function displayName(slug: string): string {
   return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
 }
-import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 export default function ConnectionsScreen() {
   const { connections, hasConnections, isRefreshing } = useWearables();
-  const connectMutation = useConnectDevice();
+  const queryClient = useQueryClient();
+  const getLinkUrl = useGetLinkUrl();
   const disconnectMutation = useDisconnectProvider();
   const syncMutation = useSyncHealth();
 
-  const handleConnect = useCallback(async () => {
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [linkUrl, setLinkUrl] = useState<string | null>(null);
+  const [webViewVisible, setWebViewVisible] = useState(false);
+
+  const openPicker = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPickerVisible(true);
+  }, []);
+
+  const handleProviderSelect = useCallback(async (provider: { slug: string; name: string }) => {
+    setPickerVisible(false);
+    setWebViewVisible(true);
+    setLinkUrl(null);
     try {
-      const result = await connectMutation.mutateAsync();
-      if (result.success && result.newProvider) {
-        Alert.alert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
-      } else if (result.success && !result.newProvider) {
-        Alert.alert('No device selected', 'The connection flow was closed before a device was picked. Try again and choose a provider.');
+      const url = await getLinkUrl.mutateAsync(provider.slug);
+      if (url) {
+        setLinkUrl(url);
       } else {
-        Alert.alert(
-          'Wearables not available',
-          'Device connections require a custom build with the Vital SDK installed. This preview/Expo Go build cannot connect to wearables. Once a development build is created and EXPO_PUBLIC_VITAL_API_KEY is configured, this button will open the provider picker.'
-        );
+        setWebViewVisible(false);
+        Alert.alert('Connection failed', 'Could not generate a link. Please try again.');
       }
     } catch (err) {
-      console.error('[Connections] connect failed', err);
+      setWebViewVisible(false);
       Alert.alert('Connection failed', (err as Error)?.message ?? 'Something went wrong. Please try again.');
     }
-  }, [connectMutation]);
+  }, [getLinkUrl]);
+
+  const handleConnected = useCallback((provider?: string) => {
+    setWebViewVisible(false);
+    setLinkUrl(null);
+    void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
+    if (provider) {
+      Alert.alert('Connected', `${displayName(provider)} is now connected. Data will start syncing shortly.`);
+    }
+  }, [queryClient]);
 
   const handleDisconnect = useCallback((provider: string) => {
     Alert.alert(
@@ -89,7 +108,7 @@ export default function ConnectionsScreen() {
   }, [syncMutation]);
 
   const connectedDevices = connections.filter(c => c.connected);
-  const isConnecting = connectMutation.isPending;
+  const isLoadingLink = getLinkUrl.isPending;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -102,7 +121,7 @@ export default function ConnectionsScreen() {
       </View>
 
       {/* Empty state */}
-      {!hasConnections && !isConnecting && (
+      {!hasConnections && !isLoadingLink && (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconContainer}>
             <Watch size={40} color={Colors.textTertiary} />
@@ -111,7 +130,7 @@ export default function ConnectionsScreen() {
           <Text style={styles.emptyBody}>
             Connect a wearable device to unlock personalized health intelligence — sleep analysis, HRV trends, recovery scoring, and more.
           </Text>
-          <TouchableOpacity style={styles.connectButton} onPress={handleConnect}>
+          <TouchableOpacity style={styles.connectButton} onPress={openPicker} disabled={isLoadingLink}>
             <Plus color="#fff" size={20} />
             <Text style={styles.connectButtonText}>Connect a device</Text>
           </TouchableOpacity>
@@ -126,11 +145,11 @@ export default function ConnectionsScreen() {
         </View>
       )}
 
-      {/* Connecting state */}
-      {isConnecting && (
+      {/* Loading link state */}
+      {isLoadingLink && (
         <View style={styles.connectingCard}>
           <ActivityIndicator color={Colors.primary} />
-          <Text style={styles.connectingText}>Connecting your device…</Text>
+          <Text style={styles.connectingText}>Preparing connection…</Text>
         </View>
       )}
 
@@ -191,14 +210,27 @@ export default function ConnectionsScreen() {
           {/* Connect another */}
           <TouchableOpacity
             style={styles.connectAnotherButton}
-            onPress={handleConnect}
-            disabled={isConnecting}
+            onPress={openPicker}
+            disabled={isLoadingLink}
           >
             <Plus size={16} color={Colors.primary} />
             <Text style={styles.connectAnotherText}>Connect another device</Text>
           </TouchableOpacity>
         </View>
       )}
+
+      <ProviderPickerModal
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onSelect={handleProviderSelect}
+      />
+
+      <LinkWebViewModal
+        visible={webViewVisible}
+        url={linkUrl}
+        onClose={() => { setWebViewVisible(false); setLinkUrl(null); }}
+        onConnected={handleConnected}
+      />
     </ScrollView>
   );
 }
