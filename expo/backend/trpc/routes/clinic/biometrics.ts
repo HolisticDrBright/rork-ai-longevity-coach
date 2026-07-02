@@ -365,7 +365,6 @@ export const biometricsRouter = createTRPCRouter({
         bpSystolicLow: z.number().optional(),
         bpDiastolicHigh: z.number().optional(),
         bpDiastolicLow: z.number().optional(),
-        updatedBy: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }): Promise<PatientThresholds> => {
@@ -384,7 +383,8 @@ export const biometricsRouter = createTRPCRouter({
       if (input.bpSystolicLow !== undefined) upsertData.bp_systolic_low = input.bpSystolicLow;
       if (input.bpDiastolicHigh !== undefined) upsertData.bp_diastolic_high = input.bpDiastolicHigh;
       if (input.bpDiastolicLow !== undefined) upsertData.bp_diastolic_low = input.bpDiastolicLow;
-      if (input.updatedBy !== undefined) upsertData.updated_by = input.updatedBy;
+      // Audit identity comes from the authenticated session, never the client.
+      upsertData.updated_by = ctx.user.id;
 
       const { data, error } = await sb
         .from('clinic_patient_thresholds')

@@ -16,6 +16,19 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const WEBHOOK_SECRET = Deno.env.get('APP_WEBHOOK_SECRET') ?? '';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Constant-time string comparison to avoid timing side channels.
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  if (aBytes.length !== bBytes.length) return false;
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) diff |= aBytes[i] ^ bBytes[i];
+  return diff === 0;
+}
+
 Deno.serve(async (req) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
@@ -33,9 +46,15 @@ Deno.serve(async (req) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  // Verify webhook secret
+  // FAIL CLOSED: never process anything without a configured secret.
+  if (!WEBHOOK_SECRET) {
+    console.error('[Webhooks] APP_WEBHOOK_SECRET not configured');
+    return new Response('Webhook secret not configured', { status: 500 });
+  }
+
+  // Verify webhook secret (constant-time compare)
   const secret = req.headers.get('x-webhook-secret') ?? '';
-  if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
+  if (!timingSafeEqual(secret, WEBHOOK_SECRET)) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -58,9 +77,10 @@ Deno.serve(async (req) => {
     auth: { persistSession: false },
   });
 
-  // Look up the user UUID from email if userId looks like a placeholder
+  // Use the provided user_id only when it is a valid UUID; otherwise fall
+  // back to looking the user up by email.
   let resolvedUserId: string | null = null;
-  if (userId && userId !== 'unknown' && userId !== 'anonymous' && userId.length > 10) {
+  if (userId && UUID_REGEX.test(userId)) {
     resolvedUserId = userId;
   } else if (email) {
     const { data: user } = await sb
@@ -80,14 +100,16 @@ Deno.serve(async (req) => {
   });
 
   if (error) {
+    // Log details server-side only — never return raw Postgres errors.
     console.error('[Webhooks] Insert failed:', error.message);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ success: false, error: 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
 
-  console.log(`[Webhooks] ${eventType} from ${email || userId || 'unknown'} stored`);
+  // Do not log user email (PII) — event type only.
+  console.log(`[Webhooks] ${eventType} stored`);
 
   return new Response(
     JSON.stringify({ success: true, event_type: eventType, endpoint }),

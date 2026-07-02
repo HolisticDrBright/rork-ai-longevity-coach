@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { createTRPCRouter, publicProcedure } from "../create-context";
+import { createTRPCRouter, protectedProcedure } from "../create-context";
 
 const PASSIO_BASE_URL = process.env.PASSIO_BASE_URL || "https://api.passiolife.com/v2";
 const PASSIO_API_KEY = process.env.PASSIO_API_KEY || "";
@@ -198,14 +198,16 @@ const swapSuggestions: Record<string, string> = {
 };
 
 export const nutritionRouter = createTRPCRouter({
-  analyzePhoto: publicProcedure
+  analyzePhoto: protectedProcedure
     .input(z.object({
-      photoBase64: z.string(),
+      photoBase64: z.string().max(10_000_000),
       mealType: z.enum(["breakfast", "lunch", "dinner", "snack"]),
-      userId: z.string(),
+      // Kept optional for backward compatibility; server identity (ctx.user.id) is authoritative.
+      userId: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      console.log("Analyzing photo for meal:", input.mealType);
+    .mutation(async ({ ctx, input }) => {
+      // Server identity: food log ownership derives from ctx.user.id, never input.userId.
+      console.log("Analyzing photo for meal:", input.mealType, "user:", ctx.user.id);
 
       const foodLogId = `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -259,23 +261,23 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  calculateNutrition: publicProcedure
+  calculateNutrition: protectedProcedure
     .input(z.object({
-      foodLogId: z.string(),
+      foodLogId: z.string().max(200),
       confirmedItems: z.array(z.object({
-        id: z.string(),
-        name: z.string(),
-        passioFoodId: z.string().nullable(),
+        id: z.string().max(200),
+        name: z.string().max(200),
+        passioFoodId: z.string().max(200).nullable(),
         portionQty: z.number(),
-        portionUnit: z.string(),
+        portionUnit: z.string().max(200),
       })),
-      activeDiets: z.array(z.string()),
-      userId: z.string(),
+      activeDiets: z.array(z.string().max(200)),
+      // Kept optional for backward compatibility; server identity (ctx.user.id) is authoritative.
+      userId: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      console.log("Calculating nutrition for", input.confirmedItems.length, "items");
-      console.log("PASSIO_API_KEY:", PASSIO_API_KEY);
-      console.log("PASSIO_API_KEY:", input);
+    .mutation(async ({ ctx, input }) => {
+      // Server identity: results are attributed to ctx.user.id, never input.userId.
+      console.log("Calculating nutrition for", input.confirmedItems.length, "items, user:", ctx.user.id);
 
       const items: Array<{
         id: string;
@@ -294,19 +296,12 @@ export const nutritionRouter = createTRPCRouter({
       }> = [];
 
       for (const item of input.confirmedItems) {
-        console.log("Before estimate");
         let nutrition = getNutritionEstimate(item.name, item.portionQty, item.portionUnit);
-
-        console.log("After estimate",nutrition);
-        console.log("Calculating nutrition for", input.confirmedItems.length, "items");
-        console.log("PASSIO_API_KEY:", PASSIO_API_KEY);
-        console.log("item.passioFoodId:", item.passioFoodId);
 
         if (item.passioFoodId && PASSIO_API_KEY) {
           try {
             const token = await getPassioToken();
-            console.log(`${PASSIO_BASE_URL}/products/${item.passioFoodId}`)
-            const response = await fetch(`${PASSIO_BASE_URL}/products/${item.passioFoodId}`, {
+            const response = await fetch(`${PASSIO_BASE_URL}/products/${encodeURIComponent(item.passioFoodId)}`, {
               headers: {
                 "Authorization": `Bearer ${token}`,
               },
@@ -375,9 +370,9 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  searchFoods: publicProcedure
+  searchFoods: protectedProcedure
     .input(z.object({
-      query: z.string(),
+      query: z.string().max(200),
     }))
     .query(async ({ input }) => {
       if (!input.query || input.query.length < 2) {
@@ -417,14 +412,14 @@ export const nutritionRouter = createTRPCRouter({
       };
     }),
 
-  lookupBarcode: publicProcedure
+  lookupBarcode: protectedProcedure
     .input(z.object({
-      barcode: z.string(),
+      barcode: z.string().max(200),
     }))
     .query(async ({ input }) => {
       try {
         const token = await getPassioToken();
-        const response = await fetch(`${PASSIO_BASE_URL}/products/barcode/${input.barcode}`, {
+        const response = await fetch(`${PASSIO_BASE_URL}/products/barcode/${encodeURIComponent(input.barcode)}`, {
           headers: {
             "Authorization": `Bearer ${token}`,
           },

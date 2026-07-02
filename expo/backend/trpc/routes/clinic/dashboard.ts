@@ -8,6 +8,7 @@ import type {
   AlertEvent,
   TimelineEvent,
 } from "@/types/clinic";
+import { sanitizeSearchTerm } from "./query-utils";
 
 interface RecentActivity {
   id: string;
@@ -237,9 +238,13 @@ export const dashboardRouter = createTRPCRouter({
       console.log('[Dashboard] Getting patient list with alerts');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      let query = sb.from('clinic_patients').select('*');
+      // Defense-in-depth alongside RLS: only this clinician's patients.
+      let query = sb.from('clinic_patients').select('*').eq('clinician_id', ctx.user.id);
       if (input.search) {
-        query = query.or(`first_name.ilike.%${input.search}%,last_name.ilike.%${input.search}%,email.ilike.%${input.search}%`);
+        const search = sanitizeSearchTerm(input.search);
+        if (search) {
+          query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
+        }
       }
       if (input.status) query = query.eq('status', input.status);
       query = query.order('updated_at', { ascending: false }).limit(input.limit);

@@ -164,14 +164,26 @@ describe('biometricsRouter handlers', () => {
 
   describe('deleteReading', () => {
     test('returns success', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      const result = await caller.deleteReading({ id: 'reading-001' }) as { success: boolean };
+      // Ownership check queries clinic_patients before deleting the reading
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'clinic_patients') return createChainableMock({ data: { id: 'patient-001' } });
+        return createChainableMock({ data: null });
+      });
+      const result = await caller.deleteReading({ id: 'reading-001', patientId: 'patient-001' }) as { success: boolean };
       expect(result.success).toBe(true);
     });
 
+    test('throws when clinician does not own the patient', async () => {
+      mockFrom.mockReturnValue(createChainableMock({ data: null }));
+      await expect(caller.deleteReading({ id: 'bad', patientId: 'patient-999' })).rejects.toThrow();
+    });
+
     test('throws on error', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'fail' } }));
-      await expect(caller.deleteReading({ id: 'bad' })).rejects.toThrow();
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'clinic_patients') return createChainableMock({ data: { id: 'patient-001' } });
+        return createChainableMock({ data: null, error: { message: 'fail' } });
+      });
+      await expect(caller.deleteReading({ id: 'bad', patientId: 'patient-001' })).rejects.toThrow();
     });
   });
 

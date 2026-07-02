@@ -48,6 +48,31 @@ function scrubObject(obj: Record<string, unknown>): Record<string, unknown> {
   return scrubbed;
 }
 
+/**
+ * Rebuild the thrown value as a plain Error carrying only name/message/stack.
+ * Errors thrown from route handlers can carry enumerable properties (request
+ * input, headers, DB rows) that Sentry would serialize — this strips them so
+ * no request body or PHI is attached to the captured exception.
+ */
+function toSafeError(err: unknown): Error {
+  if (err instanceof Error) {
+    const safe = new Error(err.message);
+    safe.name = err.name;
+    safe.stack = err.stack;
+    if (err.cause instanceof Error) {
+      safe.cause = toSafeError(err.cause);
+    }
+    return safe;
+  }
+  if (err && typeof err === 'object') {
+    // Never serialize the object itself — only its (scrubbed) key names.
+    const keys = Object.keys(scrubObject(err as Record<string, unknown>)).join(',');
+    return new Error(`[non-Error thrown] keys=${keys}`);
+  }
+  // Primitive throw: don't forward the raw value (a string could contain PHI).
+  return new Error(`[non-Error thrown] type=${typeof err}`);
+}
+
 export function sentryMiddleware() {
   return async (c: Context, next: Next) => {
     const startTime = Date.now();
@@ -101,7 +126,8 @@ export function sentryMiddleware() {
         safeExtra.trpcCode = (err as { code: string }).code;
       }
 
-      Sentry.captureException(err, {
+      // Capture the scrubbed error — never the raw thrown value.
+      Sentry.captureException(toSafeError(err), {
         tags: {
           source: 'hono_backend',
           operationId,
@@ -119,7 +145,7 @@ export function sentryMiddleware() {
 export function captureTRPCError(error: unknown, procedurePath?: string): void {
   const operationId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  Sentry.captureException(error, {
+  Sentry.captureException(toSafeError(error), {
     tags: {
       source: 'trpc_procedure',
       operationId,

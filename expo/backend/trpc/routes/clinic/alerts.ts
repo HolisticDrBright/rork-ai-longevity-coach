@@ -29,7 +29,8 @@ export const alertsRouter = createTRPCRouter({
     .input(
       z.object({
         scope: z.enum(['global', 'patient']).optional(),
-        patientId: z.string().optional(),
+        // UUID-validated because this value is interpolated into a PostgREST or() filter.
+        patientId: z.string().uuid().optional(),
         category: z.enum(['lab', 'biometric', 'upload', 'adherence', 'symptom']).optional(),
         enabledOnly: z.boolean().default(false),
       })
@@ -73,7 +74,6 @@ export const alertsRouter = createTRPCRouter({
         dedupeWindowMinutes: z.number().min(0).default(60),
         quietHoursStart: z.string().optional(),
         quietHoursEnd: z.string().optional(),
-        createdBy: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }): Promise<AlertRule> => {
@@ -101,7 +101,8 @@ export const alertsRouter = createTRPCRouter({
           dedupe_window_minutes: input.dedupeWindowMinutes,
           quiet_hours_start: input.quietHoursStart,
           quiet_hours_end: input.quietHoursEnd,
-          created_by: input.createdBy ?? ctx.user.id,
+          // Audit identity comes from the authenticated session, never the client.
+          created_by: ctx.user.id,
         })
         .select()
         .single();
@@ -151,6 +152,7 @@ export const alertsRouter = createTRPCRouter({
         .from('clinic_alert_rules')
         .update(updateData)
         .eq('id', id)
+        .eq('clinician_id', ctx.user.id)
         .select()
         .single();
 
@@ -211,7 +213,11 @@ export const alertsRouter = createTRPCRouter({
       console.log('[Alerts] Listing alert events');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      let query = sb.from('clinic_alert_events').select('*', { count: 'exact' });
+      // Defense-in-depth alongside RLS: only this clinician's alert events.
+      let query = sb
+        .from('clinic_alert_events')
+        .select('*', { count: 'exact' })
+        .eq('clinician_id', ctx.user.id);
 
       if (input.patientId) query = query.eq('patient_id', input.patientId);
       if (input.severity) query = query.eq('severity', input.severity);
@@ -273,7 +279,9 @@ export const alertsRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.string(),
-        acknowledgedBy: z.string(),
+        // Deprecated: accepted for backward compatibility but IGNORED —
+        // the audit identity is always ctx.user.id.
+        acknowledgedBy: z.string().optional(),
         notes: z.string().optional(),
       })
     )
@@ -286,7 +294,8 @@ export const alertsRouter = createTRPCRouter({
         .update({
           status: 'acknowledged',
           acknowledged_at: new Date().toISOString(),
-          acknowledged_by: input.acknowledgedBy,
+          // Audit identity comes from the authenticated session, never the client.
+          acknowledged_by: ctx.user.id,
           acknowledgment_notes: input.notes,
         })
         .eq('id', input.id)
@@ -332,7 +341,6 @@ export const alertsRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.string(),
-        resolvedBy: z.string(),
         notes: z.string().optional(),
       })
     )
@@ -345,7 +353,8 @@ export const alertsRouter = createTRPCRouter({
         .update({
           status: 'resolved',
           resolved_at: new Date().toISOString(),
-          resolved_by: input.resolvedBy,
+          // Audit identity comes from the authenticated session, never the client.
+          resolved_by: ctx.user.id,
           resolution_notes: input.notes,
         })
         .eq('id', input.id)
@@ -383,7 +392,6 @@ export const alertsRouter = createTRPCRouter({
     .input(
       z.object({
         ids: z.array(z.string()),
-        acknowledgedBy: z.string(),
       })
     )
     .mutation(async ({ ctx, input }): Promise<{ success: boolean; count: number }> => {
@@ -396,7 +404,8 @@ export const alertsRouter = createTRPCRouter({
         .update({
           status: 'acknowledged',
           acknowledged_at: now,
-          acknowledged_by: input.acknowledgedBy,
+          // Audit identity comes from the authenticated session, never the client.
+          acknowledged_by: ctx.user.id,
         })
         .in('id', input.ids)
         .in('status', ['new', 'viewed'])

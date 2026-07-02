@@ -10,6 +10,7 @@ import type {
   TimelineEvent,
 } from "@/types/clinic";
 import { mapDbToPatient, mapDbToHealthHistory } from "./utils";
+import { sanitizeSearchTerm } from "./query-utils";
 
 const medicationSchema = z.object({
   name: z.string(),
@@ -43,12 +44,19 @@ export const patientsRouter = createTRPCRouter({
       console.log('[Patients] Listing patients, page:', input.page);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      let query = sb.from('clinic_patients').select('*', { count: 'exact' });
+      let query = sb
+        .from('clinic_patients')
+        .select('*', { count: 'exact' })
+        // Defense-in-depth alongside RLS: only this clinician's patients.
+        .eq('clinician_id', ctx.user.id);
 
       if (input.search) {
-        query = query.or(
-          `first_name.ilike.%${input.search}%,last_name.ilike.%${input.search}%,email.ilike.%${input.search}%`
-        );
+        const search = sanitizeSearchTerm(input.search);
+        if (search) {
+          query = query.or(
+            `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`
+          );
+        }
       }
 
       if (input.status) {
@@ -57,6 +65,14 @@ export const patientsRouter = createTRPCRouter({
 
       if (input.assignedClinicianId) {
         query = query.eq('assigned_clinician_id', input.assignedClinicianId);
+      }
+
+      // Tag filtering must happen in the query (before pagination), otherwise
+      // rows are dropped from pages and `total` is corrupted.
+      if (input.tags && input.tags.length > 0) {
+        // Postgres array overlap (&&): patient has at least one of the tags,
+        // matching the previous "some tag" semantics.
+        query = query.overlaps('tags', input.tags);
       }
 
       const offset = (input.page - 1) * input.limit;
@@ -69,13 +85,7 @@ export const patientsRouter = createTRPCRouter({
       }
 
       const total = count ?? 0;
-      let patients = (data ?? []).map(mapDbToPatient);
-
-      if (input.tags && input.tags.length > 0) {
-        patients = patients.filter((p) =>
-          input.tags!.some((tag) => p.tags.includes(tag))
-        );
-      }
+      const patients = (data ?? []).map(mapDbToPatient);
 
       return {
         data: patients,
@@ -96,6 +106,7 @@ export const patientsRouter = createTRPCRouter({
         .from('clinic_patients')
         .select('*')
         .eq('id', input.id)
+        .eq('clinician_id', ctx.user.id)
         .single();
 
       if (error) return null;
@@ -222,6 +233,7 @@ export const patientsRouter = createTRPCRouter({
         .from('clinic_patients')
         .update(updateData)
         .eq('id', id)
+        .eq('clinician_id', ctx.user.id)
         .select()
         .single();
 
@@ -242,7 +254,8 @@ export const patientsRouter = createTRPCRouter({
       const { error } = await sb
         .from('clinic_patients')
         .update({ status: 'archived' })
-        .eq('id', input.id);
+        .eq('id', input.id)
+        .eq('clinician_id', ctx.user.id);
 
       if (error) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Patient not found' });

@@ -22,6 +22,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.99.1';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const ROLLUP_SECRET = Deno.env.get('ROLLUP_SECRET') ?? '';
+
+// Constant-time string comparison to avoid timing side channels.
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  if (aBytes.length !== bBytes.length) return false;
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) diff |= aBytes[i] ^ bBytes[i];
+  return diff === 0;
+}
 
 // Source precedence: higher = preferred when conflicting.
 // Matches DEFAULT_PRECEDENCE from providerNormalization.ts.
@@ -179,6 +191,17 @@ Deno.serve(async (req) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
+  // FAIL CLOSED: this function reads/writes with the service role, so it
+  // must never run without the shared secret configured.
+  if (!ROLLUP_SECRET) {
+    console.error('[Rollup] ROLLUP_SECRET not configured');
+    return new Response('Rollup secret not configured', { status: 500 });
+  }
+  const providedSecret = req.headers.get('x-rollup-secret') ?? '';
+  if (!timingSafeEqual(providedSecret, ROLLUP_SECRET)) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   let body: { userId: string; date: string };
   try {
     body = await req.json();
@@ -210,9 +233,10 @@ Deno.serve(async (req) => {
     .lte('recorded_at', dateEnd);
 
   if (fetchError) {
+    // Log details server-side only — never return raw Postgres errors.
     console.error('[Rollup] Failed to fetch events', fetchError);
     return new Response(
-      JSON.stringify({ error: fetchError.message }),
+      JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -248,9 +272,10 @@ Deno.serve(async (req) => {
     .upsert(row, { onConflict: 'user_id,date' });
 
   if (upsertError) {
+    // Log details server-side only — never return raw Postgres errors.
     console.error('[Rollup] Upsert failed', upsertError);
     return new Response(
-      JSON.stringify({ error: upsertError.message }),
+      JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }

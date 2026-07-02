@@ -10,7 +10,7 @@ export function createMockQueryBuilder(resolvedData: {
     'eq', 'neq', 'gt', 'gte', 'lt', 'lte',
     'in', 'not', 'or', 'and',
     'order', 'limit', 'range',
-    'is', 'ilike',
+    'is', 'ilike', 'contains', 'overlaps',
   ];
 
   for (const method of chainMethods) {
@@ -18,6 +18,15 @@ export function createMockQueryBuilder(resolvedData: {
   }
 
   builder.single = () =>
+    Promise.resolve({
+      data: resolvedData.data ?? null,
+      error: resolvedData.error ?? null,
+      count: resolvedData.count ?? null,
+    });
+
+  // Same resolution semantics as single(), but a null data value is allowed
+  // (supabase-js maybeSingle() resolves { data: null, error: null } on 0 rows).
+  builder.maybeSingle = () =>
     Promise.resolve({
       data: resolvedData.data ?? null,
       error: resolvedData.error ?? null,

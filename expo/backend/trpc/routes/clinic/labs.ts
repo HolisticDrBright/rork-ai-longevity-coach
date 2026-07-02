@@ -9,6 +9,7 @@ import type {
   PaginatedResponse,
 } from "@/types/clinic";
 import { calculateLabStatus, mapDbToLabDocument, mapDbToLabTest, mapDbToLabResult } from "./utils";
+import { sanitizeSearchTerm } from "./query-utils";
 
 export const labsRouter = createTRPCRouter({
   listDocuments: protectedProcedure
@@ -64,7 +65,6 @@ export const labsRouter = createTRPCRouter({
         labCompany: z.string().optional(),
         orderingProvider: z.string().optional(),
         panelName: z.string().optional(),
-        uploadedBy: z.string(),
       })
     )
     .mutation(async ({ ctx, input }): Promise<LabDocument> => {
@@ -84,7 +84,8 @@ export const labsRouter = createTRPCRouter({
           lab_company: input.labCompany,
           ordering_provider: input.orderingProvider,
           panel_name: input.panelName,
-          uploaded_by: input.uploadedBy,
+          // Audit identity comes from the authenticated session, never the client.
+          uploaded_by: ctx.user.id,
         })
         .select()
         .single();
@@ -128,12 +129,14 @@ export const labsRouter = createTRPCRouter({
       await sb
         .from('clinic_lab_results')
         .delete()
-        .eq('lab_document_id', input.documentId);
+        .eq('lab_document_id', input.documentId)
+        .eq('clinician_id', ctx.user.id);
 
       const { error } = await sb
         .from('clinic_lab_documents')
         .delete()
-        .eq('id', input.documentId);
+        .eq('id', input.documentId)
+        .eq('clinician_id', ctx.user.id);
 
       if (error) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
@@ -165,9 +168,12 @@ export const labsRouter = createTRPCRouter({
       }
 
       if (input.search) {
-        query = query.or(
-          `name.ilike.%${input.search}%,code.ilike.%${input.search}%`
-        );
+        const search = sanitizeSearchTerm(input.search);
+        if (search) {
+          query = query.or(
+            `name.ilike.%${search}%,code.ilike.%${search}%`
+          );
+        }
       }
 
       query = query.order('name');
@@ -227,7 +233,9 @@ export const labsRouter = createTRPCRouter({
       let query = sb
         .from('clinic_lab_results')
         .select('*', { count: 'exact' })
-        .eq('patient_id', input.patientId);
+        .eq('patient_id', input.patientId)
+        // Defense-in-depth alongside RLS: only this clinician's results.
+        .eq('clinician_id', ctx.user.id);
 
       if (labTestId) query = query.eq('lab_test_id', labTestId);
       if (input.startDate) query = query.gte('result_date', input.startDate);
@@ -280,7 +288,6 @@ export const labsRouter = createTRPCRouter({
         refRangeLow: z.number().optional(),
         refRangeHigh: z.number().optional(),
         resultDate: z.string(),
-        enteredBy: z.string(),
         entryMethod: z.enum(['manual', 'parsed', 'api']).default('manual'),
       })
     )
@@ -318,7 +325,8 @@ export const labsRouter = createTRPCRouter({
           ref_range_high: refHigh,
           status,
           result_date: input.resultDate,
-          entered_by: input.enteredBy,
+          // Audit identity comes from the authenticated session, never the client.
+          entered_by: ctx.user.id,
           entry_method: input.entryMethod,
         })
         .select()

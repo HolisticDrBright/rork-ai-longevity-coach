@@ -18,7 +18,7 @@ export function createChainableMock(resolvedValue: {
     'eq', 'neq', 'gt', 'gte', 'lt', 'lte',
     'in', 'not', 'or', 'and',
     'order', 'limit', 'range',
-    'is', 'ilike',
+    'is', 'ilike', 'contains', 'overlaps',
   ];
   for (const m of methods) {
     chain[m] = vi.fn(() => chain);
@@ -28,6 +28,16 @@ export function createChainableMock(resolvedValue: {
       data: Array.isArray(resolvedValue.data)
         ? resolvedValue.data[0]
         : resolvedValue.data,
+      error: resolvedValue.error ?? null,
+    })
+  );
+  // Same as single(), but data may resolve to null without an error
+  // (mirrors supabase-js maybeSingle() semantics).
+  chain.maybeSingle = vi.fn(() =>
+    Promise.resolve({
+      data: Array.isArray(resolvedValue.data)
+        ? (resolvedValue.data[0] ?? null)
+        : (resolvedValue.data ?? null),
       error: resolvedValue.error ?? null,
     })
   );

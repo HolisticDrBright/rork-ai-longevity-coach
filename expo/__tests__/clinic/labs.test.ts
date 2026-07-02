@@ -55,7 +55,8 @@ describe('labsRouter handlers', () => {
   describe('uploadDocument', () => {
     test('inserts and returns new document', async () => {
       const newDoc = makeLabDocumentRow({ id: 'doc-new', processing_status: 'pending' });
-      mockFrom.mockReturnValue(createChainableMock({ data: newDoc }));
+      const chain = createChainableMock({ data: newDoc });
+      mockFrom.mockReturnValue(chain);
 
       const result = await caller.uploadDocument({
         patientId: 'patient-001',
@@ -63,11 +64,14 @@ describe('labsRouter handlers', () => {
         fileType: 'pdf',
         fileSizeBytes: 100000,
         storagePath: 'labs/patient-001/labs.pdf',
-        uploadedBy: 'clinician-001',
       }) as { id: string; processingStatus: string };
 
       expect(result.id).toBe('doc-new');
       expect(result.processingStatus).toBe('pending');
+      // Audit identity must come from the authenticated ctx user, not the client
+      expect(chain.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ uploaded_by: mockCtx.user.id })
+      );
     });
 
     test('throws on insert error', async () => {
@@ -78,7 +82,6 @@ describe('labsRouter handlers', () => {
         fileType: 'pdf',
         fileSizeBytes: 100,
         storagePath: 'x',
-        uploadedBy: 'c1',
       })).rejects.toThrow();
     });
   });
@@ -165,10 +168,11 @@ describe('labsRouter handlers', () => {
     test('adds result with calculated status', async () => {
       const labTest = makeLabTestRow();
       const newResult = makeLabResultRow({ id: 'new-result', value: 8.0, status: 'high' });
+      const resultsChain = createChainableMock({ data: newResult });
 
       mockFrom.mockImplementation((table: string) => {
         if (table === 'clinic_lab_tests') return createChainableMock({ data: labTest });
-        if (table === 'clinic_lab_results') return createChainableMock({ data: newResult });
+        if (table === 'clinic_lab_results') return resultsChain;
         return createChainableMock({ data: [] });
       });
 
@@ -178,10 +182,13 @@ describe('labsRouter handlers', () => {
         value: 8.0,
         unit: 'mIU/L',
         resultDate: '2026-01-15',
-        enteredBy: 'clinician-001',
       }) as { id: string; value: number };
 
       expect(result.id).toBe('new-result');
+      // Audit identity must come from the authenticated ctx user, not the client
+      expect(resultsChain.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ entered_by: mockCtx.user.id })
+      );
     });
 
     test('throws NOT_FOUND when lab test does not exist', async () => {
@@ -193,7 +200,6 @@ describe('labsRouter handlers', () => {
         value: 5.0,
         unit: 'mIU/L',
         resultDate: '2026-01-15',
-        enteredBy: 'c1',
       })).rejects.toThrow('Lab test not found');
     });
   });

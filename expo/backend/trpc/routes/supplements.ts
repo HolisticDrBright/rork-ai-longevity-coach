@@ -125,6 +125,7 @@ export const supplementsRouter = createTRPCRouter({
     .input(ProductInputSchema)
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Creating product:', input.name);
+      // TODO: persist
       const productId = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       return {
         success: true,
@@ -140,6 +141,7 @@ export const supplementsRouter = createTRPCRouter({
     }))
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Updating product:', input.productId);
+      // TODO: persist
       return {
         success: true,
         productId: input.productId,
@@ -151,6 +153,7 @@ export const supplementsRouter = createTRPCRouter({
     .input(z.object({ productId: z.string() }))
     .mutation(async ({ input }) => {
       console.log('[Supplements API] Deleting product:', input.productId);
+      // TODO: persist
       return {
         success: true,
         productId: input.productId,
@@ -161,7 +164,15 @@ export const supplementsRouter = createTRPCRouter({
   getRecommendations: protectedProcedure
     .input(PatientNeedsSchema)
     .mutation(async ({ input }) => {
-      console.log('[Supplements API] Generating recommendations for:', input);
+      // PHI (conditions/medications/allergies) must never be logged — counts only.
+      console.log('[Supplements API] Generating recommendations:', {
+        goals: input.goals.length,
+        conditions: input.conditions.length,
+        labDeficiencies: input.labDeficiencies.length,
+        medications: input.medications.length,
+        allergies: input.allergies.length,
+      });
+      // TODO: persist
       return {
         success: true,
         message: 'Recommendations generated on client-side',
@@ -177,13 +188,13 @@ export const supplementsRouter = createTRPCRouter({
     .input(ClickEventSchema)
     .mutation(async ({ input }) => {
       const eventId = `click_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Do not log patient-linkable detail; ids/channel only, no PHI.
       console.log('[Supplements API] Click tracked:', {
         eventId,
-        patientId: input.patientId,
-        productId: input.productId,
         channel: input.affiliateChannel,
         timestamp: new Date().toISOString(),
       });
+      // TODO: persist
       return {
         success: true,
         eventId,

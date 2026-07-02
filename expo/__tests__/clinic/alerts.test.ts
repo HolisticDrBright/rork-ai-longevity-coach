@@ -245,10 +245,13 @@ describe('alertsRouter handlers', () => {
 
       const result = await caller.acknowledgeEvent({
         id: 'event-001',
-        acknowledgedBy: 'clinician-001',
         notes: 'Reviewed',
       });
       expect((result as { status: string }).status).toBe('acknowledged');
+      // Audit identity must come from the authenticated ctx user, not the client
+      expect(chain.update).toHaveBeenCalledWith(
+        expect.objectContaining({ acknowledged_by: mockCtx.user.id })
+      );
     });
 
     test('throws when event not found', async () => {
@@ -256,7 +259,7 @@ describe('alertsRouter handlers', () => {
       setupMockFrom({ clinic_alert_events: chain });
 
       await expect(
-        caller.acknowledgeEvent({ id: 'bad', acknowledgedBy: 'doc' })
+        caller.acknowledgeEvent({ id: 'bad' })
       ).rejects.toThrow();
     });
   });
@@ -289,11 +292,14 @@ describe('alertsRouter handlers', () => {
 
       const result = await caller.resolveEvent({
         id: 'event-001',
-        resolvedBy: 'clinician-001',
         notes: 'Fixed',
       });
       expect((result as { status: string }).status).toBe('resolved');
       expect((result as { resolutionNotes: string }).resolutionNotes).toBe('Fixed');
+      // Audit identity must come from the authenticated ctx user, not the client
+      expect(chain.update).toHaveBeenCalledWith(
+        expect.objectContaining({ resolved_by: mockCtx.user.id })
+      );
     });
   });
 
@@ -315,10 +321,13 @@ describe('alertsRouter handlers', () => {
 
       const result = await caller.bulkAcknowledge({
         ids: ['e1', 'e2', 'e3'],
-        acknowledgedBy: 'clinician-001',
       });
       expect((result as { success: boolean }).success).toBe(true);
       expect((result as { count: number }).count).toBe(2);
+      // Audit identity must come from the authenticated ctx user, not the client
+      expect(chain.update).toHaveBeenCalledWith(
+        expect.objectContaining({ acknowledged_by: mockCtx.user.id })
+      );
     });
   });
 

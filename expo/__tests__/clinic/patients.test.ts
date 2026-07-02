@@ -44,18 +44,23 @@ describe('patientsRouter handlers', () => {
       expect(result.total).toBe(0);
     });
 
-    test('filters by tags on client side', async () => {
+    test('filters by tags in the database query (before pagination)', async () => {
+      // The DB applies the tag filter; the mock just returns the filtered rows.
       const patients = [
         makePatientRow({ id: 'p1', tags: ['diabetes'] }),
-        makePatientRow({ id: 'p2', tags: ['cardio'] }),
         makePatientRow({ id: 'p3', tags: ['diabetes', 'cardio'] }),
       ];
-      mockFrom.mockReturnValue(createChainableMock({ data: patients, count: 3 }));
+      const chain = createChainableMock({ data: patients, count: 2 });
+      mockFrom.mockReturnValue(chain);
 
       const result = await caller.list({ tags: ['diabetes'] }) as {
         data: { id: string }[];
+        total: number;
       };
+      // Tag filter must be part of the query so pagination/total stay correct
+      expect(chain.overlaps).toHaveBeenCalledWith('tags', ['diabetes']);
       expect(result.data.length).toBe(2);
+      expect(result.total).toBe(2);
       expect(result.data.map((p: { id: string }) => p.id)).toContain('p1');
       expect(result.data.map((p: { id: string }) => p.id)).toContain('p3');
     });
@@ -211,6 +216,8 @@ describe('patientsRouter handlers', () => {
 
   describe('exportRecord', () => {
     test('returns placeholder export URL', async () => {
+      // exportRecord verifies clinician ownership of the patient first
+      mockFrom.mockReturnValue(createChainableMock({ data: makePatientRow() }));
       const result = await caller.exportRecord({
         patientId: 'patient-001',
         format: 'json',

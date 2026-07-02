@@ -9,23 +9,87 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.99.1';
 
 const WEBHOOK_SECRET = Deno.env.get('JUNCTION_WEBHOOK_SIGNING_SECRET') ?? '';
+const ROLLUP_SECRET = Deno.env.get('ROLLUP_SECRET') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-// ── Signature verification ─────────────────────────────────
+// ── Signature verification (svix, fail closed) ─────────────
 
-async function verifySignature(body: string, signature: string): Promise<boolean> {
-  if (!WEBHOOK_SECRET || !signature) return false;
+const SVIX_TIMESTAMP_TOLERANCE_SECONDS = 300;
+
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function base64Decode(s: string): Uint8Array {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function hmacSha256(keyBytes: Uint8Array, message: string): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    'raw', keyBytes as unknown as ArrayBuffer,
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return new Uint8Array(sig);
+}
+
+/**
+ * Verify a svix-style webhook signature (used by Junction/Vital).
+ * Signed content is `${svix-id}.${svix-timestamp}.${body}` HMAC-SHA256'd
+ * with the base64-decoded secret (after stripping the `whsec_` prefix).
+ * The svix-signature header holds space-separated `v1,<base64sig>` values.
+ */
+async function verifySvixSignature(req: Request, body: string): Promise<boolean> {
+  const svixId = req.headers.get('svix-id') ?? '';
+  const svixTimestamp = req.headers.get('svix-timestamp') ?? '';
+  const svixSignature = req.headers.get('svix-signature') ?? '';
+  if (!svixId || !svixTimestamp || !svixSignature) return false;
+
+  // Reject stale/future timestamps to prevent replay.
+  const ts = Number(svixTimestamp);
+  if (!Number.isFinite(ts)) return false;
+  if (Math.abs(Date.now() / 1000 - ts) > SVIX_TIMESTAMP_TOLERANCE_SECONDS) return false;
+
   try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw', encoder.encode(WEBHOOK_SECRET),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    const secretB64 = WEBHOOK_SECRET.startsWith('whsec_')
+      ? WEBHOOK_SECRET.slice('whsec_'.length)
+      : WEBHOOK_SECRET;
+    const keyBytes = base64Decode(secretB64);
+    const expected = await hmacSha256(keyBytes, `${svixId}.${svixTimestamp}.${body}`);
+
+    // Header may contain multiple space-separated signatures ("v1,<b64> v1,<b64>").
+    for (const candidate of svixSignature.split(' ')) {
+      const [version, sig] = candidate.split(',');
+      if (version !== 'v1' || !sig) continue;
+      try {
+        if (timingSafeEqual(expected, base64Decode(sig))) return true;
+      } catch { /* malformed base64 — try next candidate */ }
+    }
+  } catch { return false; }
+  return false;
+}
+
+/**
+ * Legacy fallback: `x-junction-signature` header carrying a hex-encoded
+ * HMAC-SHA256 of the raw body keyed by the (raw utf-8) secret.
+ */
+async function verifyLegacySignature(body: string, signature: string): Promise<boolean> {
+  if (!signature) return false;
+  try {
+    const mac = await hmacSha256(new TextEncoder().encode(WEBHOOK_SECRET), body);
+    const computedHex = Array.from(mac).map(b => b.toString(16).padStart(2, '0')).join('');
+    const provided = signature.replace('sha256=', '').toLowerCase();
+    return timingSafeEqual(
+      new TextEncoder().encode(computedHex),
+      new TextEncoder().encode(provided),
     );
-    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
-    const computed = Array.from(new Uint8Array(sig))
-      .map(b => b.toString(16).padStart(2, '0')).join('');
-    return computed === signature.replace('sha256=', '');
   } catch { return false; }
 }
 
@@ -83,19 +147,21 @@ Deno.serve(async (req) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  // 1. Read body as text for signature verification
-  const body = await req.text();
-  const signature = req.headers.get('svix-signature')
-    ?? req.headers.get('x-vital-webhook-signature')
-    ?? '';
+  // 1. FAIL CLOSED: never process anything without a configured secret.
+  if (!WEBHOOK_SECRET) {
+    console.error('[Webhook] JUNCTION_WEBHOOK_SIGNING_SECRET not configured');
+    return new Response('Webhook signing secret not configured', { status: 500 });
+  }
 
-  // 2. Verify FIRST — reject with 401 before touching body
-  if (WEBHOOK_SECRET) {
-    const valid = await verifySignature(body, signature);
-    if (!valid) {
-      console.error('[Webhook] Invalid signature');
-      return new Response('Invalid signature', { status: 401 });
-    }
+  // 2. Read body as text and verify FIRST — reject with 401 before processing.
+  const body = await req.text();
+  const legacySignature = req.headers.get('x-junction-signature');
+  const valid = legacySignature !== null
+    ? await verifyLegacySignature(body, legacySignature)
+    : await verifySvixSignature(req, body);
+  if (!valid) {
+    console.error('[Webhook] Invalid signature');
+    return new Response('Invalid signature', { status: 401 });
   }
 
   // 3. Parse
@@ -150,10 +216,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 5. Return 200 FAST
+  // 5. Return 200 FAST — log error details server-side, return counts only
+  //    (never leak internal error strings to the caller).
+  if (errors.length > 0) console.error('[Webhook] Insert errors:', errors);
   console.log(`[Webhook] ${eventType}: inserted=${inserted}, errors=${errors.length}`);
   const response = new Response(
-    JSON.stringify({ status: 'ok', inserted, errors }),
+    JSON.stringify({ status: 'ok', inserted, failed: errors.length }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   );
 
@@ -184,7 +252,11 @@ Deno.serve(async (req) => {
     for (const date of dates) {
       // @ts-ignore — EdgeRuntime.waitUntil is a Supabase Deno extension
       EdgeRuntime.waitUntil(
-        sb.functions.invoke('rollup-biometrics', { body: { userId, date } })
+        sb.functions.invoke('rollup-biometrics', {
+          body: { userId, date },
+          // rollup-biometrics requires this shared secret (fail-closed auth)
+          headers: { 'x-rollup-secret': ROLLUP_SECRET },
+        })
           .then(() => {}, (err: unknown) => console.error('[Webhook] Rollup failed', { date, err }))
       );
     }
