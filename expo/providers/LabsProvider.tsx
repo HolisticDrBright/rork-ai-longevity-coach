@@ -418,6 +418,7 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
           console.log('[Labs] Syncing lab panels to Supabase...');
           const latest = panels[panels.length - 1];
           await labPanelService.upsert({
+            id: latest.id,
             name: latest.name,
             date: latest.date,
             source: latest.source ?? null,
