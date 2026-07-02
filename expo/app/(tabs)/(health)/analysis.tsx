@@ -33,6 +33,7 @@ import {
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
+import SectionSwitcher, { HEALTH_SECTIONS } from '@/components/SectionSwitcher';
 import { useUser } from '@/providers/UserProvider';
 import ChiefComplaintIntake from '@/components/ChiefComplaintIntake';
 import ClinicalAIAssistant from '@/components/ClinicalAIAssistant';
@@ -194,6 +195,7 @@ export default function AnalysisScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <SectionSwitcher items={HEALTH_SECTIONS} activeKey="analysis" />
         {clinicalIntake?.chiefComplaint ? (
           <View style={styles.chiefComplaintCard}>
             <View style={styles.chiefComplaintHeader}>

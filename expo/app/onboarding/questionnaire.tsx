@@ -121,7 +121,7 @@ export default function OnboardingQuestionnaireScreen() {
 
   const handleComplete = () => {
     completeOnboarding();
-    router.replace('/(tabs)/insights');
+    router.replace('/(tabs)/(health)/insights');
   };
 
   const isLastQuestion =

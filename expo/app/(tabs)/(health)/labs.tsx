@@ -33,6 +33,7 @@ import {
 import * as Haptics from 'expo-haptics';
 
 import Colors from '@/constants/colors';
+import SectionSwitcher, { HEALTH_SECTIONS } from '@/components/SectionSwitcher';
 import { useLabs, LabAnalysisResult, CrossLabPattern } from '@/providers/LabsProvider';
 import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
@@ -765,6 +766,7 @@ export default function LabsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <SectionSwitcher items={HEALTH_SECTIONS} activeKey="labs" />
         {flaggedBiomarkers.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Needs Attention</Text>

@@ -147,7 +147,7 @@ export default function TodayScreen() {
         {questionnaireResponses.length > 0 && (
           <TouchableOpacity
             style={styles.insightsCard}
-            onPress={() => router.push('/(tabs)/insights' as any)}
+            onPress={() => router.push('/(tabs)/(health)/insights' as any)}
           >
             <LinearGradient
               colors={['#1E3A5F', '#2D5A87']}
@@ -172,7 +172,7 @@ export default function TodayScreen() {
         {flaggedBiomarkers.length > 0 && (
           <TouchableOpacity
             style={styles.alertCard}
-            onPress={() => router.push('/(tabs)/labs' as any)}
+            onPress={() => router.push('/(tabs)/(health)/labs' as any)}
           >
             <View style={styles.alertIconContainer}>
               <AlertTriangle color={Colors.warning} size={20} />
@@ -284,7 +284,7 @@ export default function TodayScreen() {
 
         <TouchableOpacity
           style={styles.checkInCard}
-          onPress={() => router.push('/(tabs)/tracking' as any)}
+          onPress={() => router.push('/(tabs)/(log)/tracking' as any)}
         >
           <LinearGradient
             colors={[Colors.accent, Colors.accentLight]}

@@ -38,6 +38,7 @@ import {
   Plus,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
+import SectionSwitcher, { HEALTH_SECTIONS } from '@/components/SectionSwitcher';
 import { useWearables } from '@/providers/WearablesProvider';
 import { RecoveryStatus, ScoreResult } from '@/types/wearables';
 
@@ -119,7 +120,7 @@ export default function WearablesTodayScreen() {
         </Text>
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 14, marginTop: 8 }}
-          onPress={() => router.push('/(tabs)/(wearables)/connections' as never)}
+          onPress={() => router.push('/(tabs)/(health)/(wearables)/connections' as never)}
         >
           <Plus color="#fff" size={18} />
           <Text style={{ fontSize: 15, fontWeight: '700' as const, color: '#fff' }}>Connect a device</Text>
@@ -146,6 +147,7 @@ export default function WearablesTodayScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />
       }
     >
+      <SectionSwitcher items={HEALTH_SECTIONS} activeKey="wearables" />
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <View style={styles.topBar}>
           <View style={styles.connectionLeft}>
@@ -165,7 +167,7 @@ export default function WearablesTodayScreen() {
                 }]}>{dataCompleteness.score}%</Text>
               </View>
             )}
-            <TouchableOpacity onPress={() => navigateTo('/(tabs)/(wearables)/connections')} testID="connections-btn">
+            <TouchableOpacity onPress={() => navigateTo('/(tabs)/(health)/(wearables)/connections')} testID="connections-btn">
               <Text style={styles.connectionLink}>Manage</Text>
             </TouchableOpacity>
           </View>
@@ -362,19 +364,19 @@ export default function WearablesTodayScreen() {
         )}
 
         <View style={styles.navCards}>
-          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/trends')} testID="trends-nav">
+          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(health)/(wearables)/trends')} testID="trends-nav">
             <TrendingUp size={22} color={Colors.primary} />
             <Text style={styles.navCardTitle}>Trends</Text>
             <Text style={styles.navCardSub}>7/14/30-day views</Text>
             <ChevronRight size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/plan')} testID="plan-nav">
+          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(health)/(wearables)/plan')} testID="plan-nav">
             <Target size={22} color={Colors.accent} />
             <Text style={styles.navCardTitle}>Plan</Text>
             <Text style={styles.navCardSub}>Today&apos;s full guidance</Text>
             <ChevronRight size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/insights-detail')} testID="insights-nav">
+          <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(health)/(wearables)/insights-detail')} testID="insights-nav">
             <Brain size={22} color={Colors.chartPurple} />
             <Text style={styles.navCardTitle}>Insights</Text>
             <Text style={styles.navCardSub}>Patterns & correlations</Text>

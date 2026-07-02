@@ -45,6 +45,7 @@ import {
 import { router } from 'expo-router';
 
 import Colors from '@/constants/colors';
+import SectionSwitcher, { HEALTH_SECTIONS } from '@/components/SectionSwitcher';
 import { useUser } from '@/providers/UserProvider';
 import { useLabs } from '@/providers/LabsProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
@@ -458,6 +459,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <SectionSwitcher items={HEALTH_SECTIONS} activeKey="insights" />
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Disorder Risk Analysis</Text>
           <Text style={styles.sectionSubtitle}>
@@ -618,7 +620,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
 
         <TouchableOpacity
           style={styles.labsPromptCard}
-          onPress={() => router.push('/(tabs)/labs')}
+          onPress={() => router.push('/(tabs)/(health)/labs')}
         >
           <LinearGradient
             colors={[Colors.primary, Colors.primaryLight]}

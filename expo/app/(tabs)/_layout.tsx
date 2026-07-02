@@ -1,6 +1,6 @@
 import { Tabs, router } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { Home, ClipboardList, CheckSquare, FlaskConical, User, Brain, Utensils, Stethoscope, Leaf, Watch } from 'lucide-react-native';
+import { Home, ClipboardList, CheckSquare, User, Stethoscope, Activity } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import Colors from '@/constants/colors';
@@ -67,17 +67,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="insights"
+        name="(health)"
         options={{
-          title: 'Insights',
-          tabBarIcon: ({ color, size }) => <Brain color={color} size={size} />,
+          title: 'Health',
+          tabBarIcon: ({ color, size }) => <Activity color={color} size={size} />,
         }}
       />
       <Tabs.Screen
-        name="analysis"
+        name="(log)"
         options={{
-          title: 'Analysis',
-          tabBarIcon: ({ color, size }) => <Leaf color={color} size={size} />,
+          title: 'Log',
+          tabBarIcon: ({ color, size }) => <CheckSquare color={color} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -85,34 +85,6 @@ export default function TabLayout() {
         options={{
           title: 'Protocol',
           tabBarIcon: ({ color, size }) => <ClipboardList color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="(nutrition)"
-        options={{
-          title: 'Nutrition',
-          tabBarIcon: ({ color, size }) => <Utensils color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="(wearables)"
-        options={{
-          title: 'Wearables',
-          tabBarIcon: ({ color, size }) => <Watch color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="tracking"
-        options={{
-          title: 'Track',
-          tabBarIcon: ({ color, size }) => <CheckSquare color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="labs"
-        options={{
-          title: 'Labs',
-          tabBarIcon: ({ color, size }) => <FlaskConical color={color} size={size} />,
         }}
       />
       <Tabs.Screen

@@ -33,6 +33,7 @@ import {
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
+import SectionSwitcher, { LOG_SECTIONS } from '@/components/SectionSwitcher';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useHormones, hormoneSymptoms } from '@/providers/HormoneProvider';
 import { DailySymptoms, HormoneEntry, TodayAction } from '@/types';
@@ -262,6 +263,8 @@ export default function TrackingScreen() {
           </View>
         </SafeAreaView>
       </LinearGradient>
+
+      <SectionSwitcher items={LOG_SECTIONS} activeKey="tracking" />
 
       <View style={styles.tabContainer}>
         <TouchableOpacity

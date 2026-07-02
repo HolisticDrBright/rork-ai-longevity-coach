@@ -86,7 +86,7 @@ export default function ConfirmFoods() {
       };
 
       addFoodLog(foodLog);
-      router.replace(`/(tabs)/(nutrition)/${data.foodLogId}` as any);
+      router.replace(`/(tabs)/(log)/(nutrition)/${data.foodLogId}` as any);
     },
     onError: (error) => {
       console.error('Calculation failed:', error);
