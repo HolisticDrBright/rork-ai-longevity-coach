@@ -7,6 +7,7 @@ import {
   MealLogEntry,
   SupplementLogEntry,
 } from '@/types/wearables';
+import { parseClockHour, localDayOfWeek } from '@/utils/date';
 
 function safe(val: number | null, fallback: number): number {
   return val !== null && !isNaN(val) ? val : fallback;
@@ -108,7 +109,7 @@ export function detectPatterns(
         confidence: 'high',
         description: 'Luteal phase detected. Recovery tends to decrease and cravings increase during this phase — this is normal hormonal variation.',
         factors: ['luteal_phase', 'cravings_increase', 'recovery_decrease'],
-        daysPersisting: safe(today.cycleDayEstimate, 14) - 14,
+        daysPersisting: Math.max(0, safe(today.cycleDayEstimate, 14) - 14),
         escalationNeeded: false,
       });
     }
@@ -134,11 +135,14 @@ export function detectPatterns(
     });
   }
 
-  const bedtimes = recent7.map(r => {
-    if (!r.bedtime) return 22.5;
-    return parseInt(r.bedtime.split(':')[0]) + parseInt(r.bedtime.split(':')[1]) / 60;
-  });
-  const bedtimeRange = Math.max(...bedtimes) - Math.min(...bedtimes);
+  // Bedtimes may be "HH:MM" or full ISO datetimes; parseClockHour handles
+  // both. Shift after-midnight hours (<12) by +24 so the range is computed
+  // on a continuous evening scale (23:30 vs 00:30 is a 1h spread, not 23h).
+  const bedtimes = recent7
+    .map(r => parseClockHour(r.bedtime))
+    .filter((h): h is number => h !== null)
+    .map(h => (h < 12 ? h + 24 : h));
+  const bedtimeRange = bedtimes.length >= 3 ? Math.max(...bedtimes) - Math.min(...bedtimes) : 0;
   if (bedtimeRange > 1.5) {
     patterns.push({
       id: 'pat_circadian_drift',
@@ -167,11 +171,11 @@ export function detectPatterns(
   }
 
   const weekendAlcohol = recent7.filter(r => {
-    const day = new Date(r.date).getDay();
+    const day = localDayOfWeek(r.date);
     return (day === 0 || day === 5 || day === 6) && safe(r.alcoholUnits, 0) >= 2;
   }).length;
   const weekendSleepDrop = recent7.filter(r => {
-    const day = new Date(r.date).getDay();
+    const day = localDayOfWeek(r.date);
     return (day === 0 || day === 6) && safe(r.sleepScore, 75) < 65;
   }).length;
   if (weekendAlcohol >= 2 && weekendSleepDrop >= 1) {
@@ -247,11 +251,26 @@ export function detectCorrelations(
   const correlations: CorrelationResult[] = [];
   if (records.length < 7) return correlations;
 
-  const alcoholDays = records.filter(r => safe(r.alcoholUnits, 0) > 0);
-  const noAlcoholDays = records.filter(r => safe(r.alcoholUnits, 0) === 0);
+  // `records` is NEWEST-FIRST (records[0] = today), matching how the
+  // recommendation engine passes them in. Sleep/HRV on the record at
+  // index idx-1 reflect the night FOLLOWING the intake logged on the record
+  // at index idx, so evening intake on day X must be paired with the NEXT
+  // morning's record (records[idx - 1]) — same convention as the workout
+  // correlation below.
+  const nextMorningOf = (idx: number): DailyBiometricRecord | null =>
+    idx > 0 ? records[idx - 1] : null;
+
+  const alcoholPairs: { units: number; next: DailyBiometricRecord }[] = [];
+  records.forEach((r, idx) => {
+    const next = nextMorningOf(idx);
+    if (!next) return;
+    alcoholPairs.push({ units: safe(r.alcoholUnits, 0), next });
+  });
+  const alcoholDays = alcoholPairs.filter(p => p.units > 0);
+  const noAlcoholDays = alcoholPairs.filter(p => p.units === 0);
   if (alcoholDays.length >= 3 && noAlcoholDays.length >= 3) {
-    const alcSleepAvg = alcoholDays.reduce((s, r) => s + safe(r.sleepEfficiency, 85), 0) / alcoholDays.length;
-    const noAlcSleepAvg = noAlcoholDays.reduce((s, r) => s + safe(r.sleepEfficiency, 85), 0) / noAlcoholDays.length;
+    const alcSleepAvg = alcoholDays.reduce((s, p) => s + safe(p.next.sleepEfficiency, 85), 0) / alcoholDays.length;
+    const noAlcSleepAvg = noAlcoholDays.reduce((s, p) => s + safe(p.next.sleepEfficiency, 85), 0) / noAlcoholDays.length;
     const diff = noAlcSleepAvg - alcSleepAvg;
     if (diff > 3) {
       correlations.push({
@@ -267,8 +286,8 @@ export function detectCorrelations(
       });
     }
 
-    const alcHrvAvg = alcoholDays.reduce((s, r) => s + safe(r.hrv, 50), 0) / alcoholDays.length;
-    const noAlcHrvAvg = noAlcoholDays.reduce((s, r) => s + safe(r.hrv, 50), 0) / noAlcoholDays.length;
+    const alcHrvAvg = alcoholDays.reduce((s, p) => s + safe(p.next.hrv, 50), 0) / alcoholDays.length;
+    const noAlcHrvAvg = noAlcoholDays.reduce((s, p) => s + safe(p.next.hrv, 50), 0) / noAlcoholDays.length;
     const hrvDiff = noAlcHrvAvg - alcHrvAvg;
     if (hrvDiff > 3) {
       correlations.push({
@@ -285,19 +304,21 @@ export function detectCorrelations(
     }
   }
 
-  const highCaffLateDays = records.filter(r => {
-    if (!r.caffeineLastTime) return false;
-    const hour = parseInt(r.caffeineLastTime.split(':')[0]);
-    return hour >= 14 && safe(r.caffeineMg, 0) > 100;
+  // Caffeine consumed on day X affects the night that shows up on the NEXT
+  // morning's record — pair with records[idx - 1], like the other intakes.
+  const caffeinePairs: { hour: number; mg: number; nextSleep: number }[] = [];
+  records.forEach((r, idx) => {
+    const next = nextMorningOf(idx);
+    if (!next) return;
+    const hour = parseClockHour(r.caffeineLastTime);
+    if (hour === null) return;
+    caffeinePairs.push({ hour, mg: safe(r.caffeineMg, 0), nextSleep: safe(next.sleepScore, 75) });
   });
-  const earlyCaffDays = records.filter(r => {
-    if (!r.caffeineLastTime) return false;
-    const hour = parseInt(r.caffeineLastTime.split(':')[0]);
-    return hour < 14;
-  });
+  const highCaffLateDays = caffeinePairs.filter(p => p.hour >= 14 && p.mg > 100);
+  const earlyCaffDays = caffeinePairs.filter(p => p.hour < 14);
   if (highCaffLateDays.length >= 3 && earlyCaffDays.length >= 3) {
-    const lateSleepAvg = highCaffLateDays.reduce((s, r) => s + safe(r.sleepScore, 75), 0) / highCaffLateDays.length;
-    const earlySleepAvg = earlyCaffDays.reduce((s, r) => s + safe(r.sleepScore, 75), 0) / earlyCaffDays.length;
+    const lateSleepAvg = highCaffLateDays.reduce((s, p) => s + p.nextSleep, 0) / highCaffLateDays.length;
+    const earlySleepAvg = earlyCaffDays.reduce((s, p) => s + p.nextSleep, 0) / earlyCaffDays.length;
     const diff = earlySleepAvg - lateSleepAvg;
     if (diff > 3) {
       correlations.push({
@@ -316,36 +337,50 @@ export function detectCorrelations(
 
   const workoutDays = records.filter(r => safe(r.workoutMinutes, 0) > 30);
   if (workoutDays.length >= 3) {
-    const nextDayReadiness: number[] = [];
-    workoutDays.forEach(wd => {
-      const idx = records.indexOf(wd);
-      if (idx > 0) {
-        nextDayReadiness.push(safe(records[idx - 1].readinessScore, 75));
-      }
-    });
+    const nextDayReadinessFor = (days: DailyBiometricRecord[]): number[] =>
+      days
+        .map(wd => nextMorningOf(records.indexOf(wd)))
+        .map(next => next?.readinessScore ?? null)
+        .filter((v): v is number => v !== null);
+
     const hiitDays = workoutDays.filter(r => r.workoutType === 'HIIT' || safe(r.trainingLoad, 0) > 150);
     const zone2Days = workoutDays.filter(r => r.workoutType === 'zone_2' || safe(r.trainingLoad, 0) <= 100);
-    if (hiitDays.length >= 2 && zone2Days.length >= 2) {
-      correlations.push({
-        id: 'cor_workout_readiness',
-        factorA: 'Workout intensity',
-        factorB: 'Next-day readiness',
-        direction: 'negative',
-        strength: 0.6,
-        confidence: 'moderate',
-        dataPoints: hiitDays.length + zone2Days.length,
-        insight: 'Higher intensity workouts tend to lower your next-day readiness score more than zone 2 sessions.',
-        actionable: true,
-      });
+    const hiitNextReadiness = nextDayReadinessFor(hiitDays);
+    const zone2NextReadiness = nextDayReadinessFor(zone2Days);
+
+    if (hiitNextReadiness.length >= 2 && zone2NextReadiness.length >= 2) {
+      const hiitAvg = hiitNextReadiness.reduce((a, b) => a + b, 0) / hiitNextReadiness.length;
+      const zone2Avg = zone2NextReadiness.reduce((a, b) => a + b, 0) / zone2NextReadiness.length;
+      const diff = zone2Avg - hiitAvg;
+
+      // Only report a correlation when the measured difference is real.
+      if (Math.abs(diff) >= 5) {
+        correlations.push({
+          id: 'cor_workout_readiness',
+          factorA: 'Workout intensity',
+          factorB: 'Next-day readiness',
+          direction: diff > 0 ? 'negative' : 'positive',
+          strength: Math.min(Math.abs(diff) / 20, 1),
+          confidence: Math.abs(diff) >= 10 ? 'high' : 'moderate',
+          dataPoints: hiitNextReadiness.length + zone2NextReadiness.length,
+          insight: diff > 0
+            ? `High-intensity days lower your next-day readiness by ${diff.toFixed(0)} points on average compared to zone 2 sessions (${hiitAvg.toFixed(0)} vs ${zone2Avg.toFixed(0)}).`
+            : `Your next-day readiness averages ${Math.abs(diff).toFixed(0)} points HIGHER after high-intensity days than after zone 2 sessions (${hiitAvg.toFixed(0)} vs ${zone2Avg.toFixed(0)}) — you appear to tolerate intensity well.`,
+          actionable: true,
+        });
+      }
     }
   }
 
-  const todaySupps = supplements.filter(s => s.date === records[0]?.date);
-  const _magTaken = todaySupps.some(s => s.supplementName.toLowerCase().includes('magnesium') && s.adherence);
-  const recentMag = records.slice(0, 14).map((r, _i) => {
+  // Evening magnesium taken on day X affects the night reflected on the
+  // NEXT morning's record — pair intake at index idx with records[idx - 1].
+  const recentMag: { sleepScore: number; magTaken: boolean }[] = [];
+  records.slice(0, 14).forEach((r, idx) => {
+    const next = nextMorningOf(idx);
+    if (!next) return;
     const daySupps = supplements.filter(s => s.date === r.date);
     const took = daySupps.some(s => s.supplementName.toLowerCase().includes('magnesium') && s.adherence);
-    return { sleepScore: safe(r.sleepScore, 75), magTaken: took };
+    recentMag.push({ sleepScore: safe(next.sleepScore, 75), magTaken: took });
   });
   const magDays = recentMag.filter(d => d.magTaken);
   const noMagDays = recentMag.filter(d => !d.magTaken);

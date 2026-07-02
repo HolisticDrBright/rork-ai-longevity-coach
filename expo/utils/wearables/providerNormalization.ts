@@ -13,10 +13,22 @@ export interface RawHealthEvent {
 export interface ProviderFieldMapping {
   provider: WearableSource;
   fieldMappings: Record<string, string>;
+  /**
+   * Optional per-raw-field unit conversions applied to numeric payload
+   * values before they are written to the canonical field (e.g. Oura
+   * durations are SECONDS and Whoop durations are MILLISECONDS, while the
+   * canonical *Minutes fields expect minutes).
+   */
+  valueTransforms?: Record<string, (value: number) => number>;
   sleepScoreField?: string;
   readinessScoreField?: string;
   stressScoreField?: string;
 }
+
+const secondsToMinutes = (v: number): number => Math.round((v / 60) * 10) / 10;
+const millisToMinutes = (v: number): number => Math.round((v / 60000) * 10) / 10;
+/** Apple reports oxygen saturation as a 0–1 fraction; canonical spo2 is a percent. */
+const fractionToPercent = (v: number): number => (v <= 1 ? Math.round(v * 1000) / 10 : v);
 
 const OURA_MAPPING: ProviderFieldMapping = {
   provider: 'oura',
@@ -37,10 +49,19 @@ const OURA_MAPPING: ProviderFieldMapping = {
     'body_temperature_deviation': 'tempDeviation',
     'average_breath': 'respiratoryRate',
     'steps': 'steps',
+    // Only total_calories maps to caloriesBurned — active_calories was
+    // overwriting the total because both pointed at the same field.
     'total_calories': 'caloriesBurned',
-    'active_calories': 'caloriesBurned',
     'medium_activity_minutes': 'activeMinutes',
     'spo2': 'spo2',
+  },
+  valueTransforms: {
+    // Oura durations are reported in SECONDS.
+    'total_sleep_duration': secondsToMinutes,
+    'deep_sleep_duration': secondsToMinutes,
+    'rem_sleep_duration': secondsToMinutes,
+    'light_sleep_duration': secondsToMinutes,
+    'sleep_latency': secondsToMinutes,
   },
   sleepScoreField: 'sleep_score',
   readinessScoreField: 'readiness_score',
@@ -66,6 +87,10 @@ const APPLE_HEALTH_MAPPING: ProviderFieldMapping = {
     'HKQuantityTypeIdentifierBloodPressureSystolic': 'bloodPressureSystolic',
     'HKQuantityTypeIdentifierBloodPressureDiastolic': 'bloodPressureDiastolic',
     'HKQuantityTypeIdentifierBloodGlucose': 'glucoseAvg',
+  },
+  valueTransforms: {
+    // Apple reports oxygen saturation as a 0–1 fraction.
+    'HKQuantityTypeIdentifierOxygenSaturation': fractionToPercent,
   },
 };
 
@@ -105,6 +130,13 @@ const WHOOP_MAPPING: ProviderFieldMapping = {
     'strain': 'strainScore',
     'calories': 'caloriesBurned',
     'spo2': 'spo2',
+  },
+  valueTransforms: {
+    // Whoop durations are reported in MILLISECONDS.
+    'sleep_duration': millisToMinutes,
+    'rem_sleep': millisToMinutes,
+    'sws_sleep': millisToMinutes,
+    'light_sleep': millisToMinutes,
   },
   readinessScoreField: 'recovery_score',
   stressScoreField: 'stress_score',
@@ -173,7 +205,9 @@ export function normalizeRawEvent(
   for (const [rawKey, canonicalKey] of Object.entries(mapping.fieldMappings)) {
     const rawValue = event.payload[rawKey];
     if (rawValue !== undefined && rawValue !== null) {
-      (normalized as Record<string, unknown>)[canonicalKey] = rawValue;
+      const transform = mapping.valueTransforms?.[rawKey];
+      const value = transform && typeof rawValue === 'number' ? transform(rawValue) : rawValue;
+      (normalized as Record<string, unknown>)[canonicalKey] = value;
     }
   }
 

@@ -13,8 +13,17 @@ import * as healthService from '@/services/health/healthService';
 import type { ProviderConnection } from '@/services/health/types';
 import type { DailyBiometricRecord } from '@/types/wearables';
 
-const RECORDS_KEY = 'health_daily_records';
-const CONNECTIONS_KEY = 'health_connections';
+/**
+ * Shared react-query key namespaces for health data. WearablesProvider and
+ * these hooks query the same underlying tables, so they MUST share key
+ * prefixes — otherwise invalidations from one miss the other's cache.
+ */
+export const HEALTH_RECORDS_QUERY_KEY = 'health_daily_records';
+export const HEALTH_CONNECTIONS_QUERY_KEY = 'health_connections';
+export const HAS_HEALTH_CONNECTIONS_QUERY_KEY = 'has_health_connections';
+
+const RECORDS_KEY = HEALTH_RECORDS_QUERY_KEY;
+const CONNECTIONS_KEY = HEALTH_CONNECTIONS_QUERY_KEY;
 
 /**
  * Fetch the last `days` days of daily biometric records from Supabase.
@@ -45,7 +54,7 @@ export function useHealthConnections() {
  */
 export function useHasConnections() {
   return useQuery({
-    queryKey: ['has_health_connections'],
+    queryKey: [HAS_HEALTH_CONNECTIONS_QUERY_KEY],
     queryFn: () => healthService.hasConnections(),
   });
 }
@@ -60,7 +69,7 @@ export function useConnectDevice() {
     onSuccess: (result) => {
       if (result.success) {
         void qc.invalidateQueries({ queryKey: [CONNECTIONS_KEY] });
-        void qc.invalidateQueries({ queryKey: ['has_health_connections'] });
+        void qc.invalidateQueries({ queryKey: [HAS_HEALTH_CONNECTIONS_QUERY_KEY] });
       }
     },
   });
@@ -75,7 +84,7 @@ export function useDisconnectProvider() {
     mutationFn: (provider: string) => healthService.disconnectProvider(provider),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [CONNECTIONS_KEY] });
-      void qc.invalidateQueries({ queryKey: ['has_health_connections'] });
+      void qc.invalidateQueries({ queryKey: [HAS_HEALTH_CONNECTIONS_QUERY_KEY] });
     },
   });
 }

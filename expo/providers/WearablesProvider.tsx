@@ -20,10 +20,15 @@ import {
 
 import * as healthService from '@/services/health/healthService';
 import type { ProviderConnection } from '@/services/health/types';
+import {
+  HEALTH_RECORDS_QUERY_KEY,
+  HEALTH_CONNECTIONS_QUERY_KEY,
+  HAS_HEALTH_CONNECTIONS_QUERY_KEY,
+} from '@/hooks/useHealthData';
 
 import { generateDailyRecommendation } from '@/utils/wearables/recommendationEngine';
 import { generateBaseline, computeDataCompleteness, computeAllDeviations, DataCompletenessResult, BaselineDeviation } from '@/utils/wearables/baselineEngine';
-import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend } from '@/utils/wearables/trendEngine';
+import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend, computeChangePercent } from '@/utils/wearables/trendEngine';
 import { generateNotifications, generatePractitionerFlags, NotificationItem, PractitionerFlag } from '@/utils/wearables/notificationEngine';
 import { composeAIInsight, AIInsightOutput } from '@/utils/wearables/aiInsightComposer';
 
@@ -38,14 +43,6 @@ function computeTrendDirection(data: (number | null)[]): TrendDirection {
   if (changePct > 3) return 'improving';
   if (changePct < -3) return 'declining';
   return 'stable';
-}
-
-function computeChangePercent(data: (number | null)[]): number {
-  const valid = data.filter((v): v is number => v !== null);
-  if (valid.length < 2) return 0;
-  const first = valid[valid.length - 1];
-  const last = valid[0];
-  return Math.round(((last - first) / Math.max(first, 1)) * 100);
 }
 
 function mapProviderToLegacy(p: ProviderConnection): WearableConnection {
@@ -69,9 +66,11 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [practitionerFlags, setPractitionerFlags] = useState<PractitionerFlag[]>([]);
 
-  // Records now come from Supabase via healthService
+  // Records now come from Supabase via healthService.
+  // Uses the shared key namespace from useHealthData so invalidations from
+  // either side hit both caches.
   const recordsQuery = useQuery({
-    queryKey: ['wearables_records'],
+    queryKey: [HEALTH_RECORDS_QUERY_KEY],
     queryFn: async () => {
       const toDate = new Date().toISOString().substring(0, 10);
       const fromDate = new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
@@ -82,7 +81,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
 
   // Connections now come from Supabase via healthService
   const connectionsQuery = useQuery({
-    queryKey: ['wearables_connections'],
+    queryKey: [HEALTH_CONNECTIONS_QUERY_KEY],
     queryFn: async () => {
       const conns = await healthService.listConnections();
       return conns.map(mapProviderToLegacy);
@@ -131,7 +130,13 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
       const notifs = generateNotifications(
         todayRecord, records, scores, recommendation.patterns, baseline
       );
-      setNotifications(notifs);
+      // Notifications are regenerated on every refetch (every 5 min).
+      // Preserve dismissed state across regenerations by matching stable
+      // notification identity (ids are `notif_<type>_<date>`).
+      setNotifications(prev => {
+        const dismissedIds = new Set(prev.filter(n => n.dismissed).map(n => n.id));
+        return notifs.map(n => (dismissedIds.has(n.id) ? { ...n, dismissed: true } : n));
+      });
 
       const flags = generatePractitionerFlags(records, recommendation.patterns, baseline);
       setPractitionerFlags(flags);
@@ -164,8 +169,9 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     },
     onSuccess: (result) => {
       void writeAuditLog('PHI_UPDATE', 'wearable_connection', `connected:${result.newProvider ?? 'unknown'}`);
-      void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
-      void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
+      void queryClient.invalidateQueries({ queryKey: [HEALTH_CONNECTIONS_QUERY_KEY] });
+      void queryClient.invalidateQueries({ queryKey: [HAS_HEALTH_CONNECTIONS_QUERY_KEY] });
+      void queryClient.invalidateQueries({ queryKey: [HEALTH_RECORDS_QUERY_KEY] });
     },
   });
 
@@ -176,7 +182,8 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     },
     onSuccess: (provider) => {
       void writeAuditLog('PHI_UPDATE', 'wearable_connection', `disconnected:${provider}`);
-      void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
+      void queryClient.invalidateQueries({ queryKey: [HEALTH_CONNECTIONS_QUERY_KEY] });
+      void queryClient.invalidateQueries({ queryKey: [HAS_HEALTH_CONNECTIONS_QUERY_KEY] });
     },
   });
 
@@ -196,7 +203,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
         setBaseline(bl);
       }
       setAiInsight(null);
-      void queryClient.invalidateQueries({ queryKey: ['wearables_records'] });
+      void queryClient.invalidateQueries({ queryKey: [HEALTH_RECORDS_QUERY_KEY] });
     },
   });
 

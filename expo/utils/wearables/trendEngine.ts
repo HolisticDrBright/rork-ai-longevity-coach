@@ -1,4 +1,5 @@
 import { DailyBiometricRecord, TrendDirection } from '@/types/wearables';
+import { isWeekendDate, localDayOfWeek } from '@/utils/date';
 
 export interface TrendAnalysis {
   mean: number | null;
@@ -58,10 +59,17 @@ function getMedian(sorted: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function isWeekend(dateStr: string): boolean {
-  const d = new Date(dateStr);
-  const day = d.getDay();
-  return day === 0 || day === 6;
+/**
+ * Percent change from the OLDEST valid value to the NEWEST valid value.
+ * `data` must be in chronological order (oldest first). A rise 50 -> 60
+ * reports +20.
+ */
+export function computeChangePercent(data: (number | null)[]): number {
+  const valid = data.filter((v): v is number => v !== null && !isNaN(v));
+  if (valid.length < 2) return 0;
+  const first = valid[0];
+  const last = valid[valid.length - 1];
+  return Math.round(((last - first) / Math.max(Math.abs(first), 1)) * 100);
 }
 
 export function computeTrendAnalysis(
@@ -115,8 +123,8 @@ export function computeTrendAnalysis(
     direction = changePct < -threshold ? 'improving' : changePct > threshold ? 'declining' : 'stable';
   }
 
-  const weekdayVals = valid.filter(v => !isWeekend(v.date)).map(v => v.value);
-  const weekendVals = valid.filter(v => isWeekend(v.date)).map(v => v.value);
+  const weekdayVals = valid.filter(v => !isWeekendDate(v.date)).map(v => v.value);
+  const weekendVals = valid.filter(v => isWeekendDate(v.date)).map(v => v.value);
   const weekdayAvg = weekdayVals.length >= 2 ? Math.round((weekdayVals.reduce((a, b) => a + b, 0) / weekdayVals.length) * 10) / 10 : null;
   const weekendAvg = weekendVals.length >= 2 ? Math.round((weekendVals.reduce((a, b) => a + b, 0) / weekendVals.length) * 10) / 10 : null;
   const weekdayWeekendDiff = weekdayAvg !== null && weekendAvg !== null ? Math.round((weekendAvg - weekdayAvg) * 10) / 10 : null;
@@ -136,9 +144,17 @@ export function computeTrendAnalysis(
   };
 }
 
+/**
+ * Compare the current window's mean against the prior window's mean.
+ *
+ * `inverted` mirrors classifyDeviation's inverted-metric concept: for
+ * lower-is-better metrics (resting HR, respiratory rate, stress, soreness)
+ * a NEGATIVE change is an improvement.
+ */
 export function computeWindowComparison(
   currentWindow: (number | null)[],
-  priorWindow: (number | null)[]
+  priorWindow: (number | null)[],
+  inverted: boolean = false
 ): WindowComparison {
   const currentValid = currentWindow.filter((v): v is number => v !== null);
   const priorValid = priorWindow.filter((v): v is number => v !== null);
@@ -149,13 +165,24 @@ export function computeWindowComparison(
 
   const currentMean = currentValid.reduce((a, b) => a + b, 0) / currentValid.length;
   const priorMean = priorValid.reduce((a, b) => a + b, 0) / priorValid.length;
-  const changePercent = priorMean !== 0 ? Math.round(((currentMean - priorMean) / Math.abs(priorMean)) * 1000) / 10 : 0;
+
+  if (priorMean === 0) {
+    // No meaningful percent change against a zero baseline.
+    return {
+      currentMean: Math.round(currentMean * 10) / 10,
+      priorMean: 0,
+      changePercent: null,
+      improved: null,
+    };
+  }
+
+  const changePercent = Math.round(((currentMean - priorMean) / Math.abs(priorMean)) * 1000) / 10;
 
   return {
     currentMean: Math.round(currentMean * 10) / 10,
     priorMean: Math.round(priorMean * 10) / 10,
     changePercent,
-    improved: changePercent > 0,
+    improved: inverted ? changePercent < 0 : changePercent > 0,
   };
 }
 
@@ -168,7 +195,7 @@ export function detectWeeklyPattern(
   for (const r of records) {
     const val = r[metric];
     if (val === null || val === undefined || typeof val !== 'number') continue;
-    const day = new Date(r.date).getDay();
+    const day = localDayOfWeek(r.date);
     dayBuckets[day].push(val);
   }
 
@@ -190,7 +217,7 @@ export function detectWeekdayWeekendEffect(
   for (const r of records) {
     const val = r[metric];
     if (val === null || val === undefined || typeof val !== 'number') continue;
-    if (isWeekend(r.date)) {
+    if (isWeekendDate(r.date)) {
       weekendVals.push(val);
     } else {
       weekdayVals.push(val);

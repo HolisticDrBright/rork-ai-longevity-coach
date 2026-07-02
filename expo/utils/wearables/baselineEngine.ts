@@ -1,4 +1,5 @@
 import { DailyBiometricRecord, UserBaseline } from '@/types/wearables';
+import { parseClockHour, formatClockHour } from '@/utils/date';
 
 function safeNum(val: number | null): number | null {
   return val !== null && !isNaN(val) ? val : null;
@@ -13,56 +14,75 @@ function computeRollingAvg(
   return Math.round((valid.reduce((a, b) => a + b, 0) / valid.length) * 10) / 10;
 }
 
+/**
+ * Recency-weighted average. `values` is NEWEST-FIRST (index 0 is the most
+ * recent day), so the most recent *valid* sample gets the highest weight and
+ * weights decay by position among the valid samples (not the raw index).
+ */
 function computeWeightedRollingAvg(
   values: (number | null)[],
   minSamples: number = 3
 ): number | null {
-  const valid = values
-    .map((v, i) => ({ v, i }))
-    .filter((item): item is { v: number; i: number } => item.v !== null && !isNaN(item.v));
+  const valid = values.filter((v): v is number => v !== null && !isNaN(v));
   if (valid.length < minSamples) return null;
 
   let weightSum = 0;
   let weightedTotal = 0;
-  for (const item of valid) {
-    const recency = 1 + (valid.length - item.i) * 0.05;
-    weightedTotal += item.v * recency;
+  valid.forEach((v, pos) => {
+    // pos 0 = most recent valid sample -> largest weight.
+    const recency = 1 + (valid.length - 1 - pos) * 0.05;
+    weightedTotal += v * recency;
     weightSum += recency;
-  }
+  });
   return Math.round((weightedTotal / weightSum) * 10) / 10;
 }
 
+/**
+ * Circular average of clock times that may be "HH:MM" or full ISO datetimes
+ * (the wearable pipeline stores Junction's bedtimeStart raw). Uses a vector
+ * mean on the 24h circle so times straddling midnight average correctly.
+ */
 function computeCircularTimeAvg(
   times: (string | null)[],
   minSamples: number = 3
 ): string | null {
-  const validMinutes: number[] = [];
+  const validHours: number[] = [];
   for (const t of times) {
-    if (!t) continue;
-    const parts = t.split(':');
-    if (parts.length < 2) continue;
-    let hours = parseInt(parts[0]);
-    const mins = parseInt(parts[1]);
-    if (isNaN(hours) || isNaN(mins)) continue;
-    if (hours < 12) hours += 24;
-    validMinutes.push(hours * 60 + mins);
+    const h = parseClockHour(t);
+    if (h !== null) validHours.push(h);
   }
-  if (validMinutes.length < minSamples) return null;
+  if (validHours.length < minSamples) return null;
 
-  const avg = validMinutes.reduce((a, b) => a + b, 0) / validMinutes.length;
-  let avgHours = Math.floor(avg / 60);
-  const avgMins = Math.round(avg % 60);
-  if (avgHours >= 24) avgHours -= 24;
-  return `${avgHours.toString().padStart(2, '0')}:${avgMins.toString().padStart(2, '0')}`;
+  let sinSum = 0;
+  let cosSum = 0;
+  for (const h of validHours) {
+    const angle = (h / 24) * 2 * Math.PI;
+    sinSum += Math.sin(angle);
+    cosSum += Math.cos(angle);
+  }
+  if (sinSum === 0 && cosSum === 0) return null;
+  const avgAngle = Math.atan2(sinSum / validHours.length, cosSum / validHours.length);
+  const avgHours = ((avgAngle / (2 * Math.PI)) * 24 + 24) % 24;
+  // Round to the nearest minute before formatting so 23.999h -> "00:00".
+  return formatClockHour(Math.round(avgHours * 60) / 60);
 }
 
+/**
+ * Rolling baseline over the `days` days PRIOR to the current day.
+ *
+ * `records` is newest-first with records[0] = today. Today's record is
+ * excluded by default so deviations compare today against the preceding
+ * window rather than against a baseline that already contains today.
+ */
 export function computeRollingBaseline(
   records: DailyBiometricRecord[],
   metric: keyof DailyBiometricRecord,
   days: number,
-  minSamples: number = 3
+  minSamples: number = 3,
+  excludeCurrentDay: boolean = true
 ): number | null {
-  const slice = records.slice(0, days);
+  const history = excludeCurrentDay ? records.slice(1) : records;
+  const slice = history.slice(0, days);
   const values = slice.map(r => safeNum(r[metric] as number | null));
   return computeRollingAvg(values, minSamples);
 }
@@ -91,10 +111,24 @@ export function classifyDeviation(
   return 'normal';
 }
 
-export function generateBaseline(records: DailyBiometricRecord[]): UserBaseline {
-  const slice7 = records.slice(0, 7);
-  const slice14 = records.slice(0, 14);
-  const slice30 = records.slice(0, 30);
+export interface GenerateBaselineOptions {
+  /**
+   * `records` arrives newest-first with records[0] = today. When true
+   * (default), today's record is excluded from its own baseline so
+   * deviations compare today vs the PRIOR 7/14/30 days.
+   */
+  excludeCurrentDay?: boolean;
+}
+
+export function generateBaseline(
+  records: DailyBiometricRecord[],
+  options: GenerateBaselineOptions = {}
+): UserBaseline {
+  const { excludeCurrentDay = true } = options;
+  const history = excludeCurrentDay ? records.slice(1) : records;
+  const slice7 = history.slice(0, 7);
+  const slice14 = history.slice(0, 14);
+  const slice30 = history.slice(0, 30);
 
   const avgN = (arr: (number | null)[], min: number = 3): number | null => computeRollingAvg(arr, min);
   const wAvgN = (arr: (number | null)[], min: number = 3): number | null => computeWeightedRollingAvg(arr, min);

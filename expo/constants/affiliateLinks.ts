@@ -464,18 +464,50 @@ export const DEFAULT_SUPPLEMENT_LINK: AffiliateLink = {
 
 export const IG_LINK = 'https://theholisticapproach.clickfunnels.com/squeeze-page?fbclid=PAAaanvqa79TocdjkpxaOgux9AEVVhFeVByvnbMSGbSDfayMbnEpIYJ31KMMA';
 
+function isAlphanumeric(char: string | undefined): boolean {
+  return char !== undefined && /[a-z0-9]/i.test(char);
+}
+
+/**
+ * True when `keyword` appears in `name` on word boundaries (not inside a
+ * larger word — "choline" must NOT match "phosphatidylcholine").
+ * Both arguments must already be lowercased.
+ */
+function matchesOnWordBoundary(name: string, keyword: string): boolean {
+  let idx = name.indexOf(keyword);
+  while (idx !== -1) {
+    const before = name[idx - 1];
+    const after = name[idx + keyword.length];
+    if (!isAlphanumeric(before) && !isAlphanumeric(after)) return true;
+    idx = name.indexOf(keyword, idx + 1);
+  }
+  return false;
+}
+
+/**
+ * Resolve a product name to an affiliate link. Matching is case-insensitive,
+ * only on word boundaries, and the LONGEST matching keyword across ALL
+ * entries wins (so "Phosphatidylcholine (BodyBio PC)" resolves to BodyBio's
+ * 'phosphatidylcholine' keyword rather than FullScript's generic 'choline').
+ */
 export function findAffiliateLink(productName: string): AffiliateLink {
   const lowerName = productName.toLowerCase();
-  
+
+  let bestLink: AffiliateLink | null = null;
+  let bestKeywordLength = 0;
+
   for (const link of AFFILIATE_LINKS) {
     for (const keyword of link.keywords) {
-      if (lowerName.includes(keyword.toLowerCase())) {
-        return link;
+      const kw = keyword.toLowerCase();
+      if (kw.length <= bestKeywordLength) continue;
+      if (matchesOnWordBoundary(lowerName, kw)) {
+        bestLink = link;
+        bestKeywordLength = kw.length;
       }
     }
   }
-  
-  return DEFAULT_SUPPLEMENT_LINK;
+
+  return bestLink ?? DEFAULT_SUPPLEMENT_LINK;
 }
 
 export function getAffiliateLinksByCategory(category: AffiliateLink['category']): AffiliateLink[] {

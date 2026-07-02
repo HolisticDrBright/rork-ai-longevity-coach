@@ -4,6 +4,7 @@ import {
   AllScores,
   PatternDetection,
 } from '@/types/wearables';
+import { parseClockHour } from '@/utils/date';
 
 export type NotificationType =
   | 'low_recovery'
@@ -65,12 +66,13 @@ export function generateNotifications(
     });
   }
 
+  // Bedtimes may be "HH:MM" or full ISO datetimes; parseClockHour handles
+  // both. Shift after-midnight hours (<12) by +24 so the range is computed
+  // on a continuous evening scale.
   const recent3Bedtimes = records.slice(0, 3).map(r => {
-    if (!r.bedtime) return null;
-    const parts = r.bedtime.split(':');
-    let h = parseInt(parts[0]);
-    if (h < 12) h += 24;
-    return h * 60 + parseInt(parts[1]);
+    const h = parseClockHour(r.bedtime);
+    if (h === null) return null;
+    return (h < 12 ? h + 24 : h) * 60;
   }).filter((v): v is number => v !== null);
 
   if (recent3Bedtimes.length >= 3) {
@@ -102,8 +104,10 @@ export function generateNotifications(
     });
   }
 
-  const hydration = safe(record.hydrationMl, 1500);
-  if (hydration < 1800) {
+  // Only fire the hydration notification when hydration was actually
+  // logged — never fabricate "You've logged 1500ml" from a default.
+  const hydration = record.hydrationMl;
+  if (hydration !== null && !isNaN(hydration) && hydration < 1800) {
     notifications.push({
       id: `notif_hydration_${date}`,
       type: 'hydration_shortfall',
@@ -255,16 +259,32 @@ export function generatePractitionerFlags(
     });
   }
 
-  const hasHighBP = records.slice(0, 7).some(r =>
-    (r.bloodPressureSystolic !== null && r.bloodPressureSystolic > 140) ||
-    (r.bloodPressureDiastolic !== null && r.bloodPressureDiastolic > 90)
+  const recentBP = records.slice(0, 7);
+  const hasCriticalBP = recentBP.some(r =>
+    (r.bloodPressureSystolic !== null && r.bloodPressureSystolic >= 180) ||
+    (r.bloodPressureDiastolic !== null && r.bloodPressureDiastolic >= 120)
   );
-  if (hasHighBP) {
+  const hasHighBP = recentBP.some(r =>
+    (r.bloodPressureSystolic !== null && r.bloodPressureSystolic >= 140) ||
+    (r.bloodPressureDiastolic !== null && r.bloodPressureDiastolic >= 90)
+  );
+  if (hasCriticalBP) {
+    flags.push({
+      id: `flag_bp_critical_${date}`,
+      type: 'hypertensive_crisis_range',
+      severity: 'critical',
+      summary: 'URGENT: Blood pressure readings at or above 180/120 have been recorded recently. This is hypertensive-crisis range — the patient should seek immediate medical attention.',
+      evidence: ['Blood pressure reading >= 180 systolic or >= 120 diastolic'],
+      daysPersisting: 1,
+      resolved: false,
+      createdAt: new Date().toISOString(),
+    });
+  } else if (hasHighBP) {
     flags.push({
       id: `flag_bp_${date}`,
       type: 'elevated_blood_pressure',
       severity: 'alert',
-      summary: 'Blood pressure readings above 140/90 have been recorded recently.',
+      summary: 'Blood pressure readings at or above 140/90 have been recorded recently.',
       evidence: ['Elevated blood pressure entries'],
       daysPersisting: 1,
       resolved: false,

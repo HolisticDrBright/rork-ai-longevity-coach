@@ -107,10 +107,18 @@ function generateNutritionGuidance(scores: AllScores, record: DailyBiometricReco
     suggestions.push('Consider skipping alcohol tonight to support recovery');
   }
 
-  const lastMealHour = meals.length > 0 ? Math.max(...meals.filter(m => m.date === record.date).map(m => parseInt(m.mealTime?.split(':')[0] ?? '19'))) : 19;
-  const mealTimingAdvice = lastMealHour >= 20
-    ? 'Try to finish your last meal by 7:30 PM — late meals are affecting your sleep quality.'
-    : 'Your meal timing looks good. Keep your last meal at least 3 hours before bed.';
+  // Guard on TODAY's meals specifically: Math.max of an empty array is
+  // -Infinity, which silently reads as "timing looks good".
+  const todayMealHours = meals
+    .filter(m => m.date === record.date)
+    .map(m => parseInt(m.mealTime?.split(':')[0] ?? '', 10))
+    .filter(h => !isNaN(h));
+  const lastMealHour = todayMealHours.length > 0 ? Math.max(...todayMealHours) : null;
+  const mealTimingAdvice = lastMealHour === null
+    ? 'Log your meals to get timing guidance. Aim to finish your last meal at least 3 hours before bed.'
+    : lastMealHour >= 20
+      ? 'Try to finish your last meal by 7:30 PM — late meals may be affecting your sleep quality.'
+      : 'Your meal timing looks good. Keep your last meal at least 3 hours before bed.';
 
   const hydrationTarget = recovery < 65 ? 3000 : hydration < 2000 ? 2800 : 2500;
   const proteinTarget = recovery < 65 ? 140 : 120;
