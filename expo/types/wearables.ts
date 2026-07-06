@@ -1,4 +1,17 @@
-export type WearableSource = 'apple_health' | 'google_health' | 'oura' | 'whoop' | 'fitbit' | 'garmin' | 'manual';
+export type WearableSource =
+  | 'apple_health'
+  | 'google_health'
+  | 'oura'
+  | 'whoop'
+  | 'fitbit'
+  | 'garmin'
+  | 'dexcom'
+  | 'freestyle_libre'
+  | 'omron'
+  | 'withings'
+  | 'polar'
+  | 'eight_sleep'
+  | 'manual';
 
 export type RecoveryStatus = 'green' | 'yellow' | 'red';
 
