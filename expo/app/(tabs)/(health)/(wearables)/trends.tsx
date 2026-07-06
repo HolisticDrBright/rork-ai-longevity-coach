@@ -27,23 +27,54 @@ import {
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
 import { TrendDirection } from '@/types/wearables';
+import { getMetric, MetricAvailability } from '@/constants/wearableCapabilities';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 type TimeRange = 7 | 14 | 30;
 
-const metricConfigs = [
-  { key: 'hrv', label: 'HRV', unit: 'ms', icon: Heart, color: '#4A90D9', higherBetter: true },
-  { key: 'restingHr', label: 'Resting HR', unit: 'bpm', icon: Activity, color: '#E76F51', higherBetter: false },
-  { key: 'sleepScore', label: 'Sleep Score', unit: '', icon: Moon, color: '#7C3AED', higherBetter: true },
-  { key: 'sleepDuration', label: 'Sleep Duration', unit: 'h', icon: Moon, color: '#2563EB', higherBetter: true },
-  { key: 'steps', label: 'Steps', unit: '', icon: Activity, color: '#16A34A', higherBetter: true },
-  { key: 'readinessScore', label: 'Readiness', unit: '', icon: Target, color: '#0D9488', higherBetter: true },
+/**
+ * Chart configs are keyed by the trend-series keys understood by
+ * getTrendSeries. `metricKey` links device metrics to the METRICS registry
+ * so label/unit/lowerIsBetter and availability come from one source of
+ * truth; entries without a metricKey are subjective check-in metrics that
+ * do not depend on any wearable and are always selectable. `label`/`unit`/
+ * `higherBetter` act as overrides where the chart deviates from the
+ * registry (e.g. sleep duration is charted in hours, not minutes).
+ */
+interface TrendMetricConfig {
+  key: string;
+  metricKey?: string;
+  label?: string;
+  unit?: string;
+  higherBetter?: boolean;
+  icon: typeof Heart;
+  color: string;
+}
+
+const metricConfigs: TrendMetricConfig[] = [
+  { key: 'hrv', metricKey: 'hrv', icon: Heart, color: '#4A90D9' },
+  { key: 'restingHr', metricKey: 'restingHr', label: 'Resting HR', icon: Activity, color: '#E76F51' },
+  { key: 'sleepScore', metricKey: 'sleepDuration', label: 'Sleep Score', unit: '', icon: Moon, color: '#7C3AED', higherBetter: true },
+  { key: 'sleepDuration', metricKey: 'sleepDuration', unit: 'h', icon: Moon, color: '#2563EB' },
+  { key: 'steps', metricKey: 'steps', icon: Activity, color: '#16A34A' },
+  { key: 'readinessScore', metricKey: 'readiness', label: 'Readiness', icon: Target, color: '#0D9488' },
   { key: 'adherenceScore', label: 'Adherence', unit: '%', icon: Target, color: '#F59E0B', higherBetter: true },
   { key: 'energyScore', label: 'Energy', unit: '/10', icon: Zap, color: '#F97316', higherBetter: true },
   { key: 'moodScore', label: 'Mood', unit: '/10', icon: Brain, color: '#8B5CF6', higherBetter: true },
   { key: 'sorenessScore', label: 'Soreness', unit: '/10', icon: Flame, color: '#DC2626', higherBetter: false },
 ];
+
+interface ResolvedMetricConfig {
+  key: string;
+  label: string;
+  unit: string;
+  higherBetter: boolean;
+  icon: typeof Heart;
+  color: string;
+  /** null = subjective metric with no wearable dependency (always shown). */
+  availability: MetricAvailability | null;
+}
 
 const trendIcons: Record<TrendDirection, { icon: typeof TrendingUp; color: string; label: string }> = {
   improving: { icon: TrendingUp, color: '#059669', label: 'Improving' },
@@ -53,9 +84,41 @@ const trendIcons: Record<TrendDirection, { icon: typeof TrendingUp; color: strin
 };
 
 export default function TrendsScreen() {
-  const { getTrendSeries, getTrendAnalysis, getWeekdayWeekendEffect, getCycleLinkedTrends, records } = useWearables();
+  const { getTrendSeries, getTrendAnalysis, getWeekdayWeekendEffect, getCycleLinkedTrends, records, metricAvailability } = useWearables();
   const [timeRange, setTimeRange] = useState<TimeRange>(14);
-  const [selectedMetric, setSelectedMetric] = useState<string>('hrv');
+  const [selectedKey, setSelectedKey] = useState<string>('hrv');
+
+  const resolvedConfigs = useMemo<ResolvedMetricConfig[]>(() => {
+    return metricConfigs.map(mc => {
+      const metric = mc.metricKey ? getMetric(mc.metricKey) : undefined;
+      return {
+        key: mc.key,
+        label: mc.label ?? metric?.label ?? mc.key,
+        unit: mc.unit ?? metric?.unit ?? '',
+        higherBetter: mc.higherBetter ?? !(metric?.lowerIsBetter ?? false),
+        icon: mc.icon,
+        color: mc.color,
+        availability: mc.metricKey ? (metricAvailability[mc.metricKey] ?? 'locked') : null,
+      };
+    });
+  }, [metricAvailability]);
+
+  // Availability rules: 'locked' metrics are hidden entirely, 'expected'
+  // are shown disabled (syncing…), 'live' + subjective are selectable.
+  const pickerConfigs = useMemo(
+    () => resolvedConfigs.filter(c => c.availability !== 'locked'),
+    [resolvedConfigs],
+  );
+  const selectableConfigs = useMemo(
+    () => pickerConfigs.filter(c => c.availability !== 'expected'),
+    [pickerConfigs],
+  );
+
+  // If the persisted selection became unavailable (e.g. device disconnected),
+  // fall back to the first selectable metric.
+  const selectedMetric = selectableConfigs.some(c => c.key === selectedKey)
+    ? selectedKey
+    : (selectableConfigs[0]?.key ?? 'hrv');
 
   const handleTimeRange = useCallback((range: TimeRange) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -64,11 +127,11 @@ export default function TrendsScreen() {
 
   const handleMetric = useCallback((key: string) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedMetric(key);
+    setSelectedKey(key);
   }, []);
 
   const trendData = useMemo(() => getTrendSeries(selectedMetric, timeRange), [getTrendSeries, selectedMetric, timeRange]);
-  const metricConfig = metricConfigs.find(m => m.key === selectedMetric)!;
+  const metricConfig = resolvedConfigs.find(m => m.key === selectedMetric)!;
 
   const trendAnalysis = useMemo(() => {
     return getTrendAnalysis(selectedMetric, timeRange, metricConfig.higherBetter);
@@ -93,11 +156,11 @@ export default function TrendsScreen() {
   }, [getCycleLinkedTrends, selectedMetric, records]);
 
   const allTrends = useMemo(() => {
-    return metricConfigs.map(mc => {
+    return selectableConfigs.map(mc => {
       const series = getTrendSeries(mc.key, timeRange);
       return { ...mc, direction: series.direction, changePercent: series.changePercent };
     });
-  }, [getTrendSeries, timeRange]);
+  }, [selectableConfigs, getTrendSeries, timeRange]);
 
   const chartData = useMemo(() => {
     const validPoints = trendData.data.filter(d => d.value !== null);
@@ -354,17 +417,24 @@ export default function TrendsScreen() {
 
       <Text style={styles.sectionTitle}>Select Metric</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.metricPicker}>
-        {metricConfigs.map(mc => {
+        {pickerConfigs.map(mc => {
           const IconComp = mc.icon;
           const isSelected = selectedMetric === mc.key;
+          const isSyncing = mc.availability === 'expected';
           return (
             <TouchableOpacity
               key={mc.key}
-              style={[styles.metricChip, isSelected && { backgroundColor: mc.color + '18', borderColor: mc.color }]}
+              style={[
+                styles.metricChip,
+                isSelected && { backgroundColor: mc.color + '18', borderColor: mc.color },
+                isSyncing && styles.metricChipSyncing,
+              ]}
               onPress={() => handleMetric(mc.key)}
+              disabled={isSyncing}
             >
               <IconComp size={14} color={isSelected ? mc.color : Colors.textTertiary} />
               <Text style={[styles.metricChipText, isSelected && { color: mc.color }]}>{mc.label}</Text>
+              {isSyncing && <Text style={styles.syncingTag}>syncing…</Text>}
             </TouchableOpacity>
           );
         })}
@@ -529,6 +599,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: 'transparent',
   },
+  metricChipSyncing: { opacity: 0.5 },
+  syncingTag: { fontSize: 10, fontStyle: 'italic' as const, color: Colors.textTertiary },
   metricChipText: { fontSize: 13, fontWeight: '600' as const, color: Colors.textSecondary },
   metricRow: {
     flexDirection: 'row',

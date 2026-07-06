@@ -36,17 +36,85 @@ import {
   CircleAlert,
   Watch,
   Plus,
+  HeartPulse,
+  Footprints,
+  Wind,
+  Scale,
+  CalendarHeart,
+  Clock,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import SectionSwitcher, { HEALTH_SECTIONS } from '@/components/SectionSwitcher';
 import { useWearables } from '@/providers/WearablesProvider';
-import { RecoveryStatus, ScoreResult } from '@/types/wearables';
+import { DailyBiometricRecord, RecoveryStatus, ScoreResult, WearableConnection } from '@/types/wearables';
+import {
+  METRIC_GROUPS,
+  MetricDefinition,
+  MetricGroup,
+  PROVIDER_CAPABILITIES,
+  PROVIDER_CATALOG,
+  metricsForGroup,
+  normalizeProviderSlug,
+} from '@/constants/wearableCapabilities';
 
 const statusColors: Record<RecoveryStatus, { bg: string; text: string; gradient: [string, string] }> = {
   green: { bg: '#ECFDF5', text: '#059669', gradient: ['#059669', '#10B981'] },
   yellow: { bg: '#FFFBEB', text: '#D97706', gradient: ['#D97706', '#F59E0B'] },
   red: { bg: '#FEF2F2', text: '#DC2626', gradient: ['#DC2626', '#EF4444'] },
 };
+
+function GroupIcon({ name, size, color }: { name: string; size: number; color: string }) {
+  switch (name) {
+    case 'HeartPulse': return <HeartPulse size={size} color={color} />;
+    case 'Moon': return <Moon size={size} color={color} />;
+    case 'Footprints': return <Footprints size={size} color={color} />;
+    case 'Droplets': return <Droplets size={size} color={color} />;
+    case 'Heart': return <Heart size={size} color={color} />;
+    case 'Wind': return <Wind size={size} color={color} />;
+    case 'Scale': return <Scale size={size} color={color} />;
+    case 'CalendarHeart': return <CalendarHeart size={size} color={color} />;
+    default: return <Activity size={size} color={color} />;
+  }
+}
+
+function providerDisplayName(slug: string): string {
+  return PROVIDER_CATALOG.find(p => p.slug === normalizeProviderSlug(slug))?.name
+    ?? slug.replace(/_/g, ' ');
+}
+
+/** First connected provider that can supply any metric in the group. */
+function expectedProviderForGroup(group: MetricGroup, connections: WearableConnection[]): string | null {
+  const groupKeys = new Set(metricsForGroup(group.key).map(m => m.key));
+  for (const conn of connections) {
+    if (!conn.connected) continue;
+    const caps = PROVIDER_CAPABILITIES[normalizeProviderSlug(conn.source)] ?? [];
+    if (caps.some(k => groupKeys.has(k))) return providerDisplayName(conn.source);
+  }
+  return null;
+}
+
+function formatMetricValue(metric: MetricDefinition, record: DailyBiometricRecord | null): string {
+  if (!record) return '--';
+  for (const field of metric.fields) {
+    const v = record[field];
+    if (v == null || (Array.isArray(v) && v.length === 0)) continue;
+    if (typeof v === 'number') {
+      if (metric.key === 'sleepDuration' || metric.key === 'sleepStages') {
+        return `${(v / 60).toFixed(1)} h`;
+      }
+      const rounded = Number.isInteger(v) ? String(v) : v.toFixed(1);
+      return metric.unit ? `${rounded} ${metric.unit}` : rounded;
+    }
+    if (typeof v === 'string') {
+      const parsed = new Date(v);
+      if ((field === 'bedtime' || field === 'wakeTime') && !Number.isNaN(parsed.getTime())) {
+        return parsed.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      }
+      return v.charAt(0).toUpperCase() + v.slice(1);
+    }
+  }
+  return '--';
+}
 
 export default function WearablesTodayScreen() {
   const router = useRouter();
@@ -61,6 +129,8 @@ export default function WearablesTodayScreen() {
     refreshData,
     dataCompleteness,
     baselineDeviations,
+    metricAvailability,
+    groupAvailability,
     aiInsight,
     isGeneratingAI,
     generateAIInsight,
@@ -137,6 +207,12 @@ export default function WearablesTodayScreen() {
   const statusConfig = statusColors[status];
   const activeNotifications = notifications.filter(n => !n.dismissed);
   const notableDeviations = baselineDeviations.filter(d => d.classification !== 'normal');
+
+  // Capability-driven group rendering: live groups get metric tiles,
+  // expected groups get a waiting placeholder, locked groups collapse into
+  // compact unlock rows at the bottom.
+  const visibleGroups = METRIC_GROUPS.filter(g => groupAvailability[g.key] !== 'locked');
+  const lockedGroups = METRIC_GROUPS.filter(g => groupAvailability[g.key] === 'locked');
 
   return (
     <ScrollView
@@ -346,6 +422,43 @@ export default function WearablesTodayScreen() {
           )}
         </View>
 
+        {visibleGroups.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Your Metrics</Text>
+            {visibleGroups.map(group => {
+              const isLive = groupAvailability[group.key] === 'live';
+              const liveMetrics = metricsForGroup(group.key).filter(m => metricAvailability[m.key] === 'live');
+              return (
+                <View key={group.key} style={styles.groupCard}>
+                  <View style={styles.groupHeader}>
+                    <View style={styles.groupIconWrap}>
+                      <GroupIcon name={group.icon} size={16} color={Colors.primary} />
+                    </View>
+                    <Text style={styles.groupLabel}>{group.label}</Text>
+                  </View>
+                  {isLive ? (
+                    <View style={styles.groupTiles}>
+                      {liveMetrics.map(metric => (
+                        <View key={metric.key} style={styles.groupTile}>
+                          <Text style={styles.groupTileLabel}>{metric.shortLabel}</Text>
+                          <Text style={styles.groupTileValue}>{formatMetricValue(metric, todayRecord)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.groupWaitingRow}>
+                      <Clock size={13} color={Colors.textTertiary} />
+                      <Text style={styles.groupWaitingText}>
+                        Waiting for first sync from {expectedProviderForGroup(group, connections) ?? 'your device'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </>
+        )}
+
         {rec && (
           <View style={styles.quickGlanceSection}>
             <Text style={styles.sectionTitle}>Training Guidance</Text>
@@ -383,6 +496,36 @@ export default function WearablesTodayScreen() {
             <ChevronRight size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
         </View>
+
+        {lockedGroups.length > 0 && (
+          <View style={styles.unlockSection}>
+            <Text style={styles.sectionTitle}>Get more from your data</Text>
+            {lockedGroups.map(group => {
+              const suggestions = group.suggestedProviders
+                .slice(0, 2)
+                .map(slug => providerDisplayName(slug));
+              return (
+                <TouchableOpacity
+                  key={group.key}
+                  style={styles.unlockRow}
+                  onPress={() => navigateTo('/(tabs)/(health)/(wearables)/connections')}
+                  activeOpacity={0.7}
+                  testID={`unlock-${group.key}`}
+                >
+                  <View style={styles.unlockIconWrap}>
+                    <GroupIcon name={group.icon} size={15} color={Colors.textTertiary} />
+                  </View>
+                  <View style={styles.unlockContent}>
+                    <Text style={styles.unlockLabel}>{group.label}</Text>
+                    <Text style={styles.unlockDescription} numberOfLines={1}>{group.description}</Text>
+                    <Text style={styles.unlockSuggestion}>Connect {suggestions.join(' or ')}</Text>
+                  </View>
+                  <ChevronRight size={15} color={Colors.textTertiary} />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         <View style={styles.disclaimer}>
           <Text style={styles.disclaimerText}>
@@ -587,6 +730,23 @@ const styles = StyleSheet.create({
   navCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, borderRadius: 14, padding: 16, gap: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
   navCardTitle: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, flex: 1 },
   navCardSub: { fontSize: 12, color: Colors.textTertiary },
+  groupCard: { backgroundColor: Colors.surface, borderRadius: 14, padding: 14, marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  groupIconWrap: { width: 28, height: 28, borderRadius: 8, backgroundColor: Colors.primary + '12', justifyContent: 'center', alignItems: 'center' },
+  groupLabel: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  groupTiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  groupTile: { flexGrow: 1, minWidth: 90, backgroundColor: Colors.surfaceSecondary, borderRadius: 10, padding: 10, gap: 2 },
+  groupTileLabel: { fontSize: 10, fontWeight: '600' as const, color: Colors.textTertiary, letterSpacing: 0.4 },
+  groupTileValue: { fontSize: 15, fontWeight: '700' as const, color: Colors.text },
+  groupWaitingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceSecondary, borderRadius: 10, padding: 10 },
+  groupWaitingText: { fontSize: 12, color: Colors.textTertiary, fontStyle: 'italic' as const },
+  unlockSection: { marginBottom: 20 },
+  unlockRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.surface, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.borderLight },
+  unlockIconWrap: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center' },
+  unlockContent: { flex: 1 },
+  unlockLabel: { fontSize: 13, fontWeight: '600' as const, color: Colors.text },
+  unlockDescription: { fontSize: 11, color: Colors.textTertiary },
+  unlockSuggestion: { fontSize: 11, fontWeight: '600' as const, color: Colors.primary, marginTop: 2 },
   disclaimer: { padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: 10, marginBottom: 20 },
   disclaimerText: { fontSize: 11, color: Colors.textTertiary, lineHeight: 16, textAlign: 'center' },
 });

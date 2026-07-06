@@ -26,6 +26,11 @@ import {
   HAS_HEALTH_CONNECTIONS_QUERY_KEY,
 } from '@/hooks/useHealthData';
 
+import {
+  computeMetricAvailability,
+  computeGroupAvailability,
+  normalizeProviderSlug,
+} from '@/constants/wearableCapabilities';
 import { generateDailyRecommendation } from '@/utils/wearables/recommendationEngine';
 import { generateBaseline, computeDataCompleteness, computeAllDeviations, DataCompletenessResult, BaselineDeviation } from '@/utils/wearables/baselineEngine';
 import { computeTrendAnalysis, TrendAnalysis, detectWeekdayWeekendEffect, computeCycleLinkedTrends, CycleLinkedTrend, computeChangePercent } from '@/utils/wearables/trendEngine';
@@ -267,6 +272,23 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     return computeCycleLinkedTrends(records.slice(0, 30), metric);
   }, [records]);
 
+  // Capability-driven availability: 'live' | 'expected' | 'locked' per
+  // metric/group, computed from the last 14 days of records + connected
+  // provider slugs. Drives the adaptive wearable screens.
+  const metricAvailability = useMemo(() => {
+    const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().substring(0, 10);
+    const recentRecords = records.filter(r => r.date >= cutoff);
+    const connectedSlugs = connections
+      .filter(c => c.connected)
+      .map(c => normalizeProviderSlug(c.source));
+    return computeMetricAvailability(recentRecords, connectedSlugs);
+  }, [records, connections]);
+
+  const groupAvailability = useMemo(
+    () => computeGroupAvailability(metricAvailability),
+    [metricAvailability],
+  );
+
   const isLoading = recordsQuery.isLoading || connectionsQuery.isLoading;
 
   return useMemo(() => ({
@@ -291,6 +313,8 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     getCycleLinkedTrends,
     dataCompleteness,
     baselineDeviations,
+    metricAvailability,
+    groupAvailability,
     aiInsight,
     isGeneratingAI: generateAIInsightMutation.isPending,
     generateAIInsight: generateAIInsightMutation.mutate,
@@ -306,6 +330,7 @@ export const [WearablesProvider, useWearables] = createContextHook(() => {
     getTrendSeries, getTrendAnalysis,
     getWeekdayWeekendEffect, getCycleLinkedTrends,
     dataCompleteness, baselineDeviations,
+    metricAvailability, groupAvailability,
     aiInsight, generateAIInsightMutation.isPending,
     generateAIInsightMutation.mutate,
     notifications, practitionerFlags, dismissNotification,

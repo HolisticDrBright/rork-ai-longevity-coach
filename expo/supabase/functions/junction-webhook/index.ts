@@ -95,20 +95,41 @@ async function verifyLegacySignature(body: string, signature: string): Promise<b
 
 // ── Payload parsing helpers ────────────────────────────────
 
+/**
+ * Categorize a Junction event type into a record_type routed to the rollup.
+ * The resource types recognized here MUST stay in sync with
+ * ROUTED_JUNCTION_RESOURCES in expo/constants/wearableCapabilities.ts (the
+ * app-side canonical list, asserted by __tests__/wearables/capabilities.test.ts).
+ * Everything else still lands in raw_health_events untouched — the rollup's
+ * normalizePayload simply maps unknown types to no columns.
+ */
 function getRecordType(eventType: string): string | null {
   const match = eventType.match(/(?:daily|historical)\.data\.(\w+)\.\w+/);
   if (match) return match[1];
   if (eventType.includes('sleep')) return 'sleep';
   if (eventType.includes('activity')) return 'activity';
-  if (eventType.includes('body')) return 'body';
-  if (eventType.includes('workout')) return 'workout';
-  if (eventType.includes('heart_rate')) return 'heart_rate';
-  if (eventType.includes('hrv') || eventType.includes('heart_rate_variability')) return 'hrv';
+  if (eventType.includes('blood_pressure')) return 'blood_pressure';
   if (eventType.includes('blood_oxygen')) return 'blood_oxygen';
+  if (eventType.includes('glucose')) return 'glucose';
+  if (eventType.includes('basal_body_temperature')) return 'basal_body_temperature';
+  if (eventType.includes('body_temperature_delta')) return 'body_temperature_delta';
+  if (eventType.includes('body_temperature')) return 'body_temperature';
+  if (eventType.includes('body')) return 'body';
+  if (eventType.includes('workout_duration')) return 'workout_duration';
+  if (eventType.includes('workout')) return 'workout';
+  if (eventType.includes('heart_rate_variability') || eventType.includes('hrv')) return 'hrv';
+  if (eventType.includes('heartrate') || eventType.includes('heart_rate')) return 'heartrate';
   if (eventType.includes('respiratory')) return 'respiratory_rate';
   if (eventType.includes('temperature')) return 'temperature';
   if (eventType.includes('vo2')) return 'vo2_max';
   if (eventType.includes('steps')) return 'steps';
+  if (eventType.includes('calories')) return 'calories_active';
+  if (eventType.includes('water') || eventType.includes('hydration')) return 'water';
+  if (eventType.includes('caffeine')) return 'caffeine';
+  if (eventType.includes('weight')) return 'weight';
+  if (eventType.includes('fat')) return 'fat';
+  if (eventType.includes('stress')) return 'stress_level';
+  if (eventType.includes('menstrual')) return 'menstrual_cycle';
   return null;
 }
 

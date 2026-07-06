@@ -116,7 +116,7 @@ export async function initialize(userId: string): Promise<void> {
  * BUG #1 FIX: write-ahead uses status='connecting', not 'active'.
  * BUG #2 FIX: user_id is explicitly set in every upsert payload.
  */
-export async function connectDevice(): Promise<{
+export async function connectDevice(provider?: string): Promise<{
   success: boolean;
   newProvider?: string;
   permissionResult?: 'success' | 'cancelled' | 'error';
@@ -130,11 +130,12 @@ export async function connectDevice(): Promise<{
   const preSnapshot = await listConnectedProviders();
   const preSlugs = new Set(preSnapshot.map(p => p.slug));
 
-  // 2. Open Link FIRST — user picks their provider.
+  // 2. Open Link FIRST — deep-links straight to `provider` when given,
+  // otherwise Junction shows its provider picker.
   // The short-lived link token is generated server-side; no API key on device.
   let linkUrl: string;
   try {
-    linkUrl = await getLinkUrl();
+    linkUrl = await getLinkUrl(provider);
   } catch (err) {
     console.log('[Health] Could not get link token:', err instanceof Error ? err.message : String(err));
     return { success: false };

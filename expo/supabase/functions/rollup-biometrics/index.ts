@@ -112,8 +112,53 @@ function normalizeWorkout(payload: any): Partial<DailyRow> {
   };
 }
 
+function normalizeCycle(payload: any): Partial<DailyRow> {
+  // Only cycle_phase has a daily_biometric_records column today
+  // (cycle day estimate is not persisted — see healthService row mapping).
+  const phase = payload.phase ?? payload.cyclePhase ?? payload.cycle_phase ?? null;
+  const known = ['menstrual', 'follicular', 'ovulatory', 'luteal'];
+  return {
+    cycle_phase: typeof phase === 'string' && known.includes(phase) ? phase : null,
+  };
+}
+
+/**
+ * Timeseries resource → daily_biometric_records column mapping.
+ * The record types handled here MUST stay in sync with
+ * ROUTED_JUNCTION_RESOURCES in expo/constants/wearableCapabilities.ts (the
+ * app-side canonical list, asserted by __tests__/wearables/capabilities.test.ts).
+ */
 function normalizeTimeseries(recordType: string, payload: any): Partial<DailyRow> {
   const value = payload.value ?? payload.data?.[0]?.value;
+
+  // Multi-field / delta-based resources first — these can carry data even
+  // when the generic `value` field is absent.
+  switch (recordType) {
+    case 'blood_pressure': {
+      // Strategy: daily LATEST reading — equal-priority events from the same
+      // provider merge in fetch order, so the most recently ingested reading
+      // for the day wins (see mergeRecords). Not a daily average.
+      const systolic = payload.systolic ?? value ?? null;
+      const diastolic = payload.diastolic ?? null;
+      if (systolic == null && diastolic == null) return {};
+      return { systolic_bp: systolic, diastolic_bp: diastolic };
+    }
+    case 'heartrate':
+    case 'heart_rate': {
+      const resting = payload.restingBpm ?? payload.resting_bpm ?? value ?? null;
+      const avg = payload.avgBpm ?? payload.avg_bpm ?? payload.averageBpm ?? payload.average_bpm ?? null;
+      if (resting == null && avg == null) return {};
+      return { resting_hr: resting, avg_hr: avg };
+    }
+    case 'body_temperature':
+    case 'basal_body_temperature': {
+      // Absolute temperatures have no column; only a delta-from-baseline
+      // field (when the provider supplies one) maps to temp_deviation.
+      const delta = payload.temperatureDelta ?? payload.temperature_delta;
+      return delta != null ? { temp_deviation: delta } : {};
+    }
+  }
+
   if (value == null) return {};
 
   switch (recordType) {
@@ -124,14 +169,19 @@ function normalizeTimeseries(recordType: string, payload: any): Partial<DailyRow
       return { glucose_avg: Math.round(mgDl * 10) / 10 };
     }
     case 'vo2_max': return { vo2max: value };
-    case 'heart_rate': return { resting_hr: payload.restingBpm ?? payload.resting_bpm ?? value };
     case 'hrv': return { hrv: value };
     case 'respiratory_rate': return { respiratory_rate: value };
-    case 'temperature': return { temp_deviation: value };
-    case 'blood_pressure': return {
-      systolic_bp: payload.systolic ?? value,
-      diastolic_bp: payload.diastolic ?? null,
-    };
+    case 'temperature':
+    case 'body_temperature_delta': return { temp_deviation: value };
+    case 'steps': return { steps: value };
+    case 'calories_active': return { calories_burned: value };
+    case 'water': return { hydration_ml: value };
+    case 'caffeine': return { caffeine_mg: value };
+    case 'stress_level': return { stress_score_vendor: value };
+    case 'weight': return { weight_kg: value };
+    case 'fat': return { body_fat_percent: value };
+    // workout_duration arrives in seconds
+    case 'workout_duration': return { workout_minutes: Math.round(value / 60) };
     default: return {};
   }
 }
@@ -141,7 +191,9 @@ function normalizePayload(recordType: string, payload: any): Partial<DailyRow> {
     case 'sleep': return normalizeSleep(payload);
     case 'activity': return normalizeActivity(payload);
     case 'body': return normalizeBody(payload);
-    case 'workout': return normalizeWorkout(payload);
+    case 'workout':
+    case 'workouts': return normalizeWorkout(payload);
+    case 'menstrual_cycle': return normalizeCycle(payload);
     default: return normalizeTimeseries(recordType, payload);
   }
 }

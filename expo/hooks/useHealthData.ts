@@ -65,7 +65,7 @@ export function useHasConnections() {
 export function useConnectDevice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => healthService.connectDevice(),
+    mutationFn: (provider?: string | void) => healthService.connectDevice(provider ?? undefined),
     onSuccess: (result) => {
       if (result.success) {
         void qc.invalidateQueries({ queryKey: [CONNECTIONS_KEY] });

@@ -194,6 +194,61 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   { slug: 'eight_sleep', name: 'Eight Sleep', category: 'Sleep' },
 ];
 
+/**
+ * Canonical list of Junction resource types routed by the ingestion
+ * pipeline into daily_biometric_records columns. The edge functions
+ * (supabase/functions/junction-webhook + rollup-biometrics) are Deno and
+ * cannot be imported by vitest, so this list is the testable contract:
+ * every metric's primary junctionResource must appear here, and the edge
+ * functions carry a comment pointing back at this constant. Update both
+ * together.
+ */
+export const ROUTED_JUNCTION_RESOURCES: string[] = [
+  // summaries
+  'sleep',
+  'activity',
+  'body',
+  'workout',
+  'workouts',
+  'workout_duration',
+  // activity timeseries
+  'steps',
+  'calories_active',
+  'vo2_max',
+  // cardio / recovery timeseries
+  'heartrate',
+  'heart_rate',
+  'hrv',
+  'respiratory_rate',
+  'blood_oxygen',
+  'blood_pressure',
+  'stress_level',
+  // metabolic
+  'glucose',
+  'water',
+  'caffeine',
+  // body composition & temperature
+  'weight',
+  'fat',
+  'temperature',
+  'body_temperature',
+  'body_temperature_delta',
+  'basal_body_temperature',
+  // cycle
+  'menstrual_cycle',
+];
+
+/**
+ * Junction reports on-device platforms under different slugs than the
+ * capability registry uses. Normalize before looking up capabilities.
+ */
+export function normalizeProviderSlug(slug: string): string {
+  const s = slug.toLowerCase();
+  if (s === 'apple_health_kit') return 'apple_health';
+  if (s === 'health_connect') return 'google_health';
+  return s;
+}
+
 export type MetricAvailability = 'live' | 'expected' | 'locked';
 
 export function getMetric(key: string): MetricDefinition | undefined {

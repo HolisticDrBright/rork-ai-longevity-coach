@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,11 +21,21 @@ import {
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
 import { showAlert, confirmAsync } from '@/lib/ui/appAlert';
+import CapabilityChip from '@/components/ui/CapabilityChip';
+import {
+  PROVIDER_CATALOG,
+  ProviderInfo,
+  capabilitiesForProvider,
+  normalizeProviderSlug,
+  MetricAvailability,
+} from '@/constants/wearableCapabilities';
+import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   apple_health_kit: 'Apple Health',
   apple_health: 'Apple Health',
   health_connect: 'Health Connect',
+  google_health: 'Health Connect (Android)',
   oura: 'Oura Ring',
   fitbit: 'Fitbit',
   whoop: 'WHOOP',
@@ -34,23 +44,39 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   polar: 'Polar',
   eight_sleep: 'Eight Sleep',
   strava: 'Strava',
+  dexcom: 'Dexcom CGM',
+  freestyle_libre: 'FreeStyle Libre',
+  omron: 'Omron BP Monitor',
 };
 
 function displayName(slug: string): string {
-  return PROVIDER_DISPLAY_NAMES[slug] ?? slug.replace(/_/g, ' ');
+  return PROVIDER_DISPLAY_NAMES[slug]
+    ?? PROVIDER_CATALOG.find(p => p.slug === normalizeProviderSlug(slug))?.name
+    ?? slug.replace(/_/g, ' ');
 }
-import { useConnectDevice, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
+
+const CATALOG_CATEGORIES: ProviderInfo['category'][] = [
+  'Rings & Bands',
+  'Watches & Trackers',
+  'Phone Health Platforms',
+  'CGMs',
+  'Blood Pressure & Scales',
+  'Sleep',
+];
 
 export default function ConnectionsScreen() {
-  const { connections, hasConnections, isRefreshing } = useWearables();
+  const { connections, hasConnections, isRefreshing, metricAvailability } = useWearables();
   const connectMutation = useConnectDevice();
   const disconnectMutation = useDisconnectProvider();
   const syncMutation = useSyncHealth();
 
-  const handleConnect = useCallback(async () => {
+  // Catalog rows pass their provider slug so Junction Link deep-links
+  // straight to that device's auth flow; omitting it (the generic
+  // "Connect device" button) opens Junction's provider picker.
+  const handleConnect = useCallback(async (provider?: string) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const result = await connectMutation.mutateAsync();
+      const result = await connectMutation.mutateAsync(provider);
       if (result.success && result.newProvider) {
         showAlert('Connected', `${displayName(result.newProvider)} is now connected. Data will start syncing shortly.`);
       } else if (result.success && !result.newProvider) {
@@ -86,6 +112,18 @@ export default function ConnectionsScreen() {
   const connectedDevices = connections.filter(c => c.connected);
   const isConnecting = connectMutation.isPending;
 
+  const connectedSlugs = useMemo(
+    () => new Set(connectedDevices.map(c => normalizeProviderSlug(c.source))),
+    [connectedDevices],
+  );
+
+  const catalogByCategory = useMemo(() => {
+    const available = PROVIDER_CATALOG.filter(p => !connectedSlugs.has(p.slug));
+    return CATALOG_CATEGORIES
+      .map(category => ({ category, providers: available.filter(p => p.category === category) }))
+      .filter(section => section.providers.length > 0);
+  }, [connectedSlugs]);
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       {/* Privacy banner */}
@@ -106,13 +144,10 @@ export default function ConnectionsScreen() {
           <Text style={styles.emptyBody}>
             Connect a wearable device to unlock personalized health intelligence — sleep analysis, HRV trends, recovery scoring, and more.
           </Text>
-          <TouchableOpacity style={styles.connectButton} onPress={handleConnect}>
+          <TouchableOpacity style={styles.connectButton} onPress={() => handleConnect()}>
             <Plus color="#fff" size={20} />
             <Text style={styles.connectButtonText}>Connect a device</Text>
           </TouchableOpacity>
-          <Text style={styles.providerHint}>
-            Works with Oura, Fitbit, Apple Health, Health Connect, Garmin, Whoop, and more.
-          </Text>
           {Platform.OS === 'android' && (
             <Text style={styles.androidNote}>
               Note: Android Health Connect limits historical data to the last 30 days. This is a Google restriction, not ours.
@@ -135,9 +170,7 @@ export default function ConnectionsScreen() {
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderLeft}>
               <Wifi size={16} color={Colors.success} />
-              <Text style={styles.sectionTitle}>
-                {connectedDevices.length} device{connectedDevices.length !== 1 ? 's' : ''} connected
-              </Text>
+              <Text style={styles.sectionTitle}>Connected</Text>
             </View>
             <TouchableOpacity
               style={styles.refreshButton}
@@ -155,43 +188,95 @@ export default function ConnectionsScreen() {
             </TouchableOpacity>
           </View>
 
-          {connectedDevices.map(conn => (
-            <View key={conn.id} style={styles.deviceCard}>
-              <View style={styles.deviceHeader}>
-                <View style={styles.deviceIcon}>
-                  <Watch size={20} color={Colors.primary} />
+          {connectedDevices.map(conn => {
+            const capabilities = capabilitiesForProvider(normalizeProviderSlug(conn.source));
+            const chipStates: { key: string; label: string; availability: MetricAvailability }[] =
+              capabilities.map(m => ({
+                key: m.key,
+                label: m.shortLabel,
+                availability: metricAvailability[m.key] ?? 'expected',
+              }));
+            const anyLive = chipStates.some(c => c.availability === 'live');
+            return (
+              <View key={conn.id} style={styles.deviceCard}>
+                <View style={styles.deviceHeader}>
+                  <View style={styles.deviceIcon}>
+                    <Watch size={20} color={Colors.primary} />
+                  </View>
+                  <View style={styles.deviceInfo}>
+                    <Text style={styles.deviceName}>{displayName(conn.source)}</Text>
+                    <Text style={styles.deviceStatus}>{anyLive ? 'Syncing data' : 'Connected'}</Text>
+                    {conn.lastSync && (
+                      <View style={styles.syncRow}>
+                        <Clock size={11} color={Colors.textTertiary} />
+                        <Text style={styles.syncText}>
+                          Last synced {new Date(conn.lastSync).toLocaleString()}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    style={styles.disconnectButton}
+                    onPress={() => handleDisconnect(conn.source)}
+                    disabled={disconnectMutation.isPending}
+                  >
+                    <Trash2 size={16} color={Colors.danger} />
+                  </TouchableOpacity>
                 </View>
-                <View style={styles.deviceInfo}>
-                  <Text style={styles.deviceName}>{displayName(conn.source)}</Text>
-                  {conn.lastSync && (
-                    <View style={styles.syncRow}>
-                      <Clock size={11} color={Colors.textTertiary} />
-                      <Text style={styles.syncText}>
-                        Last synced {new Date(conn.lastSync).toLocaleString()}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={styles.disconnectButton}
-                  onPress={() => handleDisconnect(conn.source)}
-                  disabled={disconnectMutation.isPending}
-                >
-                  <Trash2 size={16} color={Colors.danger} />
-                </TouchableOpacity>
+                {chipStates.length > 0 && (
+                  <View style={styles.chipsRow}>
+                    {chipStates.map(chip => (
+                      <CapabilityChip key={chip.key} label={chip.label} availability={chip.availability} />
+                    ))}
+                  </View>
+                )}
+                {!anyLive && chipStates.length > 0 && (
+                  <Text style={styles.awaitingNote}>Awaiting first sync — metrics will light up as data arrives.</Text>
+                )}
               </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Device catalog */}
+      {catalogByCategory.length > 0 && (
+        <View style={styles.catalogSection}>
+          <Text style={styles.catalogTitle}>Add a device</Text>
+          <Text style={styles.catalogSubtitle}>
+            Each device unlocks different metrics. Connecting opens the secure Junction picker.
+          </Text>
+          {catalogByCategory.map(section => (
+            <View key={section.category} style={styles.catalogCategory}>
+              <Text style={styles.catalogCategoryLabel}>{section.category}</Text>
+              {section.providers.map(provider => {
+                const caps = capabilitiesForProvider(provider.slug).slice(0, 5);
+                return (
+                  <View key={provider.slug} style={styles.catalogRow}>
+                    <View style={styles.catalogInfo}>
+                      <Text style={styles.catalogName}>{provider.name}</Text>
+                      {caps.length > 0 && (
+                        <View style={styles.chipsRow}>
+                          {caps.map(m => (
+                            <CapabilityChip key={m.key} label={m.shortLabel} />
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.catalogConnectBtn}
+                      onPress={() => handleConnect(provider.slug)}
+                      disabled={isConnecting}
+                      testID={`connect-${provider.slug}`}
+                    >
+                      <Plus size={13} color={Colors.primary} />
+                      <Text style={styles.catalogConnectText}>Connect</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
             </View>
           ))}
-
-          {/* Connect another */}
-          <TouchableOpacity
-            style={styles.connectAnotherButton}
-            onPress={handleConnect}
-            disabled={isConnecting}
-          >
-            <Plus size={16} color={Colors.primary} />
-            <Text style={styles.connectAnotherText}>Connect another device</Text>
-          </TouchableOpacity>
         </View>
       )}
     </ScrollView>
@@ -222,7 +307,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24, paddingVertical: 14, marginTop: 8,
   },
   connectButtonText: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  providerHint: { fontSize: 12, color: Colors.textTertiary, textAlign: 'center', marginTop: 4 },
   androidNote: {
     fontSize: 11, color: Colors.textTertiary, textAlign: 'center',
     fontStyle: 'italic', marginTop: 8, maxWidth: 300,
@@ -234,7 +318,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border,
   },
   connectingText: { fontSize: 14, color: Colors.textSecondary },
-  connectedSection: { gap: 10 },
+  connectedSection: { gap: 10, marginBottom: 24 },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginBottom: 4,
@@ -257,8 +341,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + '15',
     justifyContent: 'center', alignItems: 'center',
   },
-  deviceInfo: { flex: 1, gap: 4 },
+  deviceInfo: { flex: 1, gap: 2 },
   deviceName: { fontSize: 15, fontWeight: '600', color: Colors.text },
+  deviceStatus: { fontSize: 11, fontWeight: '600', color: Colors.success },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   syncText: { fontSize: 11, color: Colors.textTertiary },
   disconnectButton: {
@@ -266,10 +351,28 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.danger + '10',
     justifyContent: 'center', alignItems: 'center',
   },
-  connectAnotherButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 12, borderRadius: 10,
-    borderWidth: 1, borderColor: Colors.primary, borderStyle: 'dashed',
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  awaitingNote: { fontSize: 11, color: Colors.textTertiary, fontStyle: 'italic', marginTop: 8 },
+  catalogSection: { marginBottom: 8 },
+  catalogTitle: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+  catalogSubtitle: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17, marginBottom: 14 },
+  catalogCategory: { marginBottom: 16 },
+  catalogCategoryLabel: {
+    fontSize: 11, fontWeight: '700', color: Colors.textTertiary,
+    letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8,
   },
-  connectAnotherText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
+  catalogRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: Colors.surface, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 12, marginBottom: 8,
+  },
+  catalogInfo: { flex: 1 },
+  catalogName: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  catalogConnectBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: Colors.primary,
+  },
+  catalogConnectText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
 });
