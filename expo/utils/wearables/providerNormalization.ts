@@ -172,6 +172,29 @@ const PROVIDER_MAPPINGS: Record<WearableSource, ProviderFieldMapping> = {
   whoop: WHOOP_MAPPING,
   fitbit: FITBIT_MAPPING,
   garmin: APPLE_HEALTH_MAPPING,
+  // Single-metric and niche devices: production normalization happens in the
+  // rollup-biometrics edge function; these client-side mappings cover the
+  // fields those providers can send through Junction's normalized payloads.
+  dexcom: { provider: 'dexcom', fieldMappings: { 'glucose': 'glucoseAvg' } },
+  freestyle_libre: { provider: 'freestyle_libre', fieldMappings: { 'glucose': 'glucoseAvg' } },
+  omron: { provider: 'omron', fieldMappings: { 'systolic': 'bloodPressureSystolic', 'diastolic': 'bloodPressureDiastolic' } },
+  withings: {
+    provider: 'withings',
+    fieldMappings: {
+      'weight': 'weight',
+      'fat': 'bodyFatPercent',
+      'systolic': 'bloodPressureSystolic',
+      'diastolic': 'bloodPressureDiastolic',
+    },
+  },
+  polar: {
+    provider: 'polar',
+    fieldMappings: { 'hrResting': 'restingHr', 'hrAverage': 'avgHr', 'caloriesActive': 'caloriesBurned' },
+  },
+  eight_sleep: {
+    provider: 'eight_sleep',
+    fieldMappings: { 'averageHrv': 'hrv', 'respiratoryRate': 'respiratoryRate' },
+  },
   manual: { provider: 'manual', fieldMappings: {} },
 };
 
