@@ -73,6 +73,20 @@ export function useGetLinkUrl() {
 }
 
 /**
+ * Sync connected sources from Junction into Supabase and refresh.
+ */
+export function useSyncConnectedSources() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => trpcClient.junction.syncConnectedSources.mutate(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['wearables_connections'] });
+      void qc.invalidateQueries({ queryKey: ['has_health_connections'] });
+    },
+  });
+}
+
+/**
  * Record a completed provider connection in Supabase.
  */
 export function useRecordConnection() {

@@ -21,8 +21,9 @@ import {
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useWearables } from '@/providers/WearablesProvider';
+import { Image } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
-import { useGetLinkUrl, useDisconnectProvider, useSyncHealth } from '@/hooks/useHealthData';
+import { useGetLinkUrl, useDisconnectProvider, useSyncHealth, useSyncConnectedSources, useJunctionProviders } from '@/hooks/useHealthData';
 import ProviderPickerModal from '@/components/ProviderPickerModal';
 import LinkWebViewModal from '@/components/LinkWebViewModal';
 
@@ -50,6 +51,11 @@ export default function ConnectionsScreen() {
   const getLinkUrl = useGetLinkUrl();
   const disconnectMutation = useDisconnectProvider();
   const syncMutation = useSyncHealth();
+  const syncConnected = useSyncConnectedSources();
+  const { data: allProviders } = useJunctionProviders();
+  const providerLogoMap = Object.fromEntries(
+    (allProviders ?? []).map(p => [p.slug, { name: p.name, logo: p.logo }])
+  );
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [linkUrl, setLinkUrl] = useState<string | null>(null);
@@ -81,11 +87,16 @@ export default function ConnectionsScreen() {
   const handleConnected = useCallback((provider?: string) => {
     setWebViewVisible(false);
     setLinkUrl(null);
-    void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
+    // Sync from Junction → Supabase so the list reflects the new connection
+    syncConnected.mutate(undefined, {
+      onSettled: () => {
+        void queryClient.invalidateQueries({ queryKey: ['wearables_connections'] });
+      },
+    });
     if (provider) {
       Alert.alert('Connected', `${displayName(provider)} is now connected. Data will start syncing shortly.`);
     }
-  }, [queryClient]);
+  }, [queryClient, syncConnected]);
 
   const handleDisconnect = useCallback((provider: string) => {
     Alert.alert(
@@ -179,14 +190,20 @@ export default function ConnectionsScreen() {
             </TouchableOpacity>
           </View>
 
-          {connectedDevices.map(conn => (
+          {connectedDevices.map(conn => {
+            const providerInfo = providerLogoMap[conn.source];
+            return (
             <View key={conn.id} style={styles.deviceCard}>
               <View style={styles.deviceHeader}>
                 <View style={styles.deviceIcon}>
-                  <Watch size={20} color={Colors.primary} />
+                  {providerInfo?.logo ? (
+                    <Image source={{ uri: providerInfo.logo }} style={styles.providerLogo} resizeMode="contain" />
+                  ) : (
+                    <Watch size={20} color={Colors.primary} />
+                  )}
                 </View>
                 <View style={styles.deviceInfo}>
-                  <Text style={styles.deviceName}>{displayName(conn.source)}</Text>
+                  <Text style={styles.deviceName}>{providerInfo?.name ?? displayName(conn.source)}</Text>
                   {conn.lastSync && (
                     <View style={styles.syncRow}>
                       <Clock size={11} color={Colors.textTertiary} />
@@ -205,7 +222,7 @@ export default function ConnectionsScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          ))}
+          );})}
 
           {/* Connect another */}
           <TouchableOpacity
@@ -290,10 +307,12 @@ const styles = StyleSheet.create({
   },
   deviceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   deviceIcon: {
-    width: 40, height: 40, borderRadius: 10,
-    backgroundColor: Colors.primary + '15',
+    width: 44, height: 44, borderRadius: 12,
+    backgroundColor: Colors.surfaceSecondary,
     justifyContent: 'center', alignItems: 'center',
+    overflow: 'hidden',
   },
+  providerLogo: { width: 36, height: 36 },
   deviceInfo: { flex: 1, gap: 4 },
   deviceName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -123,6 +123,53 @@ export const junctionRouter = createTRPCRouter({
             return response;
         }),
 
+    /**
+     * Fetch the current user's connected sources from Junction and upsert
+     * them into wearable_connections so the UI has fresh data.
+     */
+    syncConnectedSources: protectedProcedure
+        .mutation(async ({ ctx }) => {
+            const supabase = createServerSupabaseClient(ctx.sessionToken);
+            const adminSupabase = createServiceSupabaseClient();
+
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('junction_user_id')
+                .eq('id', ctx.user.id)
+                .single();
+
+            if (!profile?.junction_user_id) {
+                return { connected: [] };
+            }
+
+            const junctionUser = await junctionClient.user.get({
+                userId: profile.junction_user_id,
+            });
+
+            const sources = junctionUser.connectedSources ?? [];
+
+            for (const s of sources) {
+                await adminSupabase
+                    .from('wearable_connections')
+                    .upsert({
+                        user_id: ctx.user.id,
+                        provider: s.provider.slug,
+                        source_system: 'junction',
+                        status: 'active',
+                        last_sync_at: new Date().toISOString(),
+                    }, { onConflict: 'user_id,provider' });
+            }
+
+            return {
+                connected: sources.map(s => ({
+                    slug: s.provider.slug,
+                    name: s.provider.name,
+                    logo: s.provider.logo,
+                    connectedOn: s.createdOn,
+                })),
+            };
+        }),
+
     getAllProviders: publicProcedure.query(async () => {
         try {
             const providers = await junctionClient.providers.getAll();
