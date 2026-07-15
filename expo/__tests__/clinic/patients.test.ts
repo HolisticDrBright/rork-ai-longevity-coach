@@ -211,12 +211,23 @@ describe('patientsRouter handlers', () => {
 
   describe('exportRecord', () => {
     test('returns placeholder export URL', async () => {
+      // Handler first verifies ownership via
+      // clinic_patients.select('id').eq('id').eq('clinician_id').maybeSingle()
+      mockFrom.mockReturnValue(createChainableMock({ data: { id: 'patient-001' } }));
+
       const result = await caller.exportRecord({
         patientId: 'patient-001',
         format: 'json',
       }) as { downloadUrl: string; expiresAt: string };
       expect(result.downloadUrl).toContain('exports');
       expect(result.expiresAt).toBeDefined();
+    });
+
+    test('throws NOT_FOUND when patient is not owned by caller', async () => {
+      mockFrom.mockReturnValue(createChainableMock({ data: null }));
+      await expect(
+        caller.exportRecord({ patientId: 'someone-elses', format: 'json' }),
+      ).rejects.toThrow(/not found|access denied/i);
     });
   });
 
