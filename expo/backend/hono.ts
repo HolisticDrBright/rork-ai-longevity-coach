@@ -9,7 +9,35 @@ import { sentryMiddleware } from "./sentry-middleware";
 
 const app = new Hono();
 
-app.use("*", cors());
+// Environment-driven CORS allowlist (security finding #5: wildcard CORS).
+// Native mobile requests send no Origin header and are unaffected. Browser
+// origins must be listed in CORS_ALLOWED_ORIGINS (comma-separated). When the
+// variable is unset, only localhost dev origins are allowed — never "*".
+const isProd = (process.env.NODE_ENV ?? "production") === "production";
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const devOrigins = [
+  "http://localhost:3000",
+  "http://localhost:8081",
+  "http://localhost:19006",
+];
+
+app.use(
+  "*",
+  cors({
+    origin: (origin) => {
+      // No Origin header (native mobile, server-to-server) → allow.
+      if (!origin) return origin;
+      if (allowedOrigins.includes(origin)) return origin;
+      if (!isProd && devOrigins.includes(origin)) return origin;
+      // Not allowlisted → deny (never reflect an arbitrary origin, never "*").
+      return null;
+    },
+    credentials: true,
+  }),
+);
 app.use("*", secureHeaders());
 app.use("*", sentryMiddleware());
 

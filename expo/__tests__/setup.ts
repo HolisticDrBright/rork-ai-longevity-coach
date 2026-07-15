@@ -31,6 +31,17 @@ export function createChainableMock(resolvedValue: {
       error: resolvedValue.error ?? null,
     })
   );
+  // `.maybeSingle()` mirrors `.single()` but yields `null` (not an error)
+  // when no row matches — matches the supabase-js client surface the
+  // routers actually call (e.g. exportRecord, biometrics type lookups).
+  chain.maybeSingle = vi.fn(() =>
+    Promise.resolve({
+      data: Array.isArray(resolvedValue.data)
+        ? (resolvedValue.data[0] ?? null)
+        : (resolvedValue.data ?? null),
+      error: resolvedValue.error ?? null,
+    })
+  );
   chain.then = (
     _resolve: (v: unknown) => void,
     _reject?: (e: unknown) => void
