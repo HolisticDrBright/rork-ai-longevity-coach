@@ -11,43 +11,36 @@ import { protectedProcedure } from "./create-context";
  * and patient/tenant access is enforced in ONE place rather than
  * re-implemented — or forgotten — per handler.
  *
- * Current reality: the app has Supabase-authenticated users but no
- * organization / role model yet (the schema is not even in version control —
- * see docs/database-inventory.md). So:
- *   - `authenticatedProcedure` is available now (identical to the existing
- *     protectedProcedure; the new name is the forward-looking one).
- *   - `assertPatientAccess` centralizes the clinician→patient ownership check
- *     that clinic handlers must run, using the columns that already exist.
- *   - `organizationProcedure` / `practitionerProcedure` / `adminProcedure`
- *     depend on the org/role model that does not exist yet, so they are
- *     explicit NOT_IMPLEMENTED stubs — wiring them up must wait for the
- *     organization migration, and they fail loudly instead of silently
- *     under-enforcing in the meantime.
+ * Two token pools exist during the ADR-0002 transition
+ * (AI_DESKTOP_PRO/docs/architecture-decisions/0002-identity-and-system-of-record.md):
+ *   - LEGACY pool (mobile app, this file): `authenticatedProcedure` +
+ *     `assertPatientAccess` against the legacy project, unchanged.
+ *   - CLINICAL pool (desktop + future mobile): the org/role model now exists
+ *     in the dedicated clinical project, so the former NOT_IMPLEMENTED stubs
+ *     are real — implemented in ./clinical-authorization.ts and re-exported
+ *     here. They validate tokens against the clinical project and enforce
+ *     membership/role/patient access through RLS-scoped queries.
  *
  * IMPORTANT: `assertPatientAccess` is defense-in-depth at the application
- * layer. It does NOT replace Row Level Security. RLS remains the enforcement
- * of record and must be authored/verified separately once the live schema is
- * captured (see docs/security-gap-analysis.md §3).
+ * layer. It does NOT replace Row Level Security. On the clinical project, RLS
+ * (private.can_access_patient) is the enforcement of record, proven by
+ * supabase/tests/practitioner_assignment_access.sql in AI_DESKTOP_PRO.
  */
 
-/** A valid Supabase session is required. Same behavior as protectedProcedure. */
+/** A valid LEGACY-pool Supabase session is required (mobile app). */
 export const authenticatedProcedure = protectedProcedure;
 
-function notImplementedProcedure(name: string) {
-  return protectedProcedure.use(async () => {
-    throw new TRPCError({
-      code: "NOT_IMPLEMENTED",
-      message: `${name} requires the organization/role model (Phase-1 organization migration), which is not available yet.`,
-    });
-  });
-}
-
-/** Requires org membership — stub until the organization model exists. */
-export const organizationProcedure = notImplementedProcedure("organizationProcedure");
-/** Requires a practitioner role — stub until the role model exists. */
-export const practitionerProcedure = notImplementedProcedure("practitionerProcedure");
-/** Requires an admin role — stub until the role model exists. */
-export const adminProcedure = notImplementedProcedure("adminProcedure");
+/**
+ * Clinical-pool guards (dedicated project). See ./clinical-authorization.ts
+ * for the implementations and their guarantees.
+ */
+export {
+  clinicalAuthenticatedProcedure,
+  organizationProcedure,
+  practitionerProcedure,
+  adminProcedure,
+  patientAccessProcedure,
+} from "./clinical-authorization";
 
 /**
  * Assert that the authenticated clinician owns (is the responsible clinician
