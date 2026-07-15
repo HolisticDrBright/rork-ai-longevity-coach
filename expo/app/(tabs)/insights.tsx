@@ -40,10 +40,12 @@ import {
   Send,
   Sparkles,
   X,
+  History,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 
 import Colors from '@/constants/colors';
+import { featureFlags } from '@/lib/featureFlags';
 import { useUser } from '@/providers/UserProvider';
 import { useLabs } from '@/providers/LabsProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
@@ -434,6 +436,23 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {featureFlags.clinicalReasoning && (
+          <TouchableOpacity
+            style={styles.timelineLink}
+            onPress={() => router.push('/timeline' as any)}
+            testID="insights-timeline-link"
+          >
+            <History size={18} color={Colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.timelineLinkTitle}>My Health Timeline</Text>
+              <Text style={styles.timelineLinkSubtitle}>
+                Labs, symptoms, protocols and wearables in one chronological record
+              </Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textTertiary} />
+          </TouchableOpacity>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Disorder Risk Analysis</Text>
           <Text style={styles.sectionSubtitle}>
@@ -846,6 +865,27 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 120,
+  },
+  timelineLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    padding: 14,
+    marginBottom: 16,
+  },
+  timelineLinkTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  timelineLinkSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   section: {
     marginBottom: 20,

@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { makePatientRow, makeHealthHistoryRow, makeAlertEventRow, makeLabDocumentRow, makeLabResultRow, makeBiometricReadingRow } from './test-helpers';
-import { mockFrom, createChainableMock, mockCtx } from '../setup';
+import { mockFrom, createChainableMock, setupMockFrom, mockCtx } from '../setup';
 
 import { patientsRouter } from '../../backend/trpc/routes/clinic/patients';
 import { createTRPCRouter } from '../../backend/trpc/create-context';
@@ -211,12 +211,24 @@ describe('patientsRouter handlers', () => {
 
   describe('exportRecord', () => {
     test('returns placeholder export URL', async () => {
+      setupMockFrom({
+        clinic_patients: createChainableMock({ data: [{ id: 'patient-001' }] }),
+      });
       const result = await caller.exportRecord({
         patientId: 'patient-001',
         format: 'json',
       }) as { downloadUrl: string; expiresAt: string };
       expect(result.downloadUrl).toContain('exports');
       expect(result.expiresAt).toBeDefined();
+    });
+
+    test('denies export for a patient the clinician does not own', async () => {
+      setupMockFrom({
+        clinic_patients: createChainableMock({ data: null }),
+      });
+      await expect(
+        caller.exportRecord({ patientId: 'patient-999', format: 'json' })
+      ).rejects.toThrow();
     });
   });
 

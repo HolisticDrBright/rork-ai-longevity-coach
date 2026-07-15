@@ -369,6 +369,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           severity: entry.severity,
           logged_at: new Date().toISOString(),
           notes: symptoms.notes || null,
+          duration_minutes: null,
         });
       }
 
@@ -411,6 +412,7 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           severity: checkIn.weight,
           logged_at: new Date().toISOString(),
           notes: `Weekly check-in: ${checkIn.wins || ''}`,
+          duration_minutes: null,
         });
       }
       if (checkIn.restingHeartRate) {
@@ -418,6 +420,8 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           symptom_name: 'resting_heart_rate',
           severity: checkIn.restingHeartRate,
           logged_at: new Date().toISOString(),
+          notes: null,
+          duration_minutes: null,
         });
       }
       if (checkIn.sleepScore) {
@@ -425,6 +429,8 @@ export const [ProtocolProvider, useProtocol] = createContextHook(() => {
           symptom_name: 'sleep_score_checkin',
           severity: checkIn.sleepScore,
           logged_at: new Date().toISOString(),
+          notes: null,
+          duration_minutes: null,
         });
       }
 

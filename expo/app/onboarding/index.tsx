@@ -77,7 +77,7 @@ export default function OnboardingProfileScreen() {
             </View>
             <Text style={styles.headerTitle}>Your Profile</Text>
             <Text style={styles.headerSubtitle}>
-              Let's personalize your health journey
+              Let&apos;s personalize your health journey
             </Text>
           </View>
         </SafeAreaView>

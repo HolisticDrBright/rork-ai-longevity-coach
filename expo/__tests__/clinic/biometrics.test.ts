@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { makeBiometricTypeRow, makeBiometricReadingRow, makeThresholdsRow } from './test-helpers';
-import { mockFrom, createChainableMock, mockCtx } from '../setup';
+import { mockFrom, createChainableMock, setupMockFrom, mockCtx } from '../setup';
 
 import { biometricsRouter } from '../../backend/trpc/routes/clinic/biometrics';
 import { createTRPCRouter } from '../../backend/trpc/create-context';
@@ -164,14 +164,27 @@ describe('biometricsRouter handlers', () => {
 
   describe('deleteReading', () => {
     test('returns success', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      const result = await caller.deleteReading({ id: 'reading-001' }) as { success: boolean };
+      setupMockFrom({
+        clinic_patients: createChainableMock({ data: [{ id: 'patient-001' }] }),
+        clinic_biometric_readings: createChainableMock({ data: null }),
+      });
+      const result = await caller.deleteReading({ id: 'reading-001', patientId: 'patient-001' }) as { success: boolean };
       expect(result.success).toBe(true);
     });
 
+    test('throws when the clinician does not own the patient', async () => {
+      setupMockFrom({
+        clinic_patients: createChainableMock({ data: null }),
+      });
+      await expect(caller.deleteReading({ id: 'reading-001', patientId: 'patient-999' })).rejects.toThrow();
+    });
+
     test('throws on error', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'fail' } }));
-      await expect(caller.deleteReading({ id: 'bad' })).rejects.toThrow();
+      setupMockFrom({
+        clinic_patients: createChainableMock({ data: [{ id: 'patient-001' }] }),
+        clinic_biometric_readings: createChainableMock({ data: null, error: { message: 'fail' } }),
+      });
+      await expect(caller.deleteReading({ id: 'bad', patientId: 'patient-001' })).rejects.toThrow();
     });
   });
 

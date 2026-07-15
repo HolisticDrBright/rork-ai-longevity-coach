@@ -323,7 +323,7 @@ export default function TrackingScreen() {
                       <Pill color={Colors.chartTeal} size={18} />
                     </View>
                     <View style={styles.supplementTitleInfo}>
-                      <Text style={styles.sectionTitle}>Today's Supplements</Text>
+                      <Text style={styles.sectionTitle}>Today&apos;s Supplements</Text>
                       <Text style={styles.supplementProgress}>
                         {completedSupplementCount} of {supplementActions.length} taken
                       </Text>

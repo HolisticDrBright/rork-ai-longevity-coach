@@ -42,6 +42,18 @@ export default function ClinicLayout() {
           title: 'Supplements Admin',
         }}
       />
+      <Stack.Screen
+        name="reasoning"
+        options={{
+          title: 'Clinical Reasoning',
+        }}
+      />
+      <Stack.Screen
+        name="review-queue"
+        options={{
+          title: 'Review Queue',
+        }}
+      />
     </Stack>
   );
 }

@@ -274,7 +274,7 @@ export default function NewMealCapture() {
   const renderPhotoMode = () => (
     <View style={styles.modePanel}>
       <Text style={styles.panelTitle}>Snap your meal</Text>
-      <Text style={styles.panelSubtitle}>We'll identify the foods automatically</Text>
+      <Text style={styles.panelSubtitle}>We&apos;ll identify the foods automatically</Text>
 
       {photoUri ? (
         <View style={styles.photoPreviewContainer}>
@@ -352,7 +352,7 @@ export default function NewMealCapture() {
     <View style={styles.modePanel}>
       <Text style={styles.panelTitle}>Type what you ate</Text>
       <Text style={styles.panelSubtitle}>
-        Plain English works — e.g. "2 eggs, half avocado on sourdough toast and a coffee"
+        Plain English works — e.g. &quot;2 eggs, half avocado on sourdough toast and a coffee&quot;
       </Text>
 
       <TextInput
@@ -422,7 +422,7 @@ export default function NewMealCapture() {
       <View style={styles.modePanel}>
         <Text style={styles.panelTitle}>Tell me what you ate</Text>
         <Text style={styles.panelSubtitle}>
-          Tap the mic and speak naturally. We'll transcribe and break down the macros.
+          Tap the mic and speak naturally. We&apos;ll transcribe and break down the macros.
         </Text>
 
         <View style={styles.voiceContainer}>
@@ -517,7 +517,7 @@ export default function NewMealCapture() {
                   testID={`mode-${opt.mode}`}
                 >
                   <View style={styles.modeTabIcon}>
-                    {React.cloneElement(opt.icon as React.ReactElement, {
+                    {React.cloneElement(opt.icon as React.ReactElement<{ color?: string }>, {
                       color: active ? Colors.primary : Colors.textSecondary,
                     })}
                   </View>

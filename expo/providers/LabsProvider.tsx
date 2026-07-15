@@ -370,6 +370,7 @@ const labExtractionSchema = z.object({
 
 const STORAGE_KEY = 'longevity_lab_panels';
 const LATEST_ANALYSIS_KEY = 'longevity_latest_lab_analysis';
+const CROSS_LAB_SYNTHESIS_KEY = 'longevity_cross_lab_synthesis';
 
 export interface StoredLabAnalysis {
   panelId?: string;
@@ -380,10 +381,18 @@ export interface StoredLabAnalysis {
   flaggedBiomarkerNames: string[];
 }
 
+export interface CrossLabSynthesis {
+  patterns: string[];
+  narrative: string;
+  panelCount: number;
+  generatedAt: string;
+}
+
 export const [LabsProvider, useLabs] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [labPanels, setLabPanels] = useState<LabPanel[]>([]);
   const [latestAnalysis, setLatestAnalysis] = useState<StoredLabAnalysis | null>(null);
+  const [crossLabSynthesis, setCrossLabSynthesis] = useState<CrossLabSynthesis | null>(null);
 
   const labsQuery = useQuery({
     queryKey: ['labPanels'],
@@ -409,6 +418,18 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
   useEffect(() => {
     if (latestAnalysisQuery.data !== undefined) setLatestAnalysis(latestAnalysisQuery.data);
   }, [latestAnalysisQuery.data]);
+
+  const crossLabSynthesisQuery = useQuery({
+    queryKey: ['crossLabSynthesis'],
+    queryFn: async () => {
+      const stored = await secureGetJSON<CrossLabSynthesis>(CROSS_LAB_SYNTHESIS_KEY);
+      return stored ?? null;
+    },
+  });
+
+  useEffect(() => {
+    if (crossLabSynthesisQuery.data !== undefined) setCrossLabSynthesis(crossLabSynthesisQuery.data);
+  }, [crossLabSynthesisQuery.data]);
 
   const saveLatestAnalysisMutation = useMutation({
     mutationFn: async (analysis: StoredLabAnalysis) => {
@@ -480,6 +501,91 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
     if (!latestPanel) return [];
     return latestPanel.biomarkers.filter(b => b.status === 'optimal');
   }, [latestPanel]);
+
+  // Unique biomarkers across ALL panels — the most recent value per marker name wins.
+  const allBiomarkers = useMemo(() => {
+    const byName = new Map<string, Biomarker>();
+    const sortedPanels = [...labPanels].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    for (const panel of sortedPanels) {
+      for (const bio of panel.biomarkers) {
+        byName.set(bio.name.toLowerCase().trim(), bio);
+      }
+    }
+    return Array.from(byName.values());
+  }, [labPanels]);
+
+  // Deterministic cross-panel pattern detection (rule-based, no AI call).
+  const runCrossLabSynthesis = useCallback(async (): Promise<CrossLabSynthesis> => {
+    const sortedPanels = [...labPanels].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    const series = new Map<string, { panelDate: string; bio: Biomarker }[]>();
+    for (const panel of sortedPanels) {
+      for (const bio of panel.biomarkers) {
+        const key = bio.name.toLowerCase().trim();
+        const list = series.get(key) ?? [];
+        list.push({ panelDate: panel.date, bio });
+        series.set(key, list);
+      }
+    }
+
+    const patterns: string[] = [];
+    let persistentCount = 0;
+    let shiftCount = 0;
+
+    for (const points of series.values()) {
+      const name = points[points.length - 1].bio.name;
+      const flaggedPoints = points.filter(
+        (p) => p.bio.status === 'suboptimal' || p.bio.status === 'critical'
+      );
+      if (flaggedPoints.length >= 2) {
+        persistentCount += 1;
+        patterns.push(
+          `${name} has stayed outside the optimal range across ${flaggedPoints.length} panels — a persistent finding, not a one-off.`
+        );
+        continue;
+      }
+      if (points.length >= 2) {
+        const first = points[0].bio.value;
+        const last = points[points.length - 1].bio.value;
+        if (first !== 0 && Number.isFinite(first) && Number.isFinite(last)) {
+          const pct = ((last - first) / Math.abs(first)) * 100;
+          if (Math.abs(pct) >= 15) {
+            shiftCount += 1;
+            patterns.push(
+              `${name} ${pct > 0 ? 'increased' : 'decreased'} ${Math.abs(Math.round(pct))}% between ${new Date(points[0].panelDate).toLocaleDateString()} and ${new Date(points[points.length - 1].panelDate).toLocaleDateString()}.`
+            );
+          }
+        }
+      }
+    }
+
+    const latestFlagged = allBiomarkers.filter(
+      (b) => b.status === 'suboptimal' || b.status === 'critical'
+    );
+    if (latestFlagged.length >= 3) {
+      patterns.unshift(
+        `${latestFlagged.length} markers are currently outside optimal range: ${latestFlagged.slice(0, 5).map((b) => b.name).join(', ')}${latestFlagged.length > 5 ? '…' : ''}.`
+      );
+    }
+
+    const synthesis: CrossLabSynthesis = {
+      patterns: patterns.slice(0, 8),
+      narrative:
+        patterns.length === 0
+          ? 'No recurring cross-lab patterns detected yet. Patterns emerge as more panels accumulate.'
+          : `Rule-based comparison of ${sortedPanels.length} panels found ${persistentCount} persistent finding(s) and ${shiftCount} meaningful shift(s). These are observations for review — not diagnoses.`,
+      panelCount: sortedPanels.length,
+      generatedAt: new Date().toISOString(),
+    };
+
+    await secureSetJSON(CROSS_LAB_SYNTHESIS_KEY, synthesis);
+    setCrossLabSynthesis(synthesis);
+    void queryClient.invalidateQueries({ queryKey: ['crossLabSynthesis'] });
+    return synthesis;
+  }, [labPanels, allBiomarkers, queryClient]);
 
   const getBiomarkerTrend = useCallback((biomarkerId: string): 'up' | 'down' | 'stable' | null => {
     if (!latestPanel || !previousPanel) return null;
@@ -847,6 +953,47 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
 
       let analysisText = '';
 
+      const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
+
+You are a world-class functional medicine, longevity, and systems-biology physician.
+
+Analyze the lab results shown in this image using a root-cause, pattern-recognition, and longevity-optimization framework.
+
+For your response, structure it exactly as follows:
+
+1. BIG-PICTURE SUMMARY (TOP PRIORITIES)
+In 3–6 bullets, identify the most important physiological imbalances.
+Rank them by impact on: Energy, Hormones, Metabolism, Brain, Immune system, Inflammation, Longevity
+
+2. PATTERN RECOGNITION
+Identify patterns: Mitochondrial dysfunction, Insulin resistance, Thyroid resistance, HPA axis dysregulation, Estrogen dominance, Methylation issues, Oxidative stress, Inflammation, Immune issues, Detox congestion, Gut issues, Chronic infections
+Explain how markers connect as systems.
+
+3. MARKER-BY-MARKER ANALYSIS
+For each abnormal marker: What it means, system it belongs to, functional range, root causes, consequences, links to other markers
+
+4. FUNCTIONAL OPTIMAL TARGETS
+Current value, lab range, functional optimal range, gap from optimal, clinical meaning
+
+5. ROOT-CAUSE ACTION PLAN
+A) Diet - foods to emphasize/avoid, therapeutic diet style
+B) Lifestyle - sleep, circadian, stress, training, sauna/cold, light
+C) Supplements - foundational, targeted, doses, timing, mechanism
+D) Peptides/Advanced Tools - if appropriate
+E) Detox & Gut Repair - Phase I/II support, binders, microbiome
+
+6. LONGEVITY INTERPRETATION
+Biological age, cardiometabolic risk, neurodegeneration, cancer terrain, hormone aging, mitochondrial resilience, inflammaging
+
+7. PATIENT-FRIENDLY EXPLANATION
+Explain simply: What's off, why it matters, what fixing it changes. Speak directly to "you".
+
+8. PRIORITY SUMMARY
+Top 3 Things to Fix First
+If You Do Nothing Else, Do These 3 Things
+
+Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
+
       if (isPdf && openaiFileId) {
         console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
         try {
@@ -891,47 +1038,6 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
           priorityActions: extractedData.priorityActions,
         };
       }
-
-      const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
-
-You are a world-class functional medicine, longevity, and systems-biology physician.
-
-Analyze the lab results shown in this image using a root-cause, pattern-recognition, and longevity-optimization framework.
-
-For your response, structure it exactly as follows:
-
-1. BIG-PICTURE SUMMARY (TOP PRIORITIES)
-In 3–6 bullets, identify the most important physiological imbalances.
-Rank them by impact on: Energy, Hormones, Metabolism, Brain, Immune system, Inflammation, Longevity
-
-2. PATTERN RECOGNITION
-Identify patterns: Mitochondrial dysfunction, Insulin resistance, Thyroid resistance, HPA axis dysregulation, Estrogen dominance, Methylation issues, Oxidative stress, Inflammation, Immune issues, Detox congestion, Gut issues, Chronic infections
-Explain how markers connect as systems.
-
-3. MARKER-BY-MARKER ANALYSIS
-For each abnormal marker: What it means, system it belongs to, functional range, root causes, consequences, links to other markers
-
-4. FUNCTIONAL OPTIMAL TARGETS
-Current value, lab range, functional optimal range, gap from optimal, clinical meaning
-
-5. ROOT-CAUSE ACTION PLAN
-A) Diet - foods to emphasize/avoid, therapeutic diet style
-B) Lifestyle - sleep, circadian, stress, training, sauna/cold, light
-C) Supplements - foundational, targeted, doses, timing, mechanism
-D) Peptides/Advanced Tools - if appropriate
-E) Detox & Gut Repair - Phase I/II support, binders, microbiome
-
-6. LONGEVITY INTERPRETATION
-Biological age, cardiometabolic risk, neurodegeneration, cancer terrain, hormone aging, mitochondrial resilience, inflammaging
-
-7. PATIENT-FRIENDLY EXPLANATION
-Explain simply: What's off, why it matters, what fixing it changes. Speak directly to "you".
-
-8. PRIORITY SUMMARY
-Top 3 Things to Fix First
-If You Do Nothing Else, Do These 3 Things
-
-Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
 
       console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
 
@@ -1210,6 +1316,9 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,
     isLoading: labsQuery.isLoading,
@@ -1233,6 +1342,9 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
     previousPanel,
     flaggedBiomarkers,
     optimalBiomarkers,
+    allBiomarkers,
+    crossLabSynthesis,
+    runCrossLabSynthesis,
     biomarkersByCategory,
     latestAnalysis,
     labsQuery.isLoading,

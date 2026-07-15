@@ -75,3 +75,40 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
     },
   });
 });
+
+/**
+ * Server-side role check against the user_roles table (RLS lets a user read
+ * their own roles). Fails closed: no row or query error means no role.
+ */
+export async function getAppRoles(sessionToken: string, userId: string): Promise<string[]> {
+  try {
+    const { createServerSupabaseClient } = await import("../supabase-server");
+    const sb = createServerSupabaseClient(sessionToken);
+    const { data, error } = await sb
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    if (error || !data) return [];
+    return data.map((r: { role: string }) => String(r.role));
+  } catch {
+    return [];
+  }
+}
+
+/** Requires an authenticated user whose user_roles include practitioner/admin. */
+export const practitionerProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const roles = await getAppRoles(ctx.sessionToken, ctx.user.id);
+  const isPractitioner = roles.includes("practitioner") || roles.includes("admin");
+  if (!isPractitioner) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Practitioner role required",
+    });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      roles,
+    },
+  });
+});

@@ -140,7 +140,7 @@ export default function NutritionDashboard() {
       >
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Today's Nutrition</Text>
+            <Text style={styles.greeting}>Today&apos;s Nutrition</Text>
             <Text style={styles.date}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </Text>

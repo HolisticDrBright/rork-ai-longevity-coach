@@ -367,7 +367,7 @@ export default function ConfirmFoods() {
                   activeOpacity={0.8}
                 >
                   <Plus size={20} color={Colors.textInverse} />
-                  <Text style={styles.addModalButtonText}>Add "{newItemName || '...'}"</Text>
+                  <Text style={styles.addModalButtonText}>Add &quot;{newItemName || '...'}&quot;</Text>
                 </TouchableOpacity>
               </View>
             </View>

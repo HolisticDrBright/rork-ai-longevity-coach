@@ -123,7 +123,7 @@ export default function TodayScreen() {
 
             <View style={styles.progressCard}>
               <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>Today's Progress</Text>
+                <Text style={styles.progressLabel}>Today&apos;s Progress</Text>
                 <Text style={styles.progressPercentage}>{adherencePercentage}%</Text>
               </View>
               <View style={styles.progressBarContainer}>
@@ -191,7 +191,7 @@ export default function TodayScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Today's Actions</Text>
+            <Text style={styles.sectionTitle}>Today&apos;s Actions</Text>
             <TouchableOpacity onPress={() => router.push('/(tabs)/protocol' as any)}>
               <Text style={styles.seeAllText}>See Protocol</Text>
             </TouchableOpacity>

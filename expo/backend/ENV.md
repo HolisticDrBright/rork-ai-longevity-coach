@@ -20,6 +20,21 @@ All environment variables required by the Hono/tRPC backend server.
 | `APP_VERSION` | Semantic version string returned by `GET /health`. Defaults to `1.0.0`. |
 | `EXPO_PUBLIC_WEBHOOK_SECRET` | Shared HMAC secret for verifying inbound webhook payloads. Only needed if the webhook routes in `lib/webhooks.ts` are active. |
 
+## Clinical Reasoning (Phase 1)
+
+The `reasoning.*` tRPC routes need **no additional backend env vars**, but they do
+require the migration `supabase/migrations/20260715090000_clinical_reasoning_foundation.sql`
+to be applied to the Supabase project (`supabase db push`, or paste into the SQL editor).
+Until it is applied, reasoning queries return empty results and `analysis.run` returns a
+clear error. Practitioner-only routes check the `user_roles` table server-side — a user
+needs a `practitioner` (or `admin`) row there to pass `practitionerProcedure`.
+
+Client-side feature flags (set in the Expo build environment, all default **on** for
+Phase 1 and **off** for later phases): `EXPO_PUBLIC_FLAG_CLINICAL_REASONING`,
+`EXPO_PUBLIC_FLAG_HEALTH_TWIN`, `EXPO_PUBLIC_FLAG_N_OF_1`,
+`EXPO_PUBLIC_FLAG_SUPPLEMENT_INTELLIGENCE`, `EXPO_PUBLIC_FLAG_QUANTUM_MIND`
+(set to `false` to disable). See `lib/featureFlags.ts`.
+
 ## Fly.io Secrets
 
 After creating the Fly app, set secrets with:

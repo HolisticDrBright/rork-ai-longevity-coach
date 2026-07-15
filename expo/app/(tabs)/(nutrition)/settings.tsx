@@ -127,7 +127,7 @@ export default function DietSettings() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Therapeutic Diets</Text>
           <Text style={styles.sectionSubtitle}>
-            Enable the diets you're following. We'll track compliance for each meal.
+            Enable the diets you&apos;re following. We&apos;ll track compliance for each meal.
           </Text>
           
           <View style={styles.dietsContainer}>
@@ -175,7 +175,7 @@ export default function DietSettings() {
           <View style={styles.activeSection}>
             <Text style={styles.activeSectionTitle}>Active Diet Summary</Text>
             <Text style={styles.activeSectionText}>
-              You're tracking: {activeDiets.map(d => dietDescriptions[d]?.name || d).join(', ')}
+              You&apos;re tracking: {activeDiets.map(d => dietDescriptions[d]?.name || d).join(', ')}
             </Text>
             <Text style={styles.activeSectionNote}>
               Foods violating these diets will be flagged when you log meals.

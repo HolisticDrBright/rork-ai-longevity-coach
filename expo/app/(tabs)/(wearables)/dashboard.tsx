@@ -179,7 +179,7 @@ export default function WearablesTodayScreen() {
         >
           <View style={styles.heroTop}>
             <View>
-              <Text style={styles.heroLabel}>TODAY'S RECOVERY</Text>
+              <Text style={styles.heroLabel}>TODAY&apos;S RECOVERY</Text>
               <Text style={styles.heroScore}>{rec?.recoveryScore ?? '--'}</Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: 'rgba(255,255,255,0.25)' }]}>
@@ -371,7 +371,7 @@ export default function WearablesTodayScreen() {
           <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/plan')} testID="plan-nav">
             <Target size={22} color={Colors.accent} />
             <Text style={styles.navCardTitle}>Plan</Text>
-            <Text style={styles.navCardSub}>Today's full guidance</Text>
+            <Text style={styles.navCardSub}>Today&apos;s full guidance</Text>
             <ChevronRight size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.navCard} onPress={() => navigateTo('/(tabs)/(wearables)/insights-detail')} testID="insights-nav">

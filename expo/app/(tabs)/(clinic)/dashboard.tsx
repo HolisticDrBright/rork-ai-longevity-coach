@@ -9,20 +9,23 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { 
-  Users, 
-  AlertTriangle, 
-  FileText, 
+import {
+  Users,
+  AlertTriangle,
+  FileText,
   Activity,
   ChevronRight,
   Bell,
   TrendingUp,
   Clock,
   Package,
+  Brain,
+  ClipboardCheck,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { trpc } from '@/lib/trpc';
+import { featureFlags } from '@/lib/featureFlags';
 
 interface StatCardProps {
   title: string;
@@ -274,7 +277,7 @@ export default function ClinicDashboardScreen() {
           <Bell size={20} color={Colors.primary} />
           <Text style={styles.quickActionText}>Alert Inbox</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.quickAction}
           onPress={() => router.push('/(tabs)/(clinic)/supplements-admin' as any)}
         >
@@ -282,6 +285,27 @@ export default function ClinicDashboardScreen() {
           <Text style={styles.quickActionText}>Supplements</Text>
         </TouchableOpacity>
       </View>
+
+      {featureFlags.clinicalReasoning && (
+        <View style={styles.quickActions}>
+          <TouchableOpacity
+            style={styles.quickAction}
+            onPress={() => router.push('/(tabs)/(clinic)/reasoning' as any)}
+            testID="dashboard-reasoning-link"
+          >
+            <Brain size={20} color={Colors.primary} />
+            <Text style={styles.quickActionText}>Clinical Reasoning</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickAction}
+            onPress={() => router.push('/(tabs)/(clinic)/review-queue' as any)}
+            testID="dashboard-review-queue-link"
+          >
+            <ClipboardCheck size={20} color={Colors.primary} />
+            <Text style={styles.quickActionText}>Review Queue</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </ScrollView>
   );
 }

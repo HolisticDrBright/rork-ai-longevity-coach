@@ -38,6 +38,7 @@ import { useProtocol } from '@/providers/ProtocolProvider';
 import { useAuth } from '@/providers/AuthProvider';
 import { useHIPAA } from '@/providers/HIPAAProvider';
 import { sendCoachingInterest, CoachingInterest } from '@/lib/webhooks';
+import { CareTeamCard } from '@/components/reasoning/CareTeamCard';
 
 export default function ProfileScreen() {
   const { userProfile, lifestyleProfile, categoryScores, resetOnboarding, isLoading, isClinician, setUserRole } = useUser();
@@ -313,6 +314,11 @@ export default function ProfileScreen() {
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Care Team</Text>
+          <CareTeamCard />
         </View>
 
         <View style={styles.section}>
