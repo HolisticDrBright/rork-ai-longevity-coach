@@ -1,5 +1,14 @@
 # Database Inventory — Phase 0
 
+> **⚠️ UPDATE (live schema captured):** The live database was later introspected
+> directly (Supabase MCP). Conclusions below written from the repo alone are
+> **superseded by [`rls-snapshot.md`](./rls-snapshot.md)**: RLS is enabled and
+> correctly scoped on all app tables, and several entities marked "absent" here
+> (roles, practitioner⇆patient assignments, consents, a server-side `audit_logs`
+> table, account-deletion requests) **do exist** in the live DB. Also newly
+> discovered: this is a **shared ~230-table multi-product database** (PHI
+> co-resident with crypto/marketing/tarot systems). Read both files together.
+
 > **Status:** As-discovered inventory at commit `7f1be03`. **Important
 > caveat:** the committed migration
 > (`supabase/migrations/20260506081122_remote_schema.sql`) is **empty**, so

@@ -1,11 +1,17 @@
 # Security & Privacy Gap Analysis — Phase 0
 
-> **Status:** Findings from the Phase 0 audit of `rork-ai-longevity-coach` at
-> commit `7f1be03`. No changes were made. Severities reflect impact on a
-> product handling PHI. This document is deliberately blunt: the platform
-> prompt requires tenant isolation, audit, and PHI-safe handling to be
-> **established and verified before** any clinical-reasoning work begins, so
-> the gaps below are the gate for Phase 1.
+> **⚠️ UPDATE (live schema captured):** After this was written from the repo, the
+> live DB was introspected directly — see [`rls-snapshot.md`](./rls-snapshot.md).
+> Key revisions: **#3 and #4 below are largely resolved in the live database** —
+> RLS is enabled and correctly scoped on every `clinic_*` (per `clinician_id =
+> auth.uid()`) and consumer PHI table (per `user_id = auth.uid()`), and a role +
+> practitioner⇆patient-assignment model already exists. What remains true from
+> #3 is that **none of it is in version control** (the migration is empty). A
+> **new top finding** replaces the RLS worry: `utuszztwwadvoxxuyshn` is a
+> **shared ~230-table multi-product database** with clinical PHI co-resident
+> with unrelated systems (crypto, marketing, tarot). The client-side issues
+> (#1 secrets in the bundle, #2 PHI→OpenAI, #6 XOR storage, #7 client-only
+> audit log, #11 logging) are **unaffected and still stand.**
 >
 > **Nothing here should be read as a claim that the product is or is not
 > HIPAA compliant.** Software findings ≠ compliance status.

@@ -6,6 +6,39 @@
 > the order of work. It does **not** authorize any implementation; it defines
 > the first safe slice and its gate.
 
+## ⚠️ Blocking decision: which database does the platform build on?
+
+Live introspection (see [`rls-snapshot.md`](./rls-snapshot.md)) revealed that
+`utuszztwwadvoxxuyshn` ("Dr. Bright's Project") is a **shared, ~230-table
+multi-product database**: the longevity app's tables sit alongside unrelated
+crypto-trading, marketing/SEO, astrology, plant-care, and personal-finance
+systems, all in one Postgres instance under one Supabase project. The health
+schema itself is sound (RLS correct, role + practitioner-assignment model
+present), but PHI is co-resident with everything else.
+
+For a HIPAA-aiming clinical platform this is a material liability: shared
+blast radius, no clean BAA/data-residency boundary, backup/DR entangled with
+unrelated workloads, and a much larger attack surface. A brand-new project
+(`bright-os`, created 2026-07-06, in the connected org) is a natural clean
+home.
+
+**This must be decided before any migration is written**, because it changes
+the target of every subsequent DDL:
+
+- **Option A — build on `utuszztwwadvoxxuyshn` (shared).** Fastest; the real
+  health schema + RLS already exist. But PHI stays co-resident with unrelated
+  products; "no PHI in logs / clean tenant boundary" is undermined at the
+  infrastructure level. Would require scoping every migration to health tables
+  and living with the shared blast radius.
+- **Option B — stand up a dedicated project (e.g. `bright-os`) and migrate the
+  health schema there.** Clean isolation, proper BAA/residency boundary, no
+  unrelated tables. Costs a schema+data migration and a cutover, but is the
+  right long-term foundation and aligns with the prompt's tenant-isolation
+  intent. **Recommended.**
+
+Until this is answered, schema capture (ADR-0002) should be a **non-destructive
+baseline of the health tables only**, usable against either target.
+
 ## Guiding constraints (from the prompt, unchanged)
 
 - Do **not** rewrite from scratch; do **not** remove working mobile features;
