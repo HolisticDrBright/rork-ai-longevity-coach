@@ -10,6 +10,19 @@ All environment variables required by the Hono/tRPC backend server.
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous/public API key. Paired with the URL above; passed as the second argument to `createClient`. |
 | `PORT` | TCP port the server listens on. Defaults to `3000`. Set automatically by Fly.io / Railway. |
 
+## Clinical project (dedicated PHI database — ADR 0001/0002)
+
+Required for the `clinical.*` tRPC namespace (desktop app). These point at the
+**dedicated clinical Supabase project**, a different project — and a different
+`auth.users` pool — from the legacy variables above.
+
+| Variable | Description |
+|---|---|
+| `CLINICAL_SUPABASE_URL` | Clinical project URL. Used by `clinical-supabase.ts`. |
+| `CLINICAL_SUPABASE_ANON_KEY` | Clinical project anon key. Used to validate clinical-pool JWTs and to build per-request, RLS-scoped user clients. |
+| `CLINICAL_SUPABASE_SERVICE_ROLE_KEY` | Clinical project service-role key. **Server-side only, never sent to any client**; used exclusively by explicit privileged operations (invitation claim, staged import commit). |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed by the CORS allowlist (e.g. the deployed desktop app origin). Native mobile sends no Origin header and is unaffected. |
+
 ## Optional
 
 | Variable | Description |
