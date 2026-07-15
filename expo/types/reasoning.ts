@@ -89,6 +89,8 @@ export interface ClinicalFact {
 export interface ClinicalHypothesis {
   id: string;
   userId: string;
+  /** Dedupe key for rule/AI-generated candidates (e.g. 'rule:iron_insufficiency'). */
+  code?: string;
   name: string;
   description?: string;
   status: HypothesisStatus;
@@ -183,6 +185,8 @@ export interface ReasoningSnapshot {
   dataQualityIssues: DataQualityIssue[];
   missingData: MissingDataRecommendation[];
   diffFromPrevious: SnapshotDiff;
+  /** Health Twin Layer-2 systems state captured at snapshot time (Phase 2+). */
+  systemsState?: unknown[];
   previousSnapshotId?: string;
   createdBy?: string;
   createdAt: string;

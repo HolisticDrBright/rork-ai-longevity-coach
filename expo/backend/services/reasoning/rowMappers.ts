@@ -22,6 +22,7 @@ export function mapRowToHypothesis(row: Row): ClinicalHypothesis {
   return {
     id: String(row.id),
     userId: String(row.user_id),
+    code: s(row.code),
     name: s(row.name) ?? '',
     description: s(row.description),
     status: (s(row.status) as ClinicalHypothesis['status']) ?? 'proposed',
@@ -107,6 +108,7 @@ export function mapRowToSnapshot(row: Row): ReasoningSnapshot {
     dataQualityIssues: arr(row.data_quality_issues),
     missingData: arr(row.missing_data),
     diffFromPrevious: obj(row.diff_from_previous) as unknown as ReasoningSnapshot['diffFromPrevious'],
+    systemsState: arr(row.systems_state),
     previousSnapshotId: s(row.previous_snapshot_id),
     createdBy: s(row.created_by),
     createdAt: s(row.created_at) ?? '',

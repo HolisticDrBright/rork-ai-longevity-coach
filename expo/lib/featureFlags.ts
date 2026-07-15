@@ -10,8 +10,9 @@ function flag(envValue: string | undefined, defaultOn = true): boolean {
 export const featureFlags = {
   /** Phase 1: unified timeline, hypotheses, snapshots, practitioner review queue. */
   clinicalReasoning: flag(process.env.EXPO_PUBLIC_FLAG_CLINICAL_REASONING),
-  /** Phase 2+: reserved; ships dark until implemented. */
-  adaptiveHealthTwin: flag(process.env.EXPO_PUBLIC_FLAG_HEALTH_TWIN, false),
+  /** Phase 2: Adaptive Health Twin Layers 1–2 (current state + systems model). */
+  adaptiveHealthTwin: flag(process.env.EXPO_PUBLIC_FLAG_HEALTH_TWIN),
+  /** Phase 3+: reserved; ships dark until implemented. */
   nOf1Lab: flag(process.env.EXPO_PUBLIC_FLAG_N_OF_1, false),
   supplementIntelligence: flag(process.env.EXPO_PUBLIC_FLAG_SUPPLEMENT_INTELLIGENCE, false),
   quantumMind: flag(process.env.EXPO_PUBLIC_FLAG_QUANTUM_MIND, false),

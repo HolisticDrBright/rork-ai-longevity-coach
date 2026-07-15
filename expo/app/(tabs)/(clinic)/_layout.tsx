@@ -54,6 +54,12 @@ export default function ClinicLayout() {
           title: 'Review Queue',
         }}
       />
+      <Stack.Screen
+        name="health-twin"
+        options={{
+          title: 'Health Twin',
+        }}
+      />
     </Stack>
   );
 }

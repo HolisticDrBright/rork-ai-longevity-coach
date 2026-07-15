@@ -20,6 +20,17 @@ All environment variables required by the Hono/tRPC backend server.
 | `APP_VERSION` | Semantic version string returned by `GET /health`. Defaults to `1.0.0`. |
 | `EXPO_PUBLIC_WEBHOOK_SECRET` | Shared HMAC secret for verifying inbound webhook payloads. Only needed if the webhook routes in `lib/webhooks.ts` are active. |
 
+## Server-side AI (Phase 2)
+
+| Variable | Description |
+|---|---|
+| `AI_PROVIDER_API_KEY` | **Enables all server-side AI.** API key for an OpenAI-compatible provider. When unset, AI-optional features (hypothesis suggestions, server lab extraction) degrade to deterministic behavior and `labs.capabilities` reports `serverAiConfigured: false`. |
+| `AI_PROVIDER_BASE_URL` | OpenAI-compatible base URL. Default `https://api.openai.com/v1`. Point at an org-approved gateway to control where PHI flows. |
+| `AI_MODEL` | Model name passed to `/chat/completions`. Default `gpt-4.1`. |
+| `AI_TIMEOUT_MS` | Per-request timeout. Default `90000`. |
+
+Every AI call is logged to the `ai_operations` table (template, version, validation result, latency, retries) and clinical outputs are created `pending_review`. Once these are set, lab uploads route through `labs.extract` on the server and the client-side `EXPO_PUBLIC_OPENAI_API_KEY` path is no longer used for lab analysis (rotate and remove it after migration).
+
 ## Clinical Reasoning (Phase 1)
 
 The `reasoning.*` tRPC routes need **no additional backend env vars**, but they do

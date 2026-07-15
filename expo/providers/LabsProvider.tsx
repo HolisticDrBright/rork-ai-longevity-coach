@@ -314,6 +314,7 @@ import { supabase } from '@/lib/supabase';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
+import { trpcClient } from '@/lib/trpc';
 
 export interface SupplementRecommendation {
   name: string;
@@ -331,6 +332,59 @@ export interface LabAnalysisResult {
   herbs: SupplementRecommendation[];
   priorityActions: string[];
 }
+
+interface ServerExtractionResult {
+  duplicate: false;
+  documentId: string;
+  reportDate: string | null | undefined;
+  biomarkers: {
+    name: string;
+    value: number;
+    unit: string;
+    referenceMin?: number | null;
+    referenceMax?: number | null;
+    functionalMin?: number | null;
+    functionalMax?: number | null;
+    status: 'optimal' | 'normal' | 'suboptimal' | 'critical';
+  }[];
+  analysisText: string;
+  supplements: { name: string; dose: string; timing: string; reason: string; mechanism: string }[];
+  herbs: { name: string; dose: string; timing: string; reason: string; mechanism: string }[];
+  priorityActions: string[];
+  pipelineRan: boolean;
+}
+
+/** Maps the server-routed extraction (PHI-safe path) to the client result shape. */
+function mapServerLabResult(result: ServerExtractionResult, panelId?: string): LabAnalysisResult {
+  // Observation date = the report's collection date, NOT the upload date.
+  const observedAt = result.reportDate
+    ? new Date(result.reportDate.length === 10 ? `${result.reportDate}T12:00:00Z` : result.reportDate).toISOString()
+    : new Date().toISOString();
+  return {
+    analysis: {
+      id: `analysis_${Date.now()}`,
+      panelId: panelId || '',
+      date: new Date().toISOString(),
+      summary: result.analysisText,
+      status: 'completed',
+    },
+    biomarkers: result.biomarkers.map((b, index) => ({
+      id: `bio_${Date.now()}_${index}`,
+      name: b.name,
+      value: b.value,
+      unit: b.unit,
+      referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
+      functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
+      status: b.status,
+      date: observedAt,
+    })),
+    supplements: result.supplements.map((s) => ({ ...s, affiliateLink: findAffiliateLink(s.name) })),
+    herbs: result.herbs.map((h) => ({ ...h, affiliateLink: findAffiliateLink(h.name) })),
+    priorityActions: result.priorityActions,
+  };
+}
+
+const DUPLICATE_LAB_MESSAGE = 'This lab report appears to be a duplicate of one already uploaded, so it was not imported again.';
 
 const nullableNumber = z.preprocess(
   (val) => (val === null || val === undefined ? undefined : val),
@@ -733,31 +787,57 @@ export const [LabsProvider, useLabs] = createContextHook(() => {
         throw new Error('Please upload an image or PDF file of your lab results.');
       }
 
-      let base64Content = '';
-      if (isImage) {
+      const readAsBase64 = async (): Promise<string> => {
         if (Platform.OS !== 'web') {
           try {
-            base64Content = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-          } catch {
-            throw new Error('Could not read the uploaded file. Please try again.');
-          }
-        } else {
-          try {
-            const response = await fetch(fileUri);
-            const blob = await response.blob();
-            base64Content = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                const result = reader.result as string;
-                resolve(result.split(',')[1]);
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
+            return await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
           } catch {
             throw new Error('Could not read the uploaded file. Please try again.');
           }
         }
+        try {
+          const response = await fetch(fileUri);
+          const blob = await response.blob();
+          return await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              resolve(result.split(',')[1]);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch {
+          throw new Error('Could not read the uploaded file. Please try again.');
+        }
+      };
+
+      // Server-routed extraction (PHI-safe): used whenever the org configured it.
+      // Deliberately no client-side fallback after a server attempt fails —
+      // once an org routes PHI through the server, we never re-route to
+      // client-held keys (ADR 0002).
+      const serverCaps = await trpcClient.labs.capabilities.query().catch(() => null);
+      if (serverCaps?.serverAiConfigured) {
+        console.log('[Labs] Using server-side extraction');
+        const b64 = await readAsBase64();
+        const serverResult = await trpcClient.labs.extract.mutate({
+          files: [
+            {
+              base64: b64,
+              mimeType: (isPdf ? 'application/pdf' : mimeType === 'image/png' ? 'image/png' : mimeType === 'image/webp' ? 'image/webp' : 'image/jpeg') as 'application/pdf' | 'image/png' | 'image/jpeg' | 'image/webp',
+              fileName: fileName ?? (isPdf ? 'lab-results.pdf' : 'lab-results.jpg'),
+            },
+          ],
+        });
+        if (serverResult.duplicate) {
+          throw new Error(DUPLICATE_LAB_MESSAGE);
+        }
+        return mapServerLabResult(serverResult as ServerExtractionResult, panelId);
+      }
+
+      let base64Content = '';
+      if (isImage) {
+        base64Content = await readAsBase64();
       }
 
       let extractedData = { biomarkers: [], supplements: [], herbs: [], priorityActions: [] } as z.infer<typeof labExtractionSchema>;
@@ -1180,6 +1260,28 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         }
       }
       if (dataUrls.length === 0) throw new Error('Could not read any of the uploaded images.');
+
+      // Server-routed extraction (PHI-safe): used whenever the org configured it.
+      const serverCaps = await trpcClient.labs.capabilities.query().catch(() => null);
+      if (serverCaps?.serverAiConfigured) {
+        onProgress?.('Analyzing on secure server...');
+        console.log('[Labs] Using server-side extraction for', dataUrls.length, 'images');
+        const files = dataUrls.slice(0, 8).map((url, i) => {
+          const [head, b64] = url.split(',');
+          const rawMime = head.match(/data:(.*?);/)?.[1] ?? 'image/jpeg';
+          const mime = rawMime === 'image/png' ? 'image/png' : rawMime === 'image/webp' ? 'image/webp' : 'image/jpeg';
+          return {
+            base64: b64,
+            mimeType: mime as 'image/png' | 'image/jpeg' | 'image/webp',
+            fileName: `page-${i + 1}`,
+          };
+        });
+        const serverResult = await trpcClient.labs.extract.mutate({ files });
+        if (serverResult.duplicate) {
+          throw new Error(DUPLICATE_LAB_MESSAGE);
+        }
+        return mapServerLabResult(serverResult as ServerExtractionResult, panelId);
+      }
 
       const extractionPrompt = `You are analyzing pages from a lab report for a functional medicine practice. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\nIMPORTANT — When recommending supplements, PRIORITIZE these specific products:\n- ProOmega 2000 (Nordic Naturals) — for omega-3, cardiovascular\n- GlucoPrime (Healthgevity) — for blood sugar, insulin resistance\n- Protect+ 10 (Healthgevity) — foundational multi\n- Liver Sauce (Quicksilver Scientific) — liver support, detox\n- Liposomal Glutathione (Quicksilver Scientific) — glutathione, oxidative stress\n- MitoCore (Orthomolecular) — mitochondrial support, energy\n- NAC 900+ (Healthgevity) — liver, glutathione precursor\n- Gut Shield (Healthgevity) — gut repair\n- ProBiota HistaminX (Seeking Health) — probiotics, histamine\n- Sleep Deep (Healthgevity) — sleep support\n- Magnesium Glycinate 300 (Healthgevity) — magnesium\n- Methyl B Complex (Healthgevity) — B vitamins, methylation\n- D3+K2 5000 (Healthgevity) — vitamin D\n- Adrenal Restore (Healthgevity) — adrenal, cortisol\n\nUse exact product name and brand when the condition matches. Base ALL recommendations on actual biomarker values.\n\nAlso provide:\n- herbs: Recommended herbs with dose, timing, reason, mechanism\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.`;
 

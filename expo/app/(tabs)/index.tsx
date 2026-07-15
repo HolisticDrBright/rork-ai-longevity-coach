@@ -22,9 +22,11 @@ import {
   ChevronRight,
   TrendingUp,
   AlertTriangle,
+  HeartPulse,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
+import { featureFlags } from '@/lib/featureFlags';
 import { useUser } from '@/providers/UserProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useLabs } from '@/providers/LabsProvider';
@@ -183,6 +185,25 @@ export default function TodayScreen() {
               </Text>
               <Text style={styles.alertSubtitle}>
                 Review your latest lab results
+              </Text>
+            </View>
+            <ChevronRight color={Colors.textTertiary} size={20} />
+          </TouchableOpacity>
+        )}
+
+        {featureFlags.adaptiveHealthTwin && (
+          <TouchableOpacity
+            style={styles.alertCard}
+            onPress={() => router.push('/health-twin' as any)}
+            testID="today-health-twin-link"
+          >
+            <View style={styles.alertIconContainer}>
+              <HeartPulse color={Colors.primary} size={20} />
+            </View>
+            <View style={styles.alertContent}>
+              <Text style={styles.alertTitle}>Your Health Twin</Text>
+              <Text style={styles.alertSubtitle}>
+                Current state and 12 body systems, from your own data
               </Text>
             </View>
             <ChevronRight color={Colors.textTertiary} size={20} />

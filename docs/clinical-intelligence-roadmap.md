@@ -22,12 +22,15 @@ _Phased plan to evolve AI Longevity Pro into a longitudinal precision-health pla
 
 **Exit criteria:** a practitioner can see a patient's unified timeline, ranked hypotheses with evidence for/against, what changed since last snapshot, and can accept/reject items; every AI/system inference is visibly labeled and logged.
 
-## Phase 2 — Hypothesis engine & Health Twin L1/L2
+## Phase 2 — Hypothesis engine & Health Twin L1/L2 (DELIVERED — see ADR 0002)
 
-- Hypothesis generation service (specialized prompts, schema-validated, server-side) + contradiction detection stage; evidence ledger populated from observations and curated knowledge.
-- Adaptive Health Twin Layer 1 (current state) and Layer 2 (12 systems model) computed from facts + hypotheses, each system showing support level, contributors, contradictions, trend, data quality, missing data, review status.
-- Missing-data recommendations; practitioner compare view (before/after new data).
-- Migrate lab ingestion server-side: `uploaded_documents` + extraction provenance (page/location, original text, confidence, corrected-report handling, no silent overwrite).
+- ✅ Server-side AI gateway (`backend/services/ai/aiClient.ts`): env-configured OpenAI-compatible endpoint, JSON mode + zod validation with corrective retry, every attempt logged to `ai_operations`; deterministic degradation when unconfigured.
+- ✅ Hypothesis generation: deterministic rule registry (10 clinical patterns with supporting-evidence links, missing-evidence lists, `contradictedWhen` checks) + optional LLM candidates — both deduped by `code`, born `pending_review`, queued for practitioner review.
+- ✅ Contradiction detection stage records contradicting `evidence_items` when current data argues against active hypotheses; score recompute weakens them.
+- ✅ Pipeline extracted to `pipelineRunner.ts` (v2.0.0) shared by `reasoning.analysis.run` and `labs.extract`.
+- ✅ Adaptive Health Twin Layer 1 (current state) + Layer 2 (12-system model with support level, contributors, contradictions, trend vs previous snapshot, data quality, missing data, review status); `systems_state` persisted per snapshot; patient + clinic screens. Layer 3 honestly reported unavailable until Phase 4.
+- ✅ Server-side lab ingestion: `labs.extract` (two-pass verbatim→enrich, content-hash dedupe, `uploaded_documents` provenance, `lab_markers` with report-date observation time), client uses it whenever `labs.capabilities` reports configured — no client-key PHI path when server AI is on, and no silent fallback.
+- Remaining for later phases: original-file storage in Supabase Storage (bucket policies), page/location provenance per extracted value, corrected-report supersede flow UI.
 
 ## Phase 3 — Supplement Intelligence Network & deterministic safety
 

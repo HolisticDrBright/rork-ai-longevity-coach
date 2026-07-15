@@ -21,6 +21,7 @@ import {
   Package,
   Brain,
   ClipboardCheck,
+  HeartPulse,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
@@ -304,6 +305,16 @@ export default function ClinicDashboardScreen() {
             <ClipboardCheck size={20} color={Colors.primary} />
             <Text style={styles.quickActionText}>Review Queue</Text>
           </TouchableOpacity>
+          {featureFlags.adaptiveHealthTwin && (
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={() => router.push('/(tabs)/(clinic)/health-twin' as any)}
+              testID="dashboard-health-twin-link"
+            >
+              <HeartPulse size={20} color={Colors.primary} />
+              <Text style={styles.quickActionText}>Health Twin</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </ScrollView>
