@@ -6,6 +6,7 @@ import {
 } from '../../clinical-authorization';
 import { clinicalActionsRouter } from './actions';
 import { clinicalLabsRouter } from './labs';
+import { clinicalScheduleRouter } from './schedule';
 import { clinicalTasksRouter } from './tasks';
 
 /**
@@ -32,6 +33,9 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Persistent audit + downstream tasks (RPCs 0013). Desktop: api.actions.*. */
   actions: clinicalActionsRouter,
+
+  /** Calendar reads + book/status/reschedule (RPCs 0017). Desktop: api.schedule.*. */
+  schedule: clinicalScheduleRouter,
 
   organizations: createTRPCRouter({
     /** Organizations the caller belongs to (own memberships only, via RLS). */
