@@ -20,7 +20,7 @@ Required for the `clinical.*` tRPC namespace (desktop app). These point at the
 |---|---|
 | `CLINICAL_SUPABASE_URL` | Clinical project URL. Used by `clinical-supabase.ts`. |
 | `CLINICAL_SUPABASE_ANON_KEY` | Clinical project anon key. Used to validate clinical-pool JWTs and to build per-request, RLS-scoped user clients. |
-| `CLINICAL_SUPABASE_SERVICE_ROLE_KEY` | Clinical project service-role key. **Server-side only, never sent to any client**; used exclusively by explicit privileged operations (invitation claim, staged import commit). |
+| `CLINICAL_SUPABASE_SERVICE_ROLE_KEY` | Clinical project service-role key. **Server-side only, never sent to any client**; used exclusively by explicit privileged operations — today that is one call: `auth.admin.inviteUserByEmail` inside `clinical.organizations.invite` when the email has no account yet. It never queries clinical tables; membership rows are written via the admin-gated RPC as the signed-in caller. Optional: without it, inviting a brand-new email fails honestly (existing accounts can still be added). |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed by the CORS allowlist (e.g. the deployed desktop app origin). Native mobile sends no Origin header and is unaffected. |
 
 ## Optional
@@ -28,6 +28,7 @@ Required for the `clinical.*` tRPC namespace (desktop app). These point at the
 | Variable | Description |
 |---|---|
 | `NODE_ENV` | `development`, `preview`, or `production`. Controls Sentry enablement and log verbosity. Defaults to `production`. |
+| `CLINICAL_DESKTOP_URL` | Deployed desktop app origin (e.g. `https://clinic.example.com`). Used as the `redirectTo` for invitation emails so the link opens the desktop's `/reset` page; must also be in the Supabase auth redirect allowlist. Without it, Supabase falls back to the project's Site URL. |
 | `EXPO_PUBLIC_SENTRY_DSN` | Sentry DSN for the backend. If omitted, Sentry initialization is skipped and errors are only logged to stdout. |
 | `SENTRY_AUTH_TOKEN` | Sentry auth token used at **build time** to upload source maps via `@sentry/react-native/expo` plugin. Not needed at runtime. |
 | `APP_VERSION` | Semantic version string returned by `GET /health`. Defaults to `1.0.0`. |
