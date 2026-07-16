@@ -4,6 +4,11 @@ import {
   organizationProcedure,
   patientAccessProcedure,
 } from '../../clinical-authorization';
+import { clinicalActionsRouter } from './actions';
+import { clinicalOrganizationsRouter } from './organizations';
+import { clinicalLabsRouter } from './labs';
+import { clinicalScheduleRouter } from './schedule';
+import { clinicalTasksRouter } from './tasks';
 
 /**
  * Clinical-project namespace (ADR 0002). Every procedure here runs against the
@@ -21,26 +26,20 @@ export const clinicalRouter = createTRPCRouter({
     email: ctx.clinicalUser.email ?? null,
   })),
 
-  organizations: createTRPCRouter({
-    /** Organizations the caller belongs to (own memberships only, via RLS). */
-    mine: clinicalAuthenticatedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await ctx.clinicalDb
-        .from('organization_memberships')
-        .select('role, status, organizations ( id, name, slug )')
-        .eq('user_id', ctx.clinicalUser.id)
-        .eq('status', 'active');
-      if (error) throw new Error('Failed to load memberships');
-      return (data ?? []).map((m) => {
-        const org = m.organizations as unknown as { id: string; name: string; slug: string } | null;
-        return {
-          organizationId: org?.id ?? null,
-          name: org?.name ?? null,
-          slug: org?.slug ?? null,
-          role: m.role as string,
-        };
-      });
-    }),
-  }),
+  /** Review queue reads + resolve (RPC 0014). Desktop: api.tasks.*. */
+  tasks: clinicalTasksRouter,
+
+  /** Labs workspace read + marker review (RPC 0013). Desktop: api.labs.*. */
+  labs: clinicalLabsRouter,
+
+  /** Persistent audit + downstream tasks (RPCs 0013). Desktop: api.actions.*. */
+  actions: clinicalActionsRouter,
+
+  /** Calendar reads + book/status/reschedule (RPCs 0017). Desktop: api.schedule.*. */
+  schedule: clinicalScheduleRouter,
+
+  /** Memberships, roster, invite/role/remove (RPCs 0020). Desktop: api + settings. */
+  organizations: clinicalOrganizationsRouter,
 
   patients: createTRPCRouter({
     /**

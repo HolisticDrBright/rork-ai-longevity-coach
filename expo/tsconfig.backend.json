@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "backend/**/*.ts",
+    "__tests__/**/*.ts",
+    "lib/sentry.ts",
+    "lib/config.ts",
+    "types/**/*.ts"
+  ]
+}
