@@ -6,6 +6,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { sentryMiddleware } from "./sentry-middleware";
+import { labsUploadApp } from "./labs/upload-route";
 
 const app = new Hono();
 
@@ -70,6 +71,9 @@ app.use(
     createContext,
   }),
 );
+
+// Multipart lab-PDF ingestion (can't ride the superjson tRPC link).
+app.route("/api/clinical/labs", labsUploadApp);
 
 app.use("*", async (c, next) => {
   console.log(`[REQ] ${c.req.method} ${c.req.url}`);

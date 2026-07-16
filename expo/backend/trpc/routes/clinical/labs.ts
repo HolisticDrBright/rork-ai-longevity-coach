@@ -32,6 +32,7 @@ import { throwFromRpcError } from './rpc-errors';
 interface ObservationRow {
   id: string;
   biomarker_definition_id: string | null;
+  original_name: string | null;
   value_numeric: number | null;
   value_text: string | null;
   unit: string | null;
@@ -85,7 +86,11 @@ export function buildMarkers(rows: ObservationRow[]) {
   const byDef = new Map<string, ObservationRow[]>();
   for (const row of rows) {
     if (row.value_numeric == null) continue; // text-only results: chart later, never fabricate numbers
-    const key = row.biomarker_definition_id ?? `unnamed:${row.id}`;
+    // Unmatched extractions group by their verbatim source name so repeat
+    // uploads of the same unknown marker still form one series.
+    const key =
+      row.biomarker_definition_id ??
+      (row.original_name ? `orig:${row.original_name.toLowerCase()}` : `unnamed:${row.id}`);
     const list = byDef.get(key) ?? [];
     list.push(row);
     byDef.set(key, list);
@@ -96,7 +101,8 @@ export function buildMarkers(rows: ObservationRow[]) {
     list.sort((a, b) => new Date(b.observed_at).getTime() - new Date(a.observed_at).getTime());
     const latest = list[0];
     const prior = list[1];
-    const name = latest.biomarker_definitions?.canonical_name ?? 'Unnamed marker';
+    const name =
+      latest.biomarker_definitions?.canonical_name ?? latest.original_name ?? 'Unnamed marker';
     const unit = latest.unit ?? '';
     const current = Number(latest.value_numeric);
     const priorVal = prior?.value_numeric != null ? Number(prior.value_numeric) : undefined;
@@ -173,7 +179,7 @@ export const clinicalLabsRouter = createTRPCRouter({
       ctx.clinicalDb
         .from('biomarker_observations')
         .select(
-          'id, biomarker_definition_id, value_numeric, value_text, unit, status, original_reference_interval, confidence, provenance, review_status, reviewed_at, observed_at, ingested_at, lab_document_id, source, biomarker_definitions ( canonical_name, biological_system ), lab_documents ( file_name, lab_company )',
+          'id, biomarker_definition_id, original_name, value_numeric, value_text, unit, status, original_reference_interval, confidence, provenance, review_status, reviewed_at, observed_at, ingested_at, lab_document_id, source, biomarker_definitions ( canonical_name, biological_system ), lab_documents ( file_name, lab_company )',
         )
         .eq('patient_id', ctx.patient.id)
         .is('deleted_at', null)
