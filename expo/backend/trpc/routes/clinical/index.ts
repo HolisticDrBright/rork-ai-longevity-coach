@@ -4,6 +4,9 @@ import {
   organizationProcedure,
   patientAccessProcedure,
 } from '../../clinical-authorization';
+import { clinicalActionsRouter } from './actions';
+import { clinicalLabsRouter } from './labs';
+import { clinicalTasksRouter } from './tasks';
 
 /**
  * Clinical-project namespace (ADR 0002). Every procedure here runs against the
@@ -20,6 +23,15 @@ export const clinicalRouter = createTRPCRouter({
     userId: ctx.clinicalUser.id,
     email: ctx.clinicalUser.email ?? null,
   })),
+
+  /** Review queue reads + resolve (RPC 0014). Desktop: api.tasks.*. */
+  tasks: clinicalTasksRouter,
+
+  /** Labs workspace read + marker review (RPC 0013). Desktop: api.labs.*. */
+  labs: clinicalLabsRouter,
+
+  /** Persistent audit + downstream tasks (RPCs 0013). Desktop: api.actions.*. */
+  actions: clinicalActionsRouter,
 
   organizations: createTRPCRouter({
     /** Organizations the caller belongs to (own memberships only, via RLS). */
