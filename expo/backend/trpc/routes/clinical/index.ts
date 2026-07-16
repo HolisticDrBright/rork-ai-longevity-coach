@@ -5,6 +5,7 @@ import {
   patientAccessProcedure,
 } from '../../clinical-authorization';
 import { clinicalActionsRouter } from './actions';
+import { clinicalEncountersRouter, clinicalNotesRouter } from './emr';
 import { clinicalOrganizationsRouter } from './organizations';
 import { clinicalLabsRouter } from './labs';
 import { clinicalScheduleRouter } from './schedule';
@@ -40,6 +41,12 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Memberships, roster, invite/role/remove (RPCs 0020). Desktop: api + settings. */
   organizations: clinicalOrganizationsRouter,
+
+  /** Encounters + state machine (RPCs 0021). Desktop: encounter workspace. */
+  encounters: clinicalEncountersRouter,
+
+  /** Clinical notes: draft/sign/addendum/timeline (RPCs 0021). */
+  notes: clinicalNotesRouter,
 
   patients: createTRPCRouter({
     /**
