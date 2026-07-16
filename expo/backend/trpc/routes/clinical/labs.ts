@@ -69,17 +69,51 @@ const trim = (n: number): string => {
   return String(r);
 };
 
-/** 0–1 or 0–100 stored confidence → 0–100 integer. */
-export function confidencePct(raw: number | null): number {
-  if (raw == null) return 50;
+/**
+ * 0–1 or 0–100 stored confidence → 0–100 integer, or NULL when the source
+ * never recorded one. Missing confidence is UNKNOWN — it must never be
+ * fabricated as a number (a made-up "50%" reads as false precision), and
+ * unknown always requires review downstream.
+ */
+export function confidencePct(raw: number | null): number | null {
+  if (raw == null) return null;
   const pct = raw <= 1 ? raw * 100 : raw;
   return Math.max(0, Math.min(100, Math.round(pct)));
 }
 
-const bandOf = (pct: number): 'high' | 'medium' | 'low' =>
-  pct >= 90 ? 'high' : pct >= 70 ? 'medium' : 'low';
+export const bandOf = (pct: number | null): 'high' | 'medium' | 'low' | 'unknown' =>
+  pct == null ? 'unknown' : pct >= 90 ? 'high' : pct >= 70 ? 'medium' : 'low';
 
-const ABNORMAL_STATUSES = new Set(['high', 'low', 'abnormal', 'critical', 'critical-high', 'critical-low']);
+/**
+ * Stored status → desktop status, VERBATIM per direction. The stored value
+ * comes from the source lab's printed flag (never derived from free-text
+ * ranges). A missing status is UNKNOWN — never assumed normal, and never
+ * collapsed into "high" like the pre-P0 mapping did.
+ */
+export function mapMarkerStatus(
+  stored: string | null,
+): 'normal' | 'optimal' | 'low' | 'high' | 'critical-low' | 'critical-high' | 'unknown' {
+  switch ((stored ?? '').toLowerCase()) {
+    case 'normal':
+      return 'normal';
+    case 'optimal':
+      return 'optimal';
+    case 'low':
+      return 'low';
+    case 'high':
+      return 'high';
+    case 'critical_low':
+    case 'critical-low':
+      return 'critical-low';
+    case 'critical_high':
+    case 'critical-high':
+      return 'critical-high';
+    default:
+      return 'unknown';
+  }
+}
+
+const ABNORMAL = new Set(['low', 'high', 'critical-low', 'critical-high']);
 
 /** Group observations by definition and shape the desktop marker DTOs. */
 export function buildMarkers(rows: ObservationRow[]) {
@@ -107,6 +141,8 @@ export function buildMarkers(rows: ObservationRow[]) {
     const current = Number(latest.value_numeric);
     const priorVal = prior?.value_numeric != null ? Number(prior.value_numeric) : undefined;
     const pct = confidencePct(latest.confidence);
+    const band = bandOf(pct);
+    const status = mapMarkerStatus(latest.status);
     const reviewState =
       latest.review_status === 'accepted'
         ? ('reviewed' as const)
@@ -117,7 +153,6 @@ export function buildMarkers(rows: ObservationRow[]) {
       .reverse()
       .slice(-7)
       .map((o) => ({ date: fmtDate(o.observed_at), value: Number(o.value_numeric) }));
-    const abnormal = ABNORMAL_STATUSES.has((latest.status ?? '').toLowerCase());
 
     markers.push({
       id: latest.id,
@@ -135,29 +170,33 @@ export function buildMarkers(rows: ObservationRow[]) {
           : undefined,
       labRangeText: latest.original_reference_interval ?? 'Not provided by lab',
       optimalRange: { unit, source: 'Not configured' },
-      status: abnormal ? ('high' as const) : ('normal' as const),
+      status,
       trend: reviewState === 'awaiting-review' ? ('needs-review' as const) : ('stable' as const),
       series,
       confidence: pct,
-      confidenceBand: bandOf(pct),
+      confidenceBand: band,
       reviewState,
       collectedAt: fmtDate(latest.observed_at),
       source: {
         reportName:
           latest.lab_documents?.file_name ??
           `${latest.lab_documents?.lab_company ?? latest.source} record`,
-        location: 'Lab record',
+        // Rebuilt from structured columns — NOT an excerpt of the source PDF.
+        location: 'Structured result preview',
         snippet: `${name}  ${trim(current)} ${unit}   Ref: ${latest.original_reference_interval ?? 'n/a'}`,
         confidenceNote:
-          pct >= 90
-            ? 'High extraction confidence from the source record.'
-            : 'Verify value and unit against the source before relying on this result.',
+          pct == null
+            ? 'Extraction confidence was not recorded — verify against the source before relying on this result.'
+            : pct >= 90
+              ? 'High extraction confidence from the source record.'
+              : 'Verify value and unit against the source before relying on this result.',
+        documentId: latest.lab_document_id,
       },
       provenance: {
         sourceType: 'measured' as const,
         sourceName: `${latest.lab_documents?.lab_company ?? 'Lab'} · ${fmtDate(latest.observed_at)}`,
         lastUpdated: fmtDate(latest.ingested_at),
-        confidence: pct,
+        confidence: pct ?? undefined,
         review: reviewState,
       },
       relatedSystems: latest.biomarker_definitions?.biological_system
@@ -206,10 +245,14 @@ export const clinicalLabsRouter = createTRPCRouter({
     const documents = (docs.data ?? []) as unknown as DocumentRow[];
     const markers = buildMarkers(rows);
 
-    const awaiting = rows.filter((r) => r.review_status === 'unreviewed').length;
-    const lowConfidence = rows.filter((r) => confidencePct(r.confidence) < 70).length;
-    const abnormal = rows.filter((r) => ABNORMAL_STATUSES.has((r.status ?? '').toLowerCase())).length;
-    const reviewed = rows.filter((r) => r.review_status === 'accepted').length;
+    // Counts describe the CURRENT marker set (latest observation per marker) —
+    // historical observations must not inflate the review workload numbers.
+    const awaiting = markers.filter((m) => m.reviewState === 'awaiting-review').length;
+    const reviewed = markers.filter((m) => m.reviewState === 'reviewed').length;
+    const lowConfidence = markers.filter(
+      (m) => m.confidenceBand === 'low' || m.confidenceBand === 'unknown',
+    ).length;
+    const abnormal = markers.filter((m) => ABNORMAL.has(m.status)).length;
 
     const queue = [
       awaiting > 0 && {
@@ -279,13 +322,20 @@ export const clinicalLabsRouter = createTRPCRouter({
         _note: input.note ?? null,
       });
       if (error) throwFromRpcError(error, 'review biomarker');
-      const json = data as unknown as { review_status: string; reviewed_at: string; previous_status: string };
+      const json = data as unknown as {
+        review_status: string;
+        reviewed_at: string;
+        previous_status: string;
+        already_set?: boolean;
+      };
       return {
         ok: true as const,
         reviewStatus: json.review_status as 'accepted' | 'flagged' | 'rejected',
         reviewedAt: json.reviewed_at ?? null,
         previousStatus: json.previous_status ?? null,
-        message: `Marker review saved (${input.decision}).`,
+        message: json.already_set
+          ? `Already reviewed (${input.decision}) — no duplicate audit written.`
+          : `Marker review saved (${input.decision}).`,
       };
     }),
 });

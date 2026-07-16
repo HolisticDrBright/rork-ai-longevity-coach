@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClinicalAnonClient, createClinicalUserClient } from '../clinical-supabase';
 import { extractPdfPages, looksLikePdf } from './pdf-text';
 import { extractLabMeta, parseLabPages } from './parse';
+import { buildRegistryEvent } from '../trpc/routes/clinical/audit-registry';
 
 /**
  * POST /api/clinical/labs/upload — multipart lab-PDF ingestion.
@@ -39,6 +40,84 @@ async function markFailed(db: SupabaseClient, documentId: string, reason: Failur
 }
 
 export const labsUploadApp = new Hono();
+
+/**
+ * GET /api/clinical/labs/document/:id — stream the ORIGINAL stored PDF to an
+ * authorized caller. Authorization is the database's: the document row is read
+ * under the caller's RLS view and the storage download runs under the caller's
+ * JWT (path-scoped storage policies, migration 0016). Every view is audited
+ * (registry event document.viewed — identifiers only).
+ */
+labsUploadApp.get('/document/:id', async (c) => {
+  const auth = c.req.header('authorization') ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return c.json(err('unauthenticated', 'Authentication required'), 401);
+
+  let userOk = false;
+  try {
+    const { data, error } = await createClinicalAnonClient().auth.getUser(token);
+    userOk = !error && Boolean(data?.user);
+  } catch {
+    // never log the token
+  }
+  if (!userOk) return c.json(err('unauthenticated', 'Authentication required'), 401);
+
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json(err('invalid', 'A document id is required'), 400);
+
+  const db = createClinicalUserClient(token);
+  const doc = await db
+    .from('lab_documents')
+    .select('id, organization_id, patient_id, storage_path, file_type')
+    .eq('id', id)
+    .maybeSingle();
+  if (doc.error) return c.json(err('unavailable', 'Could not load the document'), 502);
+  if (!doc.data) return c.json(err('forbidden', 'Document not found or not accessible'), 403);
+
+  const row = doc.data as {
+    id: string;
+    organization_id: string;
+    patient_id: string;
+    storage_path: string;
+    file_type: string | null;
+  };
+  const download = await db.storage.from('lab-documents').download(row.storage_path);
+  if (download.error || !download.data) {
+    return c.json(err('unavailable', 'The stored file could not be retrieved'), 502);
+  }
+
+  // Audit the view (identifiers only; failures don't block the download but
+  // are logged as a code).
+  try {
+    const event = buildRegistryEvent({
+      eventType: 'document.viewed',
+      patientId: row.patient_id,
+      resourceId: row.id,
+    });
+    const audit = await db.rpc('record_audit_event', {
+      _organization_id: row.organization_id,
+      _action: event.action,
+      _resource_type: event.resourceType,
+      _resource_id: event.resourceId,
+      _safe_message: event.safeMessage,
+      _patient_id: row.patient_id,
+      _metadata: event.metadata,
+    });
+    if (audit.error) console.log(`[labs-doc] audit failed code=${audit.error.code ?? 'unknown'}`);
+  } catch {
+    console.log('[labs-doc] audit failed');
+  }
+
+  const bytes = new Uint8Array(await download.data.arrayBuffer());
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'content-type': row.file_type ?? 'application/pdf',
+      'content-disposition': 'inline; filename="lab-document.pdf"',
+      'cache-control': 'no-store',
+    },
+  });
+});
 
 labsUploadApp.post('/upload', async (c) => {
   const auth = c.req.header('authorization') ?? '';
@@ -86,6 +165,11 @@ labsUploadApp.post('/upload', async (c) => {
   const storagePath = `${orgId}/${patientId}/${documentId}.pdf`;
   // Original filename is stored (DB is the PHI boundary) but never logged.
   const safeName = (file.name || 'lab-document.pdf').slice(0, 160);
+  // True-source provenance: hash the exact bytes before anything is extracted.
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const sha256 = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 
   const inserted = await db.from('lab_documents').insert({
     id: documentId,
@@ -95,6 +179,7 @@ labsUploadApp.post('/upload', async (c) => {
     file_type: 'application/pdf',
     file_size_bytes: file.size,
     storage_path: storagePath,
+    document_sha256: sha256,
     processing_status: 'uploaded',
     uploaded_by: userId,
     source: 'upload',

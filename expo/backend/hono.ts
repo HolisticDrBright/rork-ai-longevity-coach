@@ -7,6 +7,7 @@ import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { sentryMiddleware } from "./sentry-middleware";
 import { labsUploadApp } from "./labs/upload-route";
+import { requestGuards } from "./request-guards";
 
 const app = new Hono();
 
@@ -62,6 +63,10 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
+// Sensitive-surface hygiene: origin validation, body caps, per-IP rate limits.
+app.use("/api/trpc/*", requestGuards({ maxBodyBytes: 1024 * 1024, ratePerMinute: 240 }));
+app.use("/api/clinical/*", requestGuards({ maxBodyBytes: 16 * 1024 * 1024, ratePerMinute: 60 }));
+
 app.use(
   // "/trpc/*",
   "/api/trpc/*",
@@ -76,7 +81,8 @@ app.use(
 app.route("/api/clinical/labs", labsUploadApp);
 
 app.use("*", async (c, next) => {
-  console.log(`[REQ] ${c.req.method} ${c.req.url}`);
+  // Path only — query strings can carry tRPC GET inputs; tokens/PHI never log.
+  console.log(`[REQ] ${c.req.method} ${new URL(c.req.url).pathname}`);
   await next();
 });
 

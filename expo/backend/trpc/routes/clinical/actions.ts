@@ -1,17 +1,21 @@
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { createTRPCRouter } from '../../create-context';
 import { clinicalAuthenticatedProcedure } from '../../clinical-authorization';
 import { throwFromRpcError } from './rpc-errors';
+import { AuditValidationError, buildRegistryEvent } from './audit-registry';
 
 /**
  * clinical.actions — persistent audit + downstream-task namespace.
  *
- * Every write goes through a SECURITY DEFINER RPC (migration 0013) that
- * authorizes the CALLER in-function (org membership / patient access) and
- * stamps actor ids from auth.uid() — organization_id and patient_id in the
- * input select the target, they are never trusted for authorization.
- * Callers pass only PHI-safe safe_message/metadata (the desktop enforces
- * this at its façade; raw lab values and note text never enter audit rows).
+ * Every write goes through a SECURITY DEFINER RPC (migrations 0013/0018) that
+ * authorizes the CALLER in-function (org membership / patient access / the
+ * patient∈org tenant check) and stamps actor ids from auth.uid().
+ *
+ * recordAudit is REGISTRY-ONLY (Phase 0): the browser names a registered
+ * event type; the stored action, resource type, display text, and permitted
+ * metadata keys are all server-owned (audit-registry.ts). Free-form
+ * safe_message / metadata from clients is no longer accepted anywhere.
  */
 
 interface AuditRowJson {
@@ -42,28 +46,43 @@ export function mapAuditRow(row: AuditRowJson) {
 }
 
 export const clinicalActionsRouter = createTRPCRouter({
-  /** Append one PHI-safe audit event (RPC: record_audit_event). */
+  /**
+   * Append one registry-validated audit event (RPC: record_audit_event,
+   * hardened in 0018 with the patient∈organization tenant check + size caps).
+   */
   recordAudit: clinicalAuthenticatedProcedure
     .input(
       z.object({
         organizationId: z.string().uuid(),
-        action: z.string().min(1).max(120),
-        resourceType: z.string().max(120).nullish(),
-        resourceId: z.string().max(200).nullish(),
-        safeMessage: z.string().max(500).nullish(),
+        eventType: z.string().min(1).max(64),
+        resourceId: z.string().max(128).nullish(),
         patientId: z.string().uuid().nullish(),
         metadata: z.record(z.string(), z.unknown()).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      let event: ReturnType<typeof buildRegistryEvent>;
+      try {
+        event = buildRegistryEvent({
+          eventType: input.eventType,
+          patientId: input.patientId,
+          resourceId: input.resourceId,
+          metadata: input.metadata,
+        });
+      } catch (e) {
+        if (e instanceof AuditValidationError) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
+        }
+        throw e;
+      }
       const { data, error } = await ctx.clinicalDb.rpc('record_audit_event', {
         _organization_id: input.organizationId,
-        _action: input.action,
-        _resource_type: input.resourceType ?? null,
-        _resource_id: input.resourceId ?? null,
-        _safe_message: input.safeMessage ?? null,
+        _action: event.action,
+        _resource_type: event.resourceType,
+        _resource_id: event.resourceId,
+        _safe_message: event.safeMessage,
         _patient_id: input.patientId ?? null,
-        _metadata: input.metadata ?? {},
+        _metadata: event.metadata,
       });
       if (error) throwFromRpcError(error, 'record audit event');
       return { id: data as unknown as string };

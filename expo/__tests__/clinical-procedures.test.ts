@@ -63,7 +63,7 @@ vi.mock('../backend/clinical-supabase', () => {
 
 import { clinicalRouter } from '../backend/trpc/routes/clinical';
 import { mapQueueRow } from '../backend/trpc/routes/clinical/tasks';
-import { buildMarkers, confidencePct } from '../backend/trpc/routes/clinical/labs';
+import { bandOf, buildMarkers, confidencePct, mapMarkerStatus } from '../backend/trpc/routes/clinical/labs';
 
 const ORG_ID = '10000000-0000-4000-8000-0000000000d1';
 const PATIENT_ID = '10000000-0000-4000-8000-0000000000e1';
@@ -224,16 +224,88 @@ describe('clinical.actions', () => {
     });
   });
 
-  test('recordAudit forwards PHI-safe fields to the 0013 RPC and returns the id', async () => {
+  test('recordAudit accepts only registered event types and derives server-owned text', async () => {
     state.rpc['record_audit_event'] = { data: 'aud-9' };
     const res = await caller(state.validToken).actions.recordAudit({
       organizationId: ORG_ID,
-      action: 'marker.view',
+      eventType: 'chart.open',
       patientId: PATIENT_ID,
     });
     expect(res).toEqual({ id: 'aud-9' });
     expect(state.rpcCalls[0].args._organization_id).toBe(ORG_ID);
     expect(state.rpcCalls[0].args._patient_id).toBe(PATIENT_ID);
+    // Action + display text are SERVER-owned — never client-supplied.
+    expect(state.rpcCalls[0].args._action).toBe('chart.open');
+    expect(state.rpcCalls[0].args._safe_message).toBe('Chart opened');
+  });
+
+  describe('audit registry rejects clinical content (P0)', () => {
+    const attempt = (input: Record<string, unknown>) =>
+      caller(state.validToken).actions.recordAudit({
+        organizationId: ORG_ID,
+        patientId: PATIENT_ID,
+        ...input,
+      } as never);
+
+    test('unknown event type never reaches the database', async () => {
+      await expect(attempt({ eventType: 'note.body_saved' })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(state.rpcCalls).toHaveLength(0);
+    });
+
+    test('note/transcript text in metadata is rejected as an unknown key', async () => {
+      await expect(
+        attempt({
+          eventType: 'chart.open',
+          metadata: { noteText: 'Patient reports chest pain and takes lisinopril' },
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await expect(
+        attempt({
+          eventType: 'note.draft_created',
+          metadata: { transcript: 'the patient said...' },
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(state.rpcCalls).toHaveLength(0);
+    });
+
+    test('lab values and diagnoses cannot ride declared keys with wrong types/vocab', async () => {
+      await expect(
+        attempt({
+          eventType: 'note.draft_created',
+          metadata: { draft_kind: 'hs-CRP 14.2 mg/L — probable rheumatoid arthritis' },
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(state.rpcCalls).toHaveLength(0);
+    });
+
+    test('oversized metadata values are rejected', async () => {
+      await expect(
+        attempt({
+          eventType: 'chart.export_requested',
+          metadata: { format: 'pdf'.padEnd(5000, 'x') },
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(state.rpcCalls).toHaveLength(0);
+    });
+
+    test('patient requirements are enforced both ways', async () => {
+      await expect(
+        caller(state.validToken).actions.recordAudit({
+          organizationId: ORG_ID,
+          eventType: 'chart.open', // requires a patient
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await expect(
+        caller(state.validToken).actions.recordAudit({
+          organizationId: ORG_ID,
+          eventType: 'settings.data_source_viewed', // must NOT reference one
+          patientId: PATIENT_ID,
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(state.rpcCalls).toHaveLength(0);
+    });
   });
 
   test('createReviewTask maps the RPC jsonb to LiveTaskResult parity', async () => {
@@ -313,9 +385,104 @@ describe('clinical.labs', () => {
     expect(m.status).toBe('high'); // source flagged abnormal
   });
 
-  test('confidencePct normalizes 0–1 and 0–100 storage', () => {
+  test('confidencePct normalizes 0–1 and 0–100 storage; missing stays unknown', () => {
     expect(confidencePct(0.92)).toBe(92);
     expect(confidencePct(92)).toBe(92);
-    expect(confidencePct(null)).toBe(50);
+    // Missing confidence is UNKNOWN — never fabricated as a number.
+    expect(confidencePct(null)).toBeNull();
+    expect(bandOf(null)).toBe('unknown');
+    expect(bandOf(95)).toBe('high');
+    expect(bandOf(75)).toBe('medium');
+    expect(bandOf(40)).toBe('low');
+  });
+
+  describe('marker status integrity (P0 — direction is patient safety)', () => {
+    const row = (status: string | null, id = 'o-1') =>
+      ({
+        id,
+        biomarker_definition_id: 'def-1',
+        original_name: null,
+        value_numeric: 5,
+        value_text: null,
+        unit: 'mg/dL',
+        status,
+        original_reference_interval: '1-10',
+        confidence: 0.9,
+        provenance: 'pdf_extraction',
+        review_status: 'unreviewed',
+        reviewed_at: null,
+        observed_at: '2026-07-10T00:00:00Z',
+        ingested_at: '2026-07-10T00:00:00Z',
+        lab_document_id: null,
+        source: 'lab',
+        biomarker_definitions: { canonical_name: 'Marker', biological_system: null },
+        lab_documents: null,
+      }) as never;
+
+    test('every stored status maps verbatim — low is NEVER high', () => {
+      expect(mapMarkerStatus('low')).toBe('low');
+      expect(mapMarkerStatus('high')).toBe('high');
+      expect(mapMarkerStatus('critical_low')).toBe('critical-low');
+      expect(mapMarkerStatus('critical_high')).toBe('critical-high');
+      expect(mapMarkerStatus('normal')).toBe('normal');
+      expect(mapMarkerStatus('optimal')).toBe('optimal');
+      expect(buildMarkers([row('low')])[0].status).toBe('low');
+      expect(buildMarkers([row('critical_low')])[0].status).toBe('critical-low');
+      expect(buildMarkers([row('critical_high')])[0].status).toBe('critical-high');
+    });
+
+    test('missing status is unknown — never assumed normal', () => {
+      expect(mapMarkerStatus(null)).toBe('unknown');
+      expect(mapMarkerStatus('')).toBe('unknown');
+      expect(mapMarkerStatus('weird-flag')).toBe('unknown');
+      expect(buildMarkers([row(null)])[0].status).toBe('unknown');
+    });
+
+    test('missing confidence surfaces as unknown band, null percent', () => {
+      const m = buildMarkers([{ ...(row('normal') as object), confidence: null } as never])[0];
+      expect(m.confidence).toBeNull();
+      expect(m.confidenceBand).toBe('unknown');
+      expect(m.source.confidenceNote).toMatch(/not recorded/i);
+    });
+
+    test('text-only observations never fabricate a numeric marker', () => {
+      const textOnly = { ...(row('high') as object), value_numeric: null, value_text: 'Positive' } as never;
+      expect(buildMarkers([textOnly])).toHaveLength(0);
+    });
+
+    test('reconstructed previews are labeled as structured, not source excerpts', () => {
+      expect(buildMarkers([row('normal')])[0].source.location).toBe('Structured result preview');
+    });
+  });
+
+  describe('workspace summary counts use the LATEST marker set', () => {
+    test('historical observations do not inflate abnormal/awaiting counts', async () => {
+      const base = {
+        biomarker_definition_id: 'def-1',
+        original_name: null,
+        value_text: null,
+        unit: 'mg/L',
+        original_reference_interval: '<3.0',
+        confidence: 0.95,
+        provenance: 'lab',
+        reviewed_at: null,
+        ingested_at: '2026-07-01T00:00:00Z',
+        lab_document_id: null,
+        source: 'lab',
+        biomarker_definitions: { canonical_name: 'hs-CRP', biological_system: null },
+        lab_documents: null,
+      };
+      state.tables['biomarker_observations'] = [
+        // Latest: normal + accepted. Historical: 3 abnormal unreviewed rows.
+        { ...base, id: 'o-now', value_numeric: 1.1, status: 'normal', review_status: 'accepted', observed_at: '2026-07-10T00:00:00Z' },
+        { ...base, id: 'o-h1', value_numeric: 4.0, status: 'high', review_status: 'unreviewed', observed_at: '2026-06-01T00:00:00Z' },
+        { ...base, id: 'o-h2', value_numeric: 4.2, status: 'high', review_status: 'unreviewed', observed_at: '2026-05-01T00:00:00Z' },
+        { ...base, id: 'o-h3', value_numeric: 4.4, status: 'high', review_status: 'unreviewed', observed_at: '2026-04-01T00:00:00Z' },
+      ];
+      state.tables['lab_documents'] = [];
+      const ws = await caller(state.validToken).labs.getWorkspace({ patientId: PATIENT_ID });
+      expect(ws.markers).toHaveLength(1);
+      expect(ws.reviewSummary).toEqual({ reviewed: 1, awaiting: 0, lowConfidence: 0, abnormal: 0 });
+    });
   });
 });
