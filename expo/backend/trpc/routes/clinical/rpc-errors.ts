@@ -8,6 +8,7 @@ import { TRPCError } from '@trpc/server';
  *   42501 not authorized            → FORBIDDEN
  *   P0002 record not found          → NOT_FOUND
  *   22023 invalid argument          → BAD_REQUEST
+ *   40001 optimistic version clash  → CONFLICT (the composer's conflict view)
  * Messages stay generic — RPC error text never carries PHI, but we don't
  * forward it verbatim either.
  */
@@ -22,6 +23,11 @@ export function throwFromRpcError(error: { code?: string | null } | null, label:
       throw new TRPCError({ code: 'NOT_FOUND', message: `Not found: ${label}` });
     case '22023':
       throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid input: ${label}` });
+    case '40001':
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This record changed in another tab or session. Review the latest version before saving again.',
+      });
     default:
       throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed: ${label}` });
   }
