@@ -291,6 +291,45 @@ export const clinicalScribeRouter = createTRPCRouter({
       return { ok: true as const };
     }),
 
+  /** Recordings for one encounter, newest first (refresh/second-tab recovery). */
+  recordingsForEncounter: clinicalAuthenticatedProcedure
+    .input(z.object({ encounterId: uuid }))
+    .query(async ({ ctx, input }) => {
+      const { data, error } = await ctx.clinicalDb
+        .from('encounter_recordings')
+        .select('id, status, provider, created_at, audio_deleted_at')
+        .eq('encounter_id', input.encounterId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to load recordings' });
+      return (data ?? []).map((r) => ({
+        id: r.id as string,
+        status: r.status as string,
+        provider: r.provider as string,
+        createdAt: r.created_at as string,
+        audioDeletedAt: (r.audio_deleted_at as string | null) ?? null,
+      }));
+    }),
+
+  /** Capture session for a recording (recovery after refresh). */
+  captureSession: clinicalAuthenticatedProcedure
+    .input(z.object({ recordingId: uuid }))
+    .query(async ({ ctx, input }) => {
+      const { data, error } = await ctx.clinicalDb
+        .from('capture_sessions')
+        .select('id, status, pause_reason, last_heartbeat_at')
+        .eq('recording_id', input.recordingId)
+        .maybeSingle();
+      if (error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to load capture session' });
+      if (!data) return null;
+      return {
+        id: data.id as string,
+        status: data.status as 'active' | 'paused' | 'revoked' | 'closed',
+        pauseReason: (data.pause_reason as string | null) ?? null,
+        lastHeartbeatAt: data.last_heartbeat_at as string,
+      };
+    }),
+
   /** Recording status + its full transition history. */
   recording: clinicalAuthenticatedProcedure
     .input(z.object({ recordingId: uuid }))
