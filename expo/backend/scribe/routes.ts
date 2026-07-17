@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createClinicalAnonClient, createClinicalUserClient, createClinicalServiceClient } from '../clinical-supabase';
 import { processProviderCallback } from './callback';
+import { scribeMode, ScribeConfigError } from './config';
 import { fixtureAudioStore, sniffAudioContainer } from './store';
 
 /**
@@ -149,12 +150,29 @@ scribeApp.post('/recordings/:id/complete', async (c) => {
 });
 
 scribeApp.post('/callback', async (c) => {
+  // Disabled mode has no providers, so no legitimate callbacks exist and no
+  // callback secret is required. Answer "not configured" without touching
+  // the ledger — SCRIBE_CALLBACK_SECRET may be omitted entirely.
+  if (scribeMode() === 'disabled') {
+    return c.json(err('not_configured', 'Scribe is not configured in this environment.'), 404);
+  }
   const signature = c.req.header('x-scribe-signature') ?? '';
   const rawBody = await c.req.text();
   if (rawBody.length > 1024 * 1024) return c.json(err('too_large', 'Callback body too large'), 413);
-  const outcome = await processProviderCallback(rawBody, signature, {
-    serviceClient: () => createClinicalServiceClient(),
-  });
+  let outcome;
+  try {
+    outcome = await processProviderCallback(rawBody, signature, {
+      serviceClient: () => createClinicalServiceClient(),
+    });
+  } catch (e) {
+    // Missing/short SCRIBE_CALLBACK_SECRET in fixture/live modes is a server
+    // configuration problem — answer honestly, never a stack trace.
+    if (e instanceof ScribeConfigError) {
+      console.log('[scribe-callback] refused: callback secret not configured');
+      return c.json(err('not_configured', 'Callback verification is not configured.'), 503);
+    }
+    throw e;
+  }
   switch (outcome.status) {
     case 'processed':
       return c.json({ data: { status: 'processed' } }, 200);
