@@ -1,4 +1,5 @@
 import type { CandidateQuestion, InvariantCore, LensInputs } from './types';
+import { isDeployedEnvironment } from '../deployment';
 import { transcriptHasInjection } from './safety';
 
 /**
@@ -59,6 +60,12 @@ export function resolveLensAi(env: NodeJS.ProcessEnv = process.env): LensAiIdent
     }
     throw new LensAiConfigError(
       'The production lens AI provider is disabled in this build pending external approval and configuration review.',
+    );
+  }
+  if (isDeployedEnvironment(env)) {
+    throw new LensAiConfigError(
+      'The fixture lens AI provider is not permitted in a deployed environment. ' +
+        'Set LENS_AI_MODE=live — AI-assisted generation stays off (the deterministic engine is unaffected).',
     );
   }
   return { provider: 'fixture', model: 'fixture-lens-1', promptTemplateVersion: 'm2-lens-tmpl-v1' };

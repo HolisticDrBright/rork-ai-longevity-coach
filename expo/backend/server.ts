@@ -13,6 +13,7 @@
 
 import { serve } from "@hono/node-server";
 import app from "./hono";
+import { isDeployedEnvironment } from "./deployment";
 import { startScribeWorkers } from "./scribe/runtime";
 
 const port = Number(process.env.PORT || 3000);
@@ -32,6 +33,23 @@ if (missingClinicalEnv.length > 0) {
 if (!process.env.CORS_ALLOWED_ORIGINS) {
   console.warn(
     "[Server] WARNING: CORS_ALLOWED_ORIGINS not set — browser origins will be refused by the origin guard.",
+  );
+}
+
+// Provider posture (modes only, never values). Fixture providers are REFUSED
+// in deployed environments — endpoints fail closed, never fall back.
+const deployed = isDeployedEnvironment();
+console.log(
+  `[Server] deployment=${deployed ? "deployed" : "local"} scribe_mode=${process.env.SCRIBE_MODE?.trim() || "(unset→fixture)"} lens_ai_mode=${process.env.LENS_AI_MODE?.trim() || "(unset→fixture)"}`,
+);
+if (deployed && (process.env.SCRIBE_MODE?.trim().toLowerCase() || "fixture") !== "live") {
+  console.warn(
+    "[Server] WARNING: deployed without SCRIBE_MODE=live — the fixture scribe provider is refused in deployed environments, so every scribe endpoint fails closed until SCRIBE_MODE=live is set.",
+  );
+}
+if (deployed && (process.env.LENS_AI_MODE?.trim().toLowerCase() || "fixture") !== "live") {
+  console.warn(
+    "[Server] WARNING: deployed without LENS_AI_MODE=live — the fixture lens AI is refused in deployed environments; AI-assisted questions stay off (the deterministic lens engine is unaffected).",
   );
 }
 

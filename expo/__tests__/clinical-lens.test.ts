@@ -104,6 +104,7 @@ beforeEach(() => {
   delete process.env.LENS_AI_PROVIDER;
   delete process.env.LENS_AI_MODEL;
   delete process.env.LENS_AI_APPROVAL_REF;
+  delete process.env.RAILWAY_PROJECT_ID;
   state.tables = {};
   state.rpc = {};
   state.rpcCalls = [];
@@ -146,6 +147,13 @@ describe('aiStatus posture', () => {
     const out = await caller(state.validToken).lens.aiStatus();
     expect(out).toMatchObject({ mode: 'live', available: false, liveConfigured: true });
     expect(out.reason).toMatch(/disabled.*pending external approval/i);
+  });
+
+  test('deployed environment: the fixture AI is refused even in fixture mode (fail closed)', async () => {
+    process.env.RAILWAY_PROJECT_ID = 'prj_test';
+    const out = await caller(state.validToken).lens.aiStatus();
+    expect(out).toMatchObject({ mode: 'fixture', available: false });
+    expect(out.reason).toMatch(/not permitted in a deployed environment/);
   });
 });
 
@@ -203,6 +211,21 @@ describe('evaluate orchestration + RPC wiring', () => {
     expect(logged).not.toMatch(/sleeping poorly/i);
     expect(logged).not.toMatch(/systolic/i);
     expect(logged).not.toMatch(/142/);
+  });
+
+  test('deployed environment: the deterministic evaluation runs with NO AI leg and no fixture identity', async () => {
+    process.env.RAILWAY_PROJECT_ID = 'prj_test';
+    seedHappyChart();
+    state.rpc.run_lens_evaluation = { data: { evaluationId: EVAL_ID, status: 'complete', questionsInserted: 3 } };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const out = await caller(state.validToken).lens.evaluate({ encounterId: ENCOUNTER_ID, paradigm: 'western_conventional' });
+    expect(out.status).toBe('complete');
+    const call = state.rpcCalls.find((c) => c.name === 'run_lens_evaluation')!;
+    expect(call.args._provider).toBeNull();
+    expect(call.args._model).toBeNull();
+    const keys = (call.args._questions as Array<Record<string, unknown>>).map((q) => q.dedupeKey);
+    expect(keys).not.toContain('ai-uncaptured-context');
+    expect(keys).toContain('sleep-structured-history');
   });
 
   test('live AI mode refuses the AI leg but the deterministic evaluation still runs', async () => {

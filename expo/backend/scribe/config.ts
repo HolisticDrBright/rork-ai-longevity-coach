@@ -20,6 +20,8 @@
  * human responsibility; nothing in this codebase asserts it exists.
  */
 
+import { isDeployedEnvironment } from '../deployment';
+
 export type ScribeMode = 'fixture' | 'live';
 export type ProviderName = 'fixture' | 'aws_healthscribe';
 
@@ -82,6 +84,12 @@ export function resolveProvider(
   }
   if (requested === 'aws_healthscribe') {
     throw new ScribeConfigError('The production provider is only available in live mode.');
+  }
+  if (isDeployedEnvironment(env)) {
+    throw new ScribeConfigError(
+      'The fixture scribe provider is not permitted in a deployed environment. ' +
+        'Set SCRIBE_MODE=live — scribe endpoints fail closed until a production provider is fully configured and enabled.',
+    );
   }
   return 'fixture';
 }
