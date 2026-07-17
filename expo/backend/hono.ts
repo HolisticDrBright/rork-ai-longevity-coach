@@ -7,6 +7,7 @@ import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { sentryMiddleware } from "./sentry-middleware";
 import { labsUploadApp } from "./labs/upload-route";
+import { scribeApp } from "./scribe/routes";
 import { requestGuards } from "./request-guards";
 
 const app = new Hono();
@@ -79,6 +80,12 @@ app.use(
 
 // Multipart lab-PDF ingestion (can't ride the superjson tRPC link).
 app.route("/api/clinical/labs", labsUploadApp);
+
+// Scribe binary chunks, upload completion, and SIGNED provider callbacks.
+// The callback endpoint authenticates cryptographically (HMAC), not by
+// bearer token — requestGuards still applies body caps + rate limits via
+// the /api/clinical/* rule above.
+app.route("/api/clinical/scribe", scribeApp);
 
 app.use("*", async (c, next) => {
   // Path only — query strings can carry tRPC GET inputs; tokens/PHI never log.
