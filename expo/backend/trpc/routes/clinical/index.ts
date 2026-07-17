@@ -9,6 +9,7 @@ import { clinicalEncountersRouter, clinicalNotesRouter } from './emr';
 import { clinicalOrganizationsRouter } from './organizations';
 import { clinicalLabsRouter } from './labs';
 import { clinicalScheduleRouter } from './schedule';
+import { clinicalScribeRouter } from './scribe';
 import { clinicalTasksRouter } from './tasks';
 
 /**
@@ -47,6 +48,9 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Clinical notes: draft/sign/addendum/timeline (RPCs 0021). */
   notes: clinicalNotesRouter,
+
+  /** Consent-gated recording + AI scribe (RPCs 0022/0023). Draft-only output. */
+  scribe: clinicalScribeRouter,
 
   patients: createTRPCRouter({
     /**

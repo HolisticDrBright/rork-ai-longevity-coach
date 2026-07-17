@@ -51,3 +51,21 @@ fly secrets set \
 ## Railway
 
 Set the same variables in the Railway dashboard under **Variables**. Railway auto-injects `PORT`.
+
+## Scribe (Milestone 1 — consent-gated recording + AI scribe)
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SCRIBE_MODE` | no (default `fixture`) | `fixture` (deterministic local provider) or `live`. In live mode the fixture can never be selected — if no production provider is fully configured, every scribe entry point refuses with a precondition error. |
+| `SCRIBE_CALLBACK_SECRET` | yes (≥16 chars) | HMAC-SHA256 secret for provider callback verification. Fixture and production callbacks are signed and verified identically. |
+| `HEALTHSCRIBE_REGION` | live only | Approved AWS region for HealthScribe. |
+| `HEALTHSCRIBE_KMS_KEY_ARN` | live only | Customer-managed KMS key for output encryption. |
+| `HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN` | live only | IAM role HealthScribe assumes for S3 access. |
+| `HEALTHSCRIBE_READINESS_REF` | live only | Reference to the operational-readiness record. |
+
+The production adapter additionally requires a platform-administrator
+enablement ROW in `provider_enablements` (enabled + region + encryption
+config + retention config + readiness ref), enforced inside the
+`begin_recording` RPC. **No environment flag is treated as proof that a BAA
+exists** — contractual and legal verification is an external, human
+responsibility, and the adapter ships disabled.

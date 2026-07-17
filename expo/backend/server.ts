@@ -13,6 +13,7 @@
 
 import { serve } from "@hono/node-server";
 import app from "./hono";
+import { startScribeWorkers } from "./scribe/runtime";
 
 const port = Number(process.env.PORT || 3000);
 
@@ -33,6 +34,10 @@ if (!process.env.CORS_ALLOWED_ORIGINS) {
     "[Server] WARNING: CORS_ALLOWED_ORIGINS not set — browser origins will be refused by the origin guard.",
   );
 }
+
+// Durable scribe workers (transcription completion + deletion). Single-tick,
+// idempotent, DB-claimed with SKIP LOCKED — safe across instances.
+startScribeWorkers();
 
 serve({
   fetch: app.fetch,
