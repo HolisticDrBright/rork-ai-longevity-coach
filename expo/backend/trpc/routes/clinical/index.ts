@@ -8,6 +8,7 @@ import { clinicalActionsRouter } from './actions';
 import { clinicalEncountersRouter, clinicalNotesRouter } from './emr';
 import { clinicalOrganizationsRouter } from './organizations';
 import { clinicalLabsRouter } from './labs';
+import { clinicalLensRouter } from './lens';
 import { clinicalScheduleRouter } from './schedule';
 import { clinicalScribeRouter } from './scribe';
 import { clinicalTasksRouter } from './tasks';
@@ -51,6 +52,9 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Consent-gated recording + AI scribe (RPCs 0022/0023). Draft-only output. */
   scribe: clinicalScribeRouter,
+
+  /** Differential questions + lens engine (RPCs 0024). Question-focused only. */
+  lens: clinicalLensRouter,
 
   patients: createTRPCRouter({
     /**
