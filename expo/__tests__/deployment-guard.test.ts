@@ -39,6 +39,23 @@ describe('scribe: fixture refused when deployed', () => {
     expect(scribeMode({} as NodeJS.ProcessEnv)).toBe('fixture');
     expect(resolveProvider(undefined, {} as NodeJS.ProcessEnv)).toBe('fixture');
   });
+
+  test('disabled mode: honest "Not configured", fail closed everywhere — local and deployed', () => {
+    expect(scribeMode({ SCRIBE_MODE: 'disabled' } as NodeJS.ProcessEnv)).toBe('disabled');
+    expect(() => resolveProvider(undefined, { SCRIBE_MODE: 'disabled' })).toThrow(/Not configured/);
+    expect(() => resolveProvider(undefined, { ...DEPLOYED, SCRIBE_MODE: 'disabled' })).toThrow(/Not configured/);
+    // disabled beats stray provider env: even with full HealthScribe config,
+    // nothing resolves.
+    expect(() =>
+      resolveProvider(undefined, {
+        SCRIBE_MODE: 'disabled',
+        HEALTHSCRIBE_REGION: 'us-west-2',
+        HEALTHSCRIBE_KMS_KEY_ARN: 'arn:x',
+        HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN: 'arn:y',
+        HEALTHSCRIBE_READINESS_REF: 'r',
+      }),
+    ).toThrow(/Not configured/);
+  });
 });
 
 describe('lens AI: fixture refused when deployed', () => {
@@ -62,5 +79,10 @@ describe('lens AI: fixture refused when deployed', () => {
 
   test('local development keeps the fixture identity', () => {
     expect(resolveLensAi({} as NodeJS.ProcessEnv)).toMatchObject({ provider: 'fixture' });
+  });
+
+  test('disabled mode: AI assistance is simply off (null, not an error) — local and deployed', () => {
+    expect(resolveLensAi({ LENS_AI_MODE: 'disabled' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolveLensAi({ ...DEPLOYED, LENS_AI_MODE: 'disabled' })).toBeNull();
   });
 });

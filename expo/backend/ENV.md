@@ -56,7 +56,7 @@ Set the same variables in the Railway dashboard under **Variables**. Railway aut
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SCRIBE_MODE` | no (default `fixture`) | `fixture` (deterministic local provider) or `live`. In live mode the fixture can never be selected — if no production provider is fully configured, every scribe entry point refuses with a precondition error. |
+| `SCRIBE_MODE` | no (default `fixture`) | `fixture` (deterministic local provider, development/CI only), `live` (production provider required), or `disabled` (no provider at all — every scribe entry point answers "Not configured" and fails closed). In live mode the fixture can never be selected; live with nothing configured also refuses. `disabled` is the recommended deployed value until a production provider is approved. |
 | `SCRIBE_CALLBACK_SECRET` | yes (≥16 chars) | HMAC-SHA256 secret for provider callback verification. Fixture and production callbacks are signed and verified identically. |
 | `HEALTHSCRIBE_REGION` | live only | Approved AWS region for HealthScribe. |
 | `HEALTHSCRIBE_KMS_KEY_ARN` | live only | Customer-managed KMS key for output encryption. |
@@ -74,7 +74,7 @@ responsibility, and the adapter ships disabled.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `LENS_AI_MODE` | no (default `fixture`) | `fixture` (deterministic test AI, same safety gates as everything else) or `live`. Live mode ALWAYS refuses today: unconfigured → "the fixture cannot serve live mode"; fully configured → "disabled pending external approval". The deterministic lens engine runs regardless of this setting. |
+| `LENS_AI_MODE` | no (default `fixture`) | `fixture` (deterministic test AI, same safety gates as everything else), `live`, or `disabled` (AI assistance simply off — "Not configured"). Live mode ALWAYS refuses today: unconfigured → "the fixture cannot serve live mode"; fully configured → "disabled pending external approval". The deterministic lens engine runs regardless of this setting. `disabled` is the recommended deployed value. |
 | `LENS_AI_PROVIDER` / `LENS_AI_MODEL` / `LENS_AI_APPROVAL_REF` | live only | Production lens-AI identity + the external approval record reference. Setting them is **not** approval — the production path stays disabled pending external review, and no environment flag changes that. |
 
 ## Deployed environments (Railway / Fly)
@@ -89,11 +89,12 @@ Required posture for any deployed instance:
 
 | Variable | Value | Effect |
 | --- | --- | --- |
-| `SCRIBE_MODE` | `live` | Scribe endpoints refuse until a production provider is fully configured AND enabled by a platform administrator (fail closed). |
-| `LENS_AI_MODE` | `live` | AI-assisted question generation refuses (pending external approval); the deterministic lens engine is unaffected. |
+| `SCRIBE_MODE` | `disabled` | Honest posture: no provider exists, endpoints answer "Not configured" and fail closed. (`live` is also refused-until-approved but implies a provider is expected.) |
+| `LENS_AI_MODE` | `disabled` | AI assistance off ("Not configured"); the deterministic lens engine is unaffected. |
 | `SCRIBE_CALLBACK_SECRET` | random ≥16 chars | Required for the signed callback route even while providers are disabled. |
 | `NODE_ENV` | `production` | Enables production log/header behavior. |
 
 Leaving `SCRIBE_MODE`/`LENS_AI_MODE` unset in a deployed environment does NOT
 fall back to fixtures — the guard refuses the fixture default and the startup
-log prints a warning naming the missing setting.
+log prints a warning naming the missing setting. Set them explicitly to
+`disabled` (recommended) or `live`.

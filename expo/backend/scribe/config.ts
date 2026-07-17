@@ -22,7 +22,7 @@
 
 import { isDeployedEnvironment } from '../deployment';
 
-export type ScribeMode = 'fixture' | 'live';
+export type ScribeMode = 'fixture' | 'live' | 'disabled';
 export type ProviderName = 'fixture' | 'aws_healthscribe';
 
 export interface HealthScribeConfig {
@@ -43,8 +43,9 @@ export class ScribeConfigError extends Error {
 export function scribeMode(env: NodeJS.ProcessEnv = process.env): ScribeMode {
   const raw = (env.SCRIBE_MODE ?? 'fixture').trim().toLowerCase();
   if (raw === 'live') return 'live';
+  if (raw === 'disabled') return 'disabled';
   if (raw === 'fixture' || raw === '') return 'fixture';
-  throw new ScribeConfigError(`SCRIBE_MODE must be 'fixture' or 'live' (got '${raw}')`);
+  throw new ScribeConfigError(`SCRIBE_MODE must be 'fixture', 'live', or 'disabled' (got '${raw}')`);
 }
 
 /** Full production-adapter env config, or null if anything is missing. */
@@ -70,6 +71,13 @@ export function resolveProvider(
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderName {
   const mode = scribeMode(env);
+  if (mode === 'disabled') {
+    // The honest deployed default until a production provider is approved:
+    // no provider exists, nothing to imply otherwise. Fail closed.
+    throw new ScribeConfigError(
+      'Not configured — scribe is disabled. No transcription provider is enabled in this environment.',
+    );
+  }
   if (mode === 'live') {
     if (requested === 'fixture') {
       throw new ScribeConfigError('The fixture provider cannot be selected in live mode.');
