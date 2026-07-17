@@ -123,13 +123,17 @@ export const clinicalLensRouter = createTRPCRouter({
       if (evalRes.error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to load the evaluation' });
       if (!evalRes.data) return null;
       const e = evalRes.data as Record<string, unknown>;
+      // Questions are the ENCOUNTER's worklist, not one run's: dedupe and the
+      // lifecycle are encounter-scoped (partial unique index, 0024), so a
+      // question deduped into an earlier run — including urgent ones — stays
+      // visible whichever paradigm is being viewed.
       const [questions, blocks] = await Promise.all([
         ctx.clinicalDb
           .from('differential_questions')
           .select(
             'id, domain_code, question_text, rationale, distinguishes, safety_relation, priority, answer_type, patient_sources, knowledge_source_ids, missing_data_assumptions, generation_method, generation_version, status, status_reason, created_at',
           )
-          .eq('evaluation_id', e.id as string)
+          .eq('encounter_id', input.encounterId)
           .order('priority', { ascending: true })
           .order('created_at', { ascending: true }),
         ctx.clinicalDb
