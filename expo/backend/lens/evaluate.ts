@@ -66,11 +66,16 @@ export async function gatherInputs(db: SupabaseClient, encounterId: string): Pro
   ]);
 
   // Supplements are optional context; absence of the tables is tolerated.
+  // Scoped to THIS patient — RLS bounds visibility to the caller, but the
+  // patient filter is what keeps another chart's supplements out of this
+  // patient's lens inputs.
   let supplements: LensInputs['supplements'] = [];
   try {
     const supp = await db
       .from('supplement_protocol_items')
       .select('id, updated_at, supplement_products(name)')
+      .eq('patient_id', patientId)
+      .is('deleted_at', null)
       .limit(25);
     if (!supp.error && supp.data) {
       supplements = (supp.data as Array<Record<string, unknown>>).map((s) => ({

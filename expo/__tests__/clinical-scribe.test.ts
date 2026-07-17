@@ -90,6 +90,7 @@ function caller(sessionToken: string | null) {
 beforeEach(() => {
   process.env.SCRIBE_MODE = 'fixture';
   process.env.SCRIBE_CALLBACK_SECRET = 'test-secret-0123456789abcdef';
+  delete process.env.RAILWAY_PROJECT_ID;
   delete process.env.HEALTHSCRIBE_REGION;
   delete process.env.HEALTHSCRIBE_KMS_KEY_ARN;
   delete process.env.HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN;
@@ -138,6 +139,17 @@ describe('provider resolution is server-owned (req 8)', () => {
     const status = await caller(state.validToken).scribe.providerStatus();
     expect(status).toMatchObject({ mode: 'live', available: false, provider: null });
     expect(status.reason).toMatch(/cannot serve live mode/i);
+  });
+
+  test('deployed environment: fixture mode is refused — providerStatus honest, beginRecording fails closed', async () => {
+    process.env.RAILWAY_PROJECT_ID = 'prj_test';
+    const status = await caller(state.validToken).scribe.providerStatus();
+    expect(status).toMatchObject({ mode: 'fixture', available: false, provider: null });
+    expect(status.reason).toMatch(/not permitted in a deployed environment/);
+    await expect(
+      caller(state.validToken).scribe.beginRecording({ encounterId: ENCOUNTER_ID, contentType: 'audio/webm' }),
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(state.rpcCalls.length).toBe(0);
   });
 
   test('live mode with full HealthScribe env resolves the production provider', async () => {

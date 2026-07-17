@@ -1,4 +1,5 @@
 import { createClinicalServiceClient } from '../clinical-supabase';
+import { isDeployedEnvironment } from '../deployment';
 import { scribeMode, healthScribeConfig } from './config';
 import { createProvider, FixtureScribeProvider, type ScribeProvider } from './providers';
 import { runDeletionWorkerOnce, runTranscriptionWorkerOnce, type WorkerDeps } from './workers';
@@ -21,6 +22,12 @@ export function getScribeWorkerDeps(): WorkerDeps | null {
     const mode = scribeMode();
     let provider: ScribeProvider;
     if (mode === 'fixture') {
+      if (isDeployedEnvironment()) {
+        // Fixture providers never run deployed — no workers, and every
+        // user-facing entry point refuses via resolveProvider.
+        cached = null;
+        return cached;
+      }
       provider = createProvider('fixture', deps);
     } else if (healthScribeConfig()) {
       provider = createProvider('aws_healthscribe', deps);
