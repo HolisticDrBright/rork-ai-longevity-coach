@@ -42,14 +42,16 @@ const deployed = isDeployedEnvironment();
 console.log(
   `[Server] deployment=${deployed ? "deployed" : "local"} scribe_mode=${process.env.SCRIBE_MODE?.trim() || "(unset→fixture)"} lens_ai_mode=${process.env.LENS_AI_MODE?.trim() || "(unset→fixture)"}`,
 );
-if (deployed && (process.env.SCRIBE_MODE?.trim().toLowerCase() || "fixture") !== "live") {
+const scribeModeRaw = process.env.SCRIBE_MODE?.trim().toLowerCase() || "fixture";
+if (deployed && !["live", "disabled"].includes(scribeModeRaw)) {
   console.warn(
-    "[Server] WARNING: deployed without SCRIBE_MODE=live — the fixture scribe provider is refused in deployed environments, so every scribe endpoint fails closed until SCRIBE_MODE=live is set.",
+    "[Server] WARNING: deployed without SCRIBE_MODE=disabled (or live) — the fixture scribe provider is refused in deployed environments, so every scribe endpoint fails closed until an explicit mode is set.",
   );
 }
-if (deployed && (process.env.LENS_AI_MODE?.trim().toLowerCase() || "fixture") !== "live") {
+const lensAiModeRaw = process.env.LENS_AI_MODE?.trim().toLowerCase() || "fixture";
+if (deployed && !["live", "disabled"].includes(lensAiModeRaw)) {
   console.warn(
-    "[Server] WARNING: deployed without LENS_AI_MODE=live — the fixture lens AI is refused in deployed environments; AI-assisted questions stay off (the deterministic lens engine is unaffected).",
+    "[Server] WARNING: deployed without LENS_AI_MODE=disabled (or live) — the fixture lens AI is refused in deployed environments; AI-assisted questions stay off (the deterministic lens engine is unaffected).",
   );
 }
 

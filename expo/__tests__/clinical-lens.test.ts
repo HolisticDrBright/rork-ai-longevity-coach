@@ -155,6 +155,13 @@ describe('aiStatus posture', () => {
     expect(out).toMatchObject({ mode: 'fixture', available: false });
     expect(out.reason).toMatch(/not permitted in a deployed environment/);
   });
+
+  test('disabled mode: honest Not-configured posture', async () => {
+    process.env.LENS_AI_MODE = 'disabled';
+    const out = await caller(state.validToken).lens.aiStatus();
+    expect(out).toMatchObject({ mode: 'disabled', available: false });
+    expect(out.reason).toMatch(/Not configured/);
+  });
 });
 
 describe('evaluate orchestration + RPC wiring', () => {
@@ -211,6 +218,20 @@ describe('evaluate orchestration + RPC wiring', () => {
     expect(logged).not.toMatch(/sleeping poorly/i);
     expect(logged).not.toMatch(/systolic/i);
     expect(logged).not.toMatch(/142/);
+  });
+
+  test('disabled mode: the deterministic evaluation runs with NO AI leg and null provider identity', async () => {
+    process.env.LENS_AI_MODE = 'disabled';
+    seedHappyChart();
+    state.rpc.run_lens_evaluation = { data: { evaluationId: EVAL_ID, status: 'complete', questionsInserted: 3 } };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const out = await caller(state.validToken).lens.evaluate({ encounterId: ENCOUNTER_ID, paradigm: 'western_conventional' });
+    expect(out.status).toBe('complete');
+    const call = state.rpcCalls.find((c) => c.name === 'run_lens_evaluation')!;
+    expect(call.args._provider).toBeNull();
+    const keys = (call.args._questions as Array<Record<string, unknown>>).map((q) => q.dedupeKey);
+    expect(keys).not.toContain('ai-uncaptured-context');
+    expect(keys).toContain('sleep-structured-history');
   });
 
   test('deployed environment: the deterministic evaluation runs with NO AI leg and no fixture identity', async () => {

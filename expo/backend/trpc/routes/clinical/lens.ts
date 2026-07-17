@@ -20,13 +20,16 @@ const uuid = z.string().uuid();
 const PARADIGMS = ['western_conventional', 'functional', 'naturopathic', 'tcm', 'biohacking', 'synergistic'] as const;
 
 export const clinicalLensRouter = createTRPCRouter({
-  /** AI posture: fixture/live and whether AI assistance is available. */
+  /** AI posture: fixture/live/disabled and whether AI assistance is available. */
   aiStatus: clinicalAuthenticatedProcedure.query(() => {
     const mode = lensAiMode();
     let available = false;
     let reason: string | null = null;
     try {
       available = resolveLensAi() !== null;
+      if (!available && mode === 'disabled') {
+        reason = 'Not configured — AI assistance is disabled in this environment. The deterministic lens engine is unaffected.';
+      }
     } catch (e) {
       reason = e instanceof LensAiConfigError ? e.message : 'unavailable';
     }

@@ -13,7 +13,7 @@ import { transcriptHasInjection } from './safety';
  * mode. No environment flag is treated as approval.
  */
 
-export type LensAiMode = 'fixture' | 'live';
+export type LensAiMode = 'fixture' | 'live' | 'disabled';
 
 export class LensAiConfigError extends Error {
   readonly code = 'LENS_AI_CONFIG';
@@ -26,8 +26,9 @@ export class LensAiConfigError extends Error {
 export function lensAiMode(env: NodeJS.ProcessEnv = process.env): LensAiMode {
   const raw = (env.LENS_AI_MODE ?? 'fixture').trim().toLowerCase();
   if (raw === 'live') return 'live';
+  if (raw === 'disabled') return 'disabled';
   if (raw === 'fixture' || raw === '') return 'fixture';
-  throw new LensAiConfigError(`LENS_AI_MODE must be 'fixture' or 'live' (got '${raw}')`);
+  throw new LensAiConfigError(`LENS_AI_MODE must be 'fixture', 'live', or 'disabled' (got '${raw}')`);
 }
 
 export function liveLensAiConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -51,6 +52,11 @@ export interface LensAiIdentity {
  */
 export function resolveLensAi(env: NodeJS.ProcessEnv = process.env): LensAiIdentity | null {
   const mode = lensAiMode(env);
+  if (mode === 'disabled') {
+    // The honest deployed default: AI assistance is simply off. The
+    // deterministic lens engine runs regardless — this is not an error.
+    return null;
+  }
   if (mode === 'live') {
     if (!liveLensAiConfigured(env)) {
       throw new LensAiConfigError(

@@ -141,6 +141,17 @@ describe('provider resolution is server-owned (req 8)', () => {
     expect(status.reason).toMatch(/cannot serve live mode/i);
   });
 
+  test('disabled mode: providerStatus says Not configured; beginRecording fails closed with no RPC call', async () => {
+    process.env.SCRIBE_MODE = 'disabled';
+    const status = await caller(state.validToken).scribe.providerStatus();
+    expect(status).toMatchObject({ mode: 'disabled', available: false, provider: null });
+    expect(status.reason).toMatch(/Not configured/);
+    await expect(
+      caller(state.validToken).scribe.beginRecording({ encounterId: ENCOUNTER_ID, contentType: 'audio/webm' }),
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(state.rpcCalls.length).toBe(0);
+  });
+
   test('deployed environment: fixture mode is refused — providerStatus honest, beginRecording fails closed', async () => {
     process.env.RAILWAY_PROJECT_ID = 'prj_test';
     const status = await caller(state.validToken).scribe.providerStatus();

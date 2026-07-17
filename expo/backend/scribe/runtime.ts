@@ -21,6 +21,12 @@ export function getScribeWorkerDeps(): WorkerDeps | null {
   try {
     const mode = scribeMode();
     let provider: ScribeProvider;
+    if (mode === 'disabled') {
+      // Disabled means disabled: no provider and no workers, even if
+      // HealthScribe env vars happen to be present.
+      cached = null;
+      return cached;
+    }
     if (mode === 'fixture') {
       if (isDeployedEnvironment()) {
         // Fixture providers never run deployed — no workers, and every
