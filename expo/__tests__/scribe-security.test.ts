@@ -433,3 +433,34 @@ describe('durable workers', () => {
     expect(joined).not.toContain('sleeping poorly');
   });
 });
+
+// -------------------------------------------- callback route configuration
+// Route-level posture: SCRIBE_CALLBACK_SECRET is only meaningful when a
+// provider mode exists. Disabled mode needs no secret at all; a missing
+// secret in fixture/live modes refuses cleanly instead of crashing.
+describe('callback route configuration posture', () => {
+  test('disabled mode: 404 not_configured with NO secret set and no ledger touch', async () => {
+    process.env.SCRIBE_MODE = 'disabled';
+    delete process.env.SCRIBE_CALLBACK_SECRET;
+    const { scribeApp } = await import('../backend/scribe/routes');
+    const res = await scribeApp.request('/callback', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('not_configured');
+  });
+
+  test('fixture mode with a missing secret: clean 503 config refusal, not a crash', async () => {
+    process.env.SCRIBE_MODE = 'fixture';
+    delete process.env.SCRIBE_CALLBACK_SECRET;
+    const { scribeApp } = await import('../backend/scribe/routes');
+    const body = JSON.stringify(envelope());
+    const res = await scribeApp.request('/callback', {
+      method: 'POST',
+      body,
+      headers: { 'x-scribe-signature': 'aa'.repeat(32) },
+    });
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('not_configured');
+  });
+});

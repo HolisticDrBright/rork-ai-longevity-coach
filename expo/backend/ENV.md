@@ -57,7 +57,7 @@ Set the same variables in the Railway dashboard under **Variables**. Railway aut
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `SCRIBE_MODE` | no (default `fixture`) | `fixture` (deterministic local provider, development/CI only), `live` (production provider required), or `disabled` (no provider at all — every scribe entry point answers "Not configured" and fails closed). In live mode the fixture can never be selected; live with nothing configured also refuses. `disabled` is the recommended deployed value until a production provider is approved. |
-| `SCRIBE_CALLBACK_SECRET` | yes (≥16 chars) | HMAC-SHA256 secret for provider callback verification. Fixture and production callbacks are signed and verified identically. |
+| `SCRIBE_CALLBACK_SECRET` | fixture/live modes only (≥16 chars) | HMAC-SHA256 secret for provider callback verification. Fixture and production callbacks are signed and verified identically. OMIT when `SCRIBE_MODE=disabled` — the callback route answers "not configured" without it; in fixture/live modes a missing secret refuses callbacks with a clean 503, never a crash. |
 | `HEALTHSCRIBE_REGION` | live only | Approved AWS region for HealthScribe. |
 | `HEALTHSCRIBE_KMS_KEY_ARN` | live only | Customer-managed KMS key for output encryption. |
 | `HEALTHSCRIBE_DATA_ACCESS_ROLE_ARN` | live only | IAM role HealthScribe assumes for S3 access. |
@@ -91,7 +91,6 @@ Required posture for any deployed instance:
 | --- | --- | --- |
 | `SCRIBE_MODE` | `disabled` | Honest posture: no provider exists, endpoints answer "Not configured" and fail closed. (`live` is also refused-until-approved but implies a provider is expected.) |
 | `LENS_AI_MODE` | `disabled` | AI assistance off ("Not configured"); the deterministic lens engine is unaffected. |
-| `SCRIBE_CALLBACK_SECRET` | random ≥16 chars | Required for the signed callback route even while providers are disabled. |
 | `NODE_ENV` | `production` | Enables production log/header behavior. |
 
 Leaving `SCRIBE_MODE`/`LENS_AI_MODE` unset in a deployed environment does NOT
