@@ -55,7 +55,15 @@ export const clinicalOrganizationsRouter = createTRPCRouter({
       .select('role, status, organizations ( id, name, slug )')
       .eq('user_id', ctx.clinicalUser.id)
       .eq('status', 'active');
-    if (error) throw new Error('Failed to load memberships');
+    if (error) {
+      // Sign-in org bootstrap depends on this query — log the underlying
+      // PostgREST failure (schema-level code/message, no row data) instead of
+      // swallowing it; the generic throw stays the client-facing shape.
+      console.error(
+        `[clinical.orgs.mine] memberships query failed: code=${error.code ?? '?'} message=${(error.message ?? '').slice(0, 160)}`,
+      );
+      throw new Error('Failed to load memberships');
+    }
     return (data ?? []).map((m) => {
       const org = m.organizations as unknown as { id: string; name: string; slug: string } | null;
       return {
