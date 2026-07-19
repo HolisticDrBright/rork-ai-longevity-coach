@@ -59,26 +59,49 @@ if (deployed && !["live", "disabled"].includes(lensAiModeRaw)) {
 // idempotent, DB-claimed with SKIP LOCKED — safe across instances.
 startScribeWorkers();
 
-// PostgREST reachability probe: one anonymous HEAD count against the data
-// API at boot. RLS shows anon zero rows, so no data can be exposed — this
-// only proves the /rest/v1 path works end-to-end from this container (the
-// auth path succeeding while the data path silently fails is otherwise
-// invisible until the first real query). Log-only: /health NEVER depends on
-// it, and a failure never stops the server.
+// PostgREST reachability probes at boot (log-only: /health NEVER depends on
+// them and a failure never stops the server). Two layers:
+//
+//  1. postgrest_transport — raw HEAD to the /rest/v1/ root with the anon key:
+//     no table, no RLS. ANY HTTP status proves the data-API transport works
+//     from this container; only a thrown fetch means unreachable.
+//  2. postgrest_probe — an anonymous head-count on `organizations` through
+//     supabase-js. The organizations RLS policy invokes an authenticated-only
+//     private helper, so 42501 "permission denied for function ..." is the
+//     EXPECTED anon outcome and is classified `restricted` (reachable; key
+//     accepted; policy evaluated) — NOT a failure. Signed-in behavior is
+//     diagnosed by the [clinical.orgs.mine]/[trpc] request logs, not here.
 if (missingClinicalEnv.length === 0) {
   void (async () => {
+    const base = (process.env.CLINICAL_SUPABASE_URL ?? "").replace(/\/+$/, "");
+    try {
+      const res = await fetch(`${base}/rest/v1/`, {
+        method: "HEAD",
+        headers: { apikey: process.env.CLINICAL_SUPABASE_ANON_KEY ?? "" },
+      });
+      console.log(`[Server] postgrest_transport=reachable status=${res.status}`);
+    } catch (e) {
+      const err = e as Error;
+      console.warn(
+        `[Server] postgrest_transport=unreachable ${err?.name ?? "Error"}: ${(err?.message ?? "").slice(0, 160)}`,
+      );
+    }
     try {
       const { createClinicalAnonClient } = await import("./clinical-supabase");
       const { error, status } = await createClinicalAnonClient()
         .from("organizations")
         .select("id", { head: true, count: "exact" })
         .limit(0);
-      if (error) {
+      if (!error) {
+        console.log(`[Server] postgrest_probe=ok status=${status ?? 200}`);
+      } else if (error.code === "42501" || /permission denied/i.test(error.message ?? "")) {
+        console.log(
+          `[Server] postgrest_probe=restricted (expected for anon — PostgREST reached, RLS policy evaluated) code=${error.code ?? "42501"}`,
+        );
+      } else {
         console.warn(
           `[Server] postgrest_probe=failed status=${status ?? "?"} code=${error.code ?? "?"} message=${(error.message ?? "").slice(0, 160)}`,
         );
-      } else {
-        console.log(`[Server] postgrest_probe=ok status=${status ?? 200}`);
       }
     } catch (e) {
       const err = e as Error;
