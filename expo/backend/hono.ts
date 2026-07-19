@@ -45,6 +45,15 @@ app.use("*", secureHeaders());
 app.use("*", sentryMiddleware());
 
 app.use("*", async (c, next) => {
+  // Path + status only — query strings can carry tRPC GET inputs; tokens/PHI
+  // never log. Registered BEFORE the terminating handlers (tRPC, uploads) so
+  // every request is visible in deploy logs; the previous placement after
+  // those mounts meant tRPC traffic was never logged at all.
+  await next();
+  console.log(`[REQ] ${c.req.method} ${new URL(c.req.url).pathname} -> ${c.res.status}`);
+});
+
+app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   c.res.headers.set("X-Content-Type-Options", "nosniff");
@@ -75,6 +84,17 @@ app.use(
     endpoint: "/api/trpc",
     router: appRouter,
     createContext,
+    onError({ error, path, type }) {
+      // Procedure path, tRPC code, and the CAUSE CLASS + schema-level message
+      // only (PostgREST/fetch failures carry no payloads). Inputs, tokens and
+      // PHI never log. Without this hook every procedure failure was invisible
+      // in deploy logs — the exact blind spot that stalled the staging gate.
+      const cause =
+        error.cause instanceof Error
+          ? `${error.cause.name}: ${error.cause.message.slice(0, 160)}`
+          : "none";
+      console.error(`[trpc] ${type} ${path ?? "?"} -> ${error.code} cause=${cause}`);
+    },
   }),
 );
 
@@ -86,12 +106,6 @@ app.route("/api/clinical/labs", labsUploadApp);
 // bearer token — requestGuards still applies body caps + rate limits via
 // the /api/clinical/* rule above.
 app.route("/api/clinical/scribe", scribeApp);
-
-app.use("*", async (c, next) => {
-  // Path only — query strings can carry tRPC GET inputs; tokens/PHI never log.
-  console.log(`[REQ] ${c.req.method} ${new URL(c.req.url).pathname}`);
-  await next();
-});
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });
