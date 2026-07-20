@@ -5,6 +5,11 @@ import {
   patientAccessProcedure,
 } from '../../clinical-authorization';
 import { clinicalActionsRouter } from './actions';
+import {
+  clinicalAssessmentsRouter,
+  clinicalRecommendationsRouter,
+  clinicalRegistryRouter,
+} from './assessments';
 import { clinicalEncountersRouter, clinicalNotesRouter } from './emr';
 import { clinicalOrganizationsRouter } from './organizations';
 import { clinicalLabsRouter } from './labs';
@@ -31,6 +36,15 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Review queue reads + resolve (RPC 0014). Desktop: api.tasks.*. */
   tasks: clinicalTasksRouter,
+
+  /** Governed assessments: definition/assign/autosave/submit/result (RPCs 0027). */
+  assessments: clinicalAssessmentsRouter,
+
+  /** Draft lab + protocol recommendations and decisions (RPCs 0027). */
+  recommendations: clinicalRecommendationsRouter,
+
+  /** Versioned clinical content registry reads (approved supplements, templates). */
+  registry: clinicalRegistryRouter,
 
   /** Labs workspace read + marker review (RPC 0013). Desktop: api.labs.*. */
   labs: clinicalLabsRouter,

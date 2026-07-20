@@ -314,6 +314,7 @@ import { supabase } from '@/lib/supabase';
 
 import { LabPanel, Biomarker, LabAnalysis } from '@/types';
 import { findAffiliateLink, AffiliateLink } from '@/constants/affiliateLinks';
+import { buildSupplementCatalogPromptBlock, validateSupplementSuggestions } from '@/registry';
 
 export interface SupplementRecommendation {
   name: string;
@@ -321,6 +322,8 @@ export interface SupplementRecommendation {
   timing: string;
   reason: string;
   mechanism: string;
+  /** Registry product id when the suggestion validated against the registry; null for unverified AI output. */
+  registryProductId?: string | null;
   affiliateLink?: AffiliateLink;
 }
 
@@ -367,6 +370,37 @@ const labExtractionSchema = z.object({
   herbs: z.array(supplementSchema),
   priorityActions: z.array(z.string()),
 });
+
+/**
+ * Post-validate AI supplement output against the clinical registry. Validated
+ * suggestions keep the canonical registry name/brand and may carry the
+ * practice's own affiliate link; anything the registry does not recognize is
+ * labeled an unverified suggestion and carries NO product identity and NO
+ * purchase link — it can never render as purchasable.
+ */
+const toGovernedSupplements = (
+  suggestions: z.infer<typeof supplementSchema>[],
+): SupplementRecommendation[] => {
+  const { validated, unverified } = validateSupplementSuggestions(suggestions);
+  return [
+    ...validated.map(({ suggestion, product }) => ({
+      ...suggestion,
+      name: `${product.name} (${product.brand})`,
+      registryProductId: product.id,
+      affiliateLink: findAffiliateLink(product.name),
+    })),
+    ...unverified.map((s) => ({
+      ...s,
+      name: `${s.name} — unverified suggestion`,
+      registryProductId: null,
+    })),
+  ];
+};
+
+/** Herbs have no registry coverage yet: advisory text only, never purchasable. */
+const toAdvisoryHerbs = (
+  herbs: z.infer<typeof supplementSchema>[],
+): SupplementRecommendation[] => herbs.map((h) => ({ ...h, registryProductId: null }));
 
 const STORAGE_KEY = 'longevity_lab_panels';
 const LATEST_ANALYSIS_KEY = 'longevity_latest_lab_analysis';
@@ -667,29 +701,10 @@ For each biomarker found, provide:
 - functionalMin/functionalMax: The optimal functional medicine range
 - status: "optimal" (within functional range), "normal" (within reference but not optimal), "suboptimal" (slightly outside), or "critical" (significantly outside)
 
-IMPORTANT — Supplement recommendations:
-When recommending supplements, PRIORITIZE these specific products from our curated catalog. Use the exact product name and brand when the condition matches:
-
-- ProOmega 2000 (Nordic Naturals) — 2 softgels daily with meals — for omega-3, fish oil, EPA/DHA, inflammation, cardiovascular, triglycerides
-- GlucoPrime (Healthgevity) — 1 capsule 2x daily with meals — for blood sugar, insulin resistance, glucose, HbA1c
-- Protect+ 10 (Healthgevity) — 1 softgel daily with fat — for foundational multi, vitamin D, antioxidants
-- Liver Sauce (Quicksilver Scientific) — 1 tsp daily empty stomach — for liver support, detox, ALT/AST elevation
-- Liposomal Glutathione Complex (Quicksilver Scientific) — 1 tsp daily empty stomach — for glutathione, oxidative stress, detox
-- Glutaryl Transdermal Glutathione (Auro Wellness) — 4 pumps daily on skin — for glutathione, detox support
-- MitoCore (Orthomolecular) — 4 capsules daily with breakfast — for mitochondrial support, CoQ10, energy, fatigue
-- NAC 900+ (Healthgevity) — 1-2 capsules daily — for NAC, liver support, glutathione precursor
-- Gut Shield (Healthgevity) — 1 scoop daily — for gut repair, leaky gut, IBS, gut inflammation
-- ProBiota HistaminX (Seeking Health) — 1 capsule daily — for probiotics, histamine intolerance, gut health
-- Sleep Deep (Healthgevity) — 2 capsules before bed — for sleep, insomnia, GABA, magnesium
-- Magnesium Glycinate 300 (Healthgevity) — 1-2 capsules evening — for magnesium, sleep, muscle cramps, stress
-- Methyl B Complex (Healthgevity) — 1 capsule morning — for B vitamins, methylation, MTHFR, homocysteine
-- D3+K2 5000 (Healthgevity) — 1 softgel morning with fat — for vitamin D deficiency, bone health, immune
-- Adrenal Restore (Healthgevity) — 2 capsules morning — for adrenal fatigue, cortisol, HPA axis, stress
-
-If the patient's labs indicate a condition that matches one of these products, recommend that SPECIFIC product by name and brand. For conditions not covered by our catalog, you may recommend generic supplements with standard dosing.
+${buildSupplementCatalogPromptBlock()}
 
 Also provide:
-- herbs: Recommended herbs/botanicals with dose, timing, reason, and mechanism
+- herbs: Recommended herbs/botanicals with dose, timing, reason, and mechanism. Use generic botanical names only — never invent brands, proprietary blends, vendors, citations, or purchase links.
 - priorityActions: Top 3-5 priority actions to take based on the actual lab values
 
 Be thorough and extract every biomarker visible in the document. Base ALL recommendations on the patient's actual biomarker values — not generic advice.`;
@@ -845,53 +860,6 @@ The "biomarkers" array MUST contain exactly the same entries (same name/value/un
         throw new Error('Unable to read lab results from the document. Please try uploading a clearer image or PDF.');
       }
 
-      let analysisText = '';
-
-      if (isPdf && openaiFileId) {
-        console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
-        try {
-          analysisText = await callOpenAIWithFile(openaiFileId, labAnalysisPrompt, false);
-        } catch (e) {
-          console.log('[Labs] PDF analysis generation failed:', e);
-          analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
-        }
-        void deleteOpenAIFile(openaiFileId);
-        openaiFileId = null;
-
-        const biomarkers: Biomarker[] = extractedData.biomarkers.map((b, index) => ({
-          id: `bio_${Date.now()}_${index}`,
-          name: b.name,
-          value: b.value,
-          unit: b.unit,
-          referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
-          functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
-          status: b.status,
-          date: new Date().toISOString(),
-        }));
-        const supplementsWithLinks: SupplementRecommendation[] = extractedData.supplements.map(supp => ({
-          ...supp,
-          affiliateLink: findAffiliateLink(supp.name),
-        }));
-        const herbsWithLinks: SupplementRecommendation[] = extractedData.herbs.map(herb => ({
-          ...herb,
-          affiliateLink: findAffiliateLink(herb.name),
-        }));
-        const analysis: LabAnalysis = {
-          id: `analysis_${Date.now()}`,
-          panelId: panelId || '',
-          date: new Date().toISOString(),
-          summary: analysisText,
-          status: 'completed',
-        };
-        return {
-          analysis,
-          biomarkers,
-          supplements: supplementsWithLinks,
-          herbs: herbsWithLinks,
-          priorityActions: extractedData.priorityActions,
-        };
-      }
-
       const labAnalysisPrompt = `🧬 FUNCTIONAL / LONGEVITY LAB INTERPRETATION MASTER PROMPT
 
 You are a world-class functional medicine, longevity, and systems-biology physician.
@@ -932,6 +900,48 @@ Top 3 Things to Fix First
 If You Do Nothing Else, Do These 3 Things
 
 Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
+
+      let analysisText = '';
+
+      if (isPdf && openaiFileId) {
+        console.log('[Labs] Generating analysis from PDF via OpenAI direct API...');
+        try {
+          analysisText = await callOpenAIWithFile(openaiFileId, labAnalysisPrompt, false);
+        } catch (e) {
+          console.log('[Labs] PDF analysis generation failed:', e);
+          analysisText = 'Analysis temporarily unavailable. Your biomarkers have been extracted and saved.';
+        }
+        void deleteOpenAIFile(openaiFileId);
+        openaiFileId = null;
+
+        const biomarkers: Biomarker[] = extractedData.biomarkers.map((b, index) => ({
+          id: `bio_${Date.now()}_${index}`,
+          name: b.name,
+          value: b.value,
+          unit: b.unit,
+          referenceRange: { min: b.referenceMin ?? 0, max: b.referenceMax ?? 0 },
+          functionalRange: { min: b.functionalMin ?? 0, max: b.functionalMax ?? 0 },
+          status: b.status,
+          date: new Date().toISOString(),
+        }));
+        const governedSupplements = toGovernedSupplements(extractedData.supplements);
+        const advisoryHerbs = toAdvisoryHerbs(extractedData.herbs);
+        const analysis: LabAnalysis = {
+          id: `analysis_${Date.now()}`,
+          panelId: panelId || '',
+          date: new Date().toISOString(),
+          summary: analysisText,
+          status: 'completed',
+        };
+        return {
+          analysis,
+          biomarkers,
+          supplements: governedSupplements,
+          herbs: advisoryHerbs,
+          priorityActions: extractedData.priorityActions,
+        };
+      }
+
 
       console.log('[Labs] Generating analysis via OpenAI gpt-5-mini...');
 
@@ -978,15 +988,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         date: new Date().toISOString(),
       }));
 
-      const supplementsWithLinks: SupplementRecommendation[] = extractedData.supplements.map(supp => ({
-        ...supp,
-        affiliateLink: findAffiliateLink(supp.name),
-      }));
-
-      const herbsWithLinks: SupplementRecommendation[] = extractedData.herbs.map(herb => ({
-        ...herb,
-        affiliateLink: findAffiliateLink(herb.name),
-      }));
+      const governedSupplements = toGovernedSupplements(extractedData.supplements);
+      const advisoryHerbs = toAdvisoryHerbs(extractedData.herbs);
 
       const analysis: LabAnalysis = {
         id: `analysis_${Date.now()}`,
@@ -999,8 +1002,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       return {
         analysis,
         biomarkers,
-        supplements: supplementsWithLinks,
-        herbs: herbsWithLinks,
+        supplements: governedSupplements,
+        herbs: advisoryHerbs,
         priorityActions: extractedData.priorityActions,
       };
     },
@@ -1075,7 +1078,7 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       }
       if (dataUrls.length === 0) throw new Error('Could not read any of the uploaded images.');
 
-      const extractionPrompt = `You are analyzing pages from a lab report for a functional medicine practice. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\nIMPORTANT — When recommending supplements, PRIORITIZE these specific products:\n- ProOmega 2000 (Nordic Naturals) — for omega-3, cardiovascular\n- GlucoPrime (Healthgevity) — for blood sugar, insulin resistance\n- Protect+ 10 (Healthgevity) — foundational multi\n- Liver Sauce (Quicksilver Scientific) — liver support, detox\n- Liposomal Glutathione (Quicksilver Scientific) — glutathione, oxidative stress\n- MitoCore (Orthomolecular) — mitochondrial support, energy\n- NAC 900+ (Healthgevity) — liver, glutathione precursor\n- Gut Shield (Healthgevity) — gut repair\n- ProBiota HistaminX (Seeking Health) — probiotics, histamine\n- Sleep Deep (Healthgevity) — sleep support\n- Magnesium Glycinate 300 (Healthgevity) — magnesium\n- Methyl B Complex (Healthgevity) — B vitamins, methylation\n- D3+K2 5000 (Healthgevity) — vitamin D\n- Adrenal Restore (Healthgevity) — adrenal, cortisol\n\nUse exact product name and brand when the condition matches. Base ALL recommendations on actual biomarker values.\n\nAlso provide:\n- herbs: Recommended herbs with dose, timing, reason, mechanism\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.`;
+      const extractionPrompt = `You are analyzing pages from a lab report for a functional medicine practice. Extract ALL biomarker values you can find across the pages.\n\nFor each biomarker found, provide:\n- name: The biomarker name (e.g., "Fasting Glucose", "TSH", "Vitamin D")\n- value: The numeric value\n- unit: The unit of measurement\n- referenceMin/referenceMax: The lab's reference range\n- functionalMin/functionalMax: The optimal functional medicine range\n- status: "optimal", "normal", "suboptimal", or "critical"\n\n${buildSupplementCatalogPromptBlock()}\n\nBase ALL recommendations on actual biomarker values.\n\nAlso provide:\n- herbs: Recommended herbs with dose, timing, reason, mechanism (generic botanical names only — no brands, vendors, or purchase links)\n- priorityActions: Top 3-5 priority actions\n\nDeduplicate biomarkers across pages. Be thorough.`;
 
       const BATCH = 4;
       const batches: string[][] = [];
@@ -1173,14 +1176,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
         date: new Date().toISOString(),
       }));
 
-      const supplementsWithLinks: SupplementRecommendation[] = dedupedSupps.map(s => ({
-        ...s,
-        affiliateLink: findAffiliateLink(s.name),
-      }));
-      const herbsWithLinks: SupplementRecommendation[] = dedupedHerbs.map(h => ({
-        ...h,
-        affiliateLink: findAffiliateLink(h.name),
-      }));
+      const governedSupplements = toGovernedSupplements(dedupedSupps);
+      const advisoryHerbs = toAdvisoryHerbs(dedupedHerbs);
 
       const analysis: LabAnalysis = {
         id: `analysis_${Date.now()}`,
@@ -1193,8 +1190,8 @@ Tone: Clear, Precise, Educational, No fear-mongering, No sugar-coating`;
       return {
         analysis,
         biomarkers,
-        supplements: supplementsWithLinks,
-        herbs: herbsWithLinks,
+        supplements: governedSupplements,
+        herbs: advisoryHerbs,
         priorityActions: Array.from(new Set(allActions)).slice(0, 5),
       };
     },

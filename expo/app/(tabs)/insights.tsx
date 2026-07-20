@@ -49,7 +49,13 @@ import { useLabs } from '@/providers/LabsProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useRorkAgent } from '@rork-ai/toolkit-sdk';
 import PeptideEducation from '@/components/PeptideEducation';
-import { CategoryScore, HealthDisorder, LabRecommendation } from '@/types';
+import { CategoryScore } from '@/types';
+import {
+  recommendLabs,
+  scoreSubmission,
+  SCREENING_DISCLAIMER,
+  type LabRecommendation as RegistryLabRecommendation,
+} from '@/registry';
 
 const categoryIcons: Record<string, any> = {
   thyroid: Thermometer,
@@ -87,165 +93,6 @@ const categoryColors: Record<string, string> = {
   leaky_gut: '#E11D48',
 };
 
-const labRecommendations: Record<string, LabRecommendation[]> = {
-  gallbladder: [
-    {
-      id: 'vibrant_blood',
-      name: 'Vibrant Blood Panel',
-      description: 'Comprehensive blood panel to assess liver and gallbladder function markers',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P',
-      priority: 'primary',
-    },
-  ],
-  leaky_gut: [
-    {
-      id: 'gut_zoomer',
-      name: 'Gut Zoomer',
-      description: 'Comprehensive gut health panel including intestinal permeability markers',
-      orderLink: 'https://holisticdrbright.wellproz.com/patient/product/27874',
-      priority: 'primary',
-    },
-  ],
-  gut_digestive: [
-    {
-      id: 'gut_zoomer_digestive',
-      name: 'Gut Zoomer',
-      description: 'Full microbiome analysis with pathogen and dysbiosis markers',
-      orderLink: 'https://holisticdrbright.wellproz.com/patient/product/27874',
-      priority: 'primary',
-    },
-    {
-      id: 'sibo_test',
-      name: 'SIBO Breath Test',
-      description: 'If bloating is a primary symptom - tests for small intestinal bacterial overgrowth',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_GxEadBx',
-      priority: 'secondary',
-    },
-  ],
-  blood_sugar: [
-    {
-      id: 'vibrant_blood_sugar',
-      name: 'Vibrant Blood Panel',
-      description: 'Includes fasting glucose, HbA1c, insulin, and metabolic markers',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P',
-      priority: 'primary',
-    },
-  ],
-  adrenal: [
-    {
-      id: 'dutch_test_adrenal',
-      name: 'DUTCH Complete Test',
-      description: 'Comprehensive hormone panel including cortisol rhythm, DHEA, and adrenal metabolites',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_kM2JwrM',
-      priority: 'primary',
-    },
-  ],
-  hormones: [
-    {
-      id: 'dutch_test_hormones',
-      name: 'DUTCH Complete Test',
-      description: 'Full sex hormone panel with metabolites, estrogen metabolism, and androgens',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_kM2JwrM',
-      priority: 'primary',
-    },
-  ],
-  thyroid: [
-    {
-      id: 'vibrant_thyroid',
-      name: 'Vibrant Blood Panel',
-      description: 'Full thyroid panel: TSH, Free T3, Free T4, Reverse T3, TPO & TG antibodies',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P',
-      priority: 'primary',
-    },
-  ],
-  autoimmune: [
-    {
-      id: 'food_sensitivities',
-      name: 'Food Sensitivity Panel',
-      description: 'Identifies IgG reactions to foods that may trigger autoimmune responses',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_aOpW617',
-      priority: 'primary',
-    },
-    {
-      id: 'cyrex_array_5',
-      name: 'Cyrex Array 5 - Autoimmune Panel',
-      description: 'Comprehensive autoimmune reactivity screen for multiple tissues',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_L7gqJJx',
-      priority: 'primary',
-    },
-  ],
-  parasites: [
-    {
-      id: 'gut_zoomer_parasites',
-      name: 'Gut Zoomer',
-      description: 'Includes comprehensive parasite detection and gut pathogen analysis',
-      orderLink: 'https://holisticdrbright.wellproz.com/patient/product/27874',
-      priority: 'primary',
-    },
-  ],
-  lyme: [
-    {
-      id: 'cyrex_array_12',
-      name: 'Cyrex Array 12 - Pathogens',
-      description: 'Tests for Borrelia, co-infections, and tick-borne pathogens',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_8OJNqgO',
-      priority: 'primary',
-    },
-  ],
-  mold: [
-    {
-      id: 'mycotoxin_panel',
-      name: 'Mycotoxin Panel',
-      description: 'Urinary mycotoxin testing for mold exposure and biotoxin illness',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_exV5p2O',
-      priority: 'primary',
-    },
-  ],
-  heavy_metals: [
-    {
-      id: 'heavy_metals_test',
-      name: 'Heavy Metals Test',
-      description: 'Comprehensive heavy metal panel including lead, mercury, arsenic, cadmium',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_2xvd6e7',
-      priority: 'primary',
-    },
-    {
-      id: 'tri_mercury',
-      name: 'Tri-Mercury Test',
-      description: 'Specialized mercury speciation test for dental amalgam and fish exposure',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_nxnq6BO',
-      priority: 'secondary',
-    },
-  ],
-  methylation: [
-    {
-      id: 'genetic_testing',
-      name: '3x4 Genetic Testing',
-      description: 'Genetic analysis including MTHFR, COMT, and detox pathways. Use Practitioner Code: BBRI003',
-      orderLink: 'https://3x4genetics.com',
-      priority: 'primary',
-    },
-  ],
-  viral: [
-    {
-      id: 'cyrex_array_12_viral',
-      name: 'Cyrex Array 12 - Pathogens',
-      description: 'Includes EBV, CMV, HHV-6, and other chronic viral markers',
-      orderLink: 'https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_8OJNqgO',
-      priority: 'primary',
-    },
-  ],
-  emf: [
-    {
-      id: 'emf_assessment',
-      name: 'EMF Home Assessment',
-      description: 'Consider professional EMF assessment of home and work environment',
-      orderLink: '',
-      priority: 'secondary',
-    },
-  ],
-};
-
 const disorderDescriptions: Record<string, string> = {
   thyroid: 'Thyroid dysfunction can cause fatigue, weight changes, temperature sensitivity, and metabolic issues.',
   adrenal: 'Adrenal fatigue/HPA axis dysfunction affects energy, stress response, and recovery.',
@@ -264,38 +111,60 @@ const disorderDescriptions: Record<string, string> = {
   leaky_gut: 'Intestinal permeability allows toxins into bloodstream, triggering inflammation.',
 };
 
-const getHealthDisorders = (categoryScores: CategoryScore[]): HealthDisorder[] => {
-  const disorders: HealthDisorder[] = [];
+export type ScreeningBand = 'insufficient_data' | 'below-threshold' | 'moderate' | 'elevated';
 
-  categoryScores.forEach(score => {
-    const riskPercentage = Math.round(score.percentage);
-    let riskLevel: 'low' | 'medium' | 'high' = 'low';
-    
-    if (riskPercentage >= 50) {
-      riskLevel = 'high';
-    } else if (riskPercentage >= 25) {
-      riskLevel = 'medium';
+export interface ScreeningPattern {
+  id: string;
+  name: string;
+  description: string;
+  /** Symptom-pattern screening score — NOT a disease risk or diagnosis. */
+  score: number | null;
+  band: ScreeningBand;
+  completeness: number;
+  recommendedLabs: { id: string; name: string; why: string; priority: 'primary' | 'conditional' }[];
+}
+
+/**
+ * Registry-backed screening view. Scores come from the versioned scoring
+ * engine (scoring.v2 — answered-question denominator, insufficient-data
+ * floor); lab candidates come ONLY from the versioned category→lab rules.
+ * Everything shown here is a screening draft for practitioner review.
+ */
+const getScreeningPatterns = (
+  responses: { questionId: string; severity: number }[],
+): ScreeningPattern[] => {
+  const screening = scoreSubmission(
+    responses.map(r => ({ questionId: r.questionId, value: r.severity as 0 | 1 | 2 | 3 | 4 })),
+  );
+  const labs = recommendLabs(screening);
+  const labsByCategory = new Map<string, RegistryLabRecommendation[]>();
+  for (const rec of labs.recommendations) {
+    for (const categoryId of rec.sourceCategoryIds) {
+      const list = labsByCategory.get(categoryId) ?? [];
+      list.push(rec);
+      labsByCategory.set(categoryId, list);
     }
-
-    const labs = labRecommendations[score.categoryId] || [];
-
-    disorders.push({
-      id: score.categoryId,
-      name: score.categoryName,
-      description: disorderDescriptions[score.categoryId] || '',
-      riskPercentage,
-      riskLevel,
-      relatedCategories: [score.categoryId],
-      symptoms: [],
-      recommendedLabs: labs,
-    });
-  });
-
-  return disorders.sort((a, b) => b.riskPercentage - a.riskPercentage);
+  }
+  const bandRank: Record<ScreeningBand, number> = {
+    elevated: 0, moderate: 1, 'below-threshold': 2, insufficient_data: 3,
+  };
+  return screening.categories
+    .map(c => ({
+      id: c.categoryId,
+      name: c.categoryName,
+      description: disorderDescriptions[c.categoryId] || '',
+      score: c.rounded,
+      band: c.band as ScreeningBand,
+      completeness: c.completeness,
+      recommendedLabs: (labsByCategory.get(c.categoryId) ?? []).map(l => ({
+        id: l.labId, name: l.panelName, why: l.why, priority: l.priority,
+      })),
+    }))
+    .sort((a, b) => bandRank[a.band] - bandRank[b.band] || (b.score ?? 0) - (a.score ?? 0));
 };
 
 export default function InsightsScreen() {
-  const { categoryScores, questionnaireResponses, isLoading } = useUser();
+  const { questionnaireResponses, isLoading } = useUser();
   const { flaggedBiomarkers } = useLabs();
   const { todayAdherence } = useProtocol();
   const [expandedDisorder, setExpandedDisorder] = useState<string | null>(null);
@@ -304,22 +173,22 @@ export default function InsightsScreen() {
   const [chatInput, setChatInput] = useState('');
   const scrollViewRef = useRef<ScrollView>(null);
 
-  const disorders = useMemo(() => getHealthDisorders(categoryScores), [categoryScores]);
+  const disorders = useMemo(() => getScreeningPatterns(questionnaireResponses), [questionnaireResponses]);
 
   const healthContext = useMemo(() => {
-    const highRiskDisorders = disorders.filter(d => d.riskLevel === 'high').map(d => d.name);
-    const medRiskDisorders = disorders.filter(d => d.riskLevel === 'medium').map(d => d.name);
+    const elevatedPatterns = disorders.filter(d => d.band === 'elevated').map(d => d.name);
+    const moderatePatterns = disorders.filter(d => d.band === 'moderate').map(d => d.name);
     const flaggedLabs = flaggedBiomarkers.map(b => `${b.name}: ${b.value} ${b.unit} (${b.status})`);
     
     return `User Health Profile:
-- High Risk Areas: ${highRiskDisorders.join(', ') || 'None'}
-- Medium Risk Areas: ${medRiskDisorders.join(', ') || 'None'}
+- Elevated screening patterns (NOT diagnoses): ${elevatedPatterns.join(', ') || 'None'}
+- Moderate screening patterns (NOT diagnoses): ${moderatePatterns.join(', ') || 'None'}
 - Flagged Lab Results: ${flaggedLabs.join(', ') || 'None available'}
 - Today's Energy: ${todayAdherence?.symptoms?.energy || 'Not logged'}/10
 - Today's Sleep: ${todayAdherence?.symptoms?.sleep || 'Not logged'}/10
 - Today's Mood: ${todayAdherence?.symptoms?.mood || 'Not logged'}/10
 
-You are a functional medicine health assistant. Provide helpful, personalized advice based on the user's health data. Be supportive and educational. Always remind users to consult their healthcare provider for medical decisions.`;
+You are a functional-medicine education assistant. You may EXPLAIN and rank only the deterministic screening results and lab candidates listed above — never add conditions, labs, products, doses, or diagnoses beyond them. Screening scores are symptom-pattern screening scores, not disease risks. Always remind the user that their practitioner reviews everything before any recommendation.`;
   }, [disorders, flaggedBiomarkers, todayAdherence]);
 
   const { messages, sendMessage } = useRorkAgent({
@@ -336,13 +205,13 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
 
   const hasCompletedQuestionnaire = questionnaireResponses.length > 0;
 
-  const highRiskCount = disorders.filter(d => d.riskLevel === 'high').length;
-  const mediumRiskCount = disorders.filter(d => d.riskLevel === 'medium').length;
-  const lowRiskCount = disorders.filter(d => d.riskLevel === 'low').length;
+  const elevatedCount = disorders.filter(d => d.band === 'elevated').length;
+  const moderateCount = disorders.filter(d => d.band === 'moderate').length;
+  const belowCount = disorders.filter(d => d.band === 'below-threshold' || d.band === 'insufficient_data').length;
 
   const displayedDisorders = showAllDisorders 
-    ? disorders 
-    : disorders.filter(d => d.riskLevel !== 'low').slice(0, 8);
+    ? disorders
+    : disorders.filter(d => d.band === 'elevated' || d.band === 'moderate').slice(0, 8);
 
   const handleOpenLink = (url: string) => {
     if (url) {
@@ -378,18 +247,20 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
     );
   }
 
-  const getRiskColor = (level: string) => {
-    switch (level) {
-      case 'high': return Colors.danger;
-      case 'medium': return Colors.warning;
+  const getBandColor = (band: ScreeningBand) => {
+    switch (band) {
+      case 'elevated': return Colors.danger;
+      case 'moderate': return Colors.warning;
+      case 'insufficient_data': return Colors.textTertiary;
       default: return Colors.success;
     }
   };
 
-  const getRiskBgColor = (level: string) => {
-    switch (level) {
-      case 'high': return '#FEE2E2';
-      case 'medium': return '#FEF3C7';
+  const getBandBgColor = (band: ScreeningBand) => {
+    switch (band) {
+      case 'elevated': return '#FEE2E2';
+      case 'moderate': return '#FEF3C7';
+      case 'insufficient_data': return '#E5E7EB';
       default: return '#D1FAE5';
     }
   };
@@ -403,27 +274,27 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
         <SafeAreaView edges={['top']}>
           <View style={styles.header}>
             <Brain color={Colors.textInverse} size={28} />
-            <Text style={styles.headerTitle}>Health Risk Assessment</Text>
+            <Text style={styles.headerTitle}>Symptom-Pattern Screening</Text>
             <Text style={styles.headerSubtitle}>
-              Based on your symptom questionnaire
+              Screening scores from your questionnaire — not diagnoses. Your practitioner reviews everything.
             </Text>
           </View>
 
           <View style={styles.summaryRow}>
             <View style={[styles.summaryCard, { borderBottomColor: Colors.danger }]}>
               <AlertTriangle color={Colors.danger} size={20} />
-              <Text style={styles.summaryValue}>{highRiskCount}</Text>
-              <Text style={styles.summaryLabel}>High Risk</Text>
+              <Text style={styles.summaryValue}>{elevatedCount}</Text>
+              <Text style={styles.summaryLabel}>Elevated</Text>
             </View>
             <View style={[styles.summaryCard, { borderBottomColor: Colors.warning }]}>
               <AlertTriangle color={Colors.warning} size={20} />
-              <Text style={styles.summaryValue}>{mediumRiskCount}</Text>
-              <Text style={styles.summaryLabel}>Medium Risk</Text>
+              <Text style={styles.summaryValue}>{moderateCount}</Text>
+              <Text style={styles.summaryLabel}>Moderate</Text>
             </View>
             <View style={[styles.summaryCard, { borderBottomColor: Colors.success }]}>
               <CheckCircle color={Colors.success} size={20} />
-              <Text style={styles.summaryValue}>{lowRiskCount}</Text>
-              <Text style={styles.summaryLabel}>Low Risk</Text>
+              <Text style={styles.summaryValue}>{belowCount}</Text>
+              <Text style={styles.summaryLabel}>Below threshold</Text>
             </View>
           </View>
         </SafeAreaView>
@@ -435,15 +306,15 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Disorder Risk Analysis</Text>
+          <Text style={styles.sectionTitle}>Pattern screening scores</Text>
           <Text style={styles.sectionSubtitle}>
-            Tap each condition to see recommended lab tests
+            Tap a pattern to see the lab tests your practitioner may consider
           </Text>
 
           {displayedDisorders.map(disorder => {
             const isExpanded = expandedDisorder === disorder.id;
-            const riskColor = getRiskColor(disorder.riskLevel);
-            const riskBgColor = getRiskBgColor(disorder.riskLevel);
+            const bandColor = getBandColor(disorder.band);
+            const bandBgColor = getBandBgColor(disorder.band);
             const IconComponent = categoryIcons[disorder.id] || Brain;
             const iconColor = categoryColors[disorder.id] || Colors.primary;
 
@@ -462,9 +333,9 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                   <View style={styles.disorderContent}>
                     <View style={styles.disorderTitleRow}>
                       <Text style={styles.disorderName}>{disorder.name}</Text>
-                      <View style={[styles.riskBadge, { backgroundColor: riskBgColor }]}>
-                        <Text style={[styles.riskBadgeText, { color: riskColor }]}>
-                          {disorder.riskLevel.toUpperCase()}
+                      <View style={[styles.riskBadge, { backgroundColor: bandBgColor }]}>
+                        <Text style={[styles.riskBadgeText, { color: bandColor }]}>
+                          {disorder.band === 'insufficient_data' ? 'NEEDS MORE ANSWERS' : disorder.band.replace('-', ' ').toUpperCase()}
                         </Text>
                       </View>
                     </View>
@@ -475,14 +346,14 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                           style={[
                             styles.percentageBarFill, 
                             { 
-                              width: `${Math.max(disorder.riskPercentage, 3)}%`,
-                              backgroundColor: riskColor,
+                              width: `${Math.max(disorder.score ?? 0, 3)}%`,
+                              backgroundColor: bandColor,
                             }
                           ]} 
                         />
                       </View>
-                      <Text style={[styles.percentageText, { color: riskColor }]}>
-                        {disorder.riskPercentage}%
+                      <Text style={[styles.percentageText, { color: bandColor }]}>
+                        {disorder.score === null ? '—' : `${disorder.score}%`}
                       </Text>
                     </View>
                   </View>
@@ -504,18 +375,16 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                       <View style={styles.labsSection}>
                         <View style={styles.labsHeader}>
                           <FlaskConical color={Colors.primary} size={16} />
-                          <Text style={styles.labsTitle}>Recommended Labs</Text>
+                          <Text style={styles.labsTitle}>Lab candidates for practitioner review</Text>
                         </View>
 
                         {disorder.recommendedLabs.map(lab => (
-                          <TouchableOpacity
+                          <View
                             key={lab.id}
                             style={[
                               styles.labCard,
                               lab.priority === 'primary' && styles.labCardPrimary,
                             ]}
-                            onPress={() => handleOpenLink(lab.orderLink)}
-                            disabled={!lab.orderLink}
                           >
                             <View style={styles.labContent}>
                               <View style={styles.labTitleRow}>
@@ -526,15 +395,12 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                                   </View>
                                 )}
                               </View>
-                              <Text style={styles.labDescription}>{lab.description}</Text>
+                              <Text style={styles.labDescription}>{lab.why}</Text>
+                              <Text style={styles.labReviewNote}>
+                                Draft candidate — your practitioner reviews and orders labs. Nothing is ordered from this screen.
+                              </Text>
                             </View>
-                            {lab.orderLink ? (
-                              <View style={styles.orderButton}>
-                                <ExternalLink color={Colors.primary} size={16} />
-                                <Text style={styles.orderButtonText}>Order</Text>
-                              </View>
-                            ) : null}
-                          </TouchableOpacity>
+                          </View>
                         ))}
                       </View>
                     )}
@@ -544,13 +410,13 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
             );
           })}
 
-          {!showAllDisorders && disorders.filter(d => d.riskLevel === 'low').length > 0 && (
+          {!showAllDisorders && disorders.filter(d => d.band === 'below-threshold' || d.band === 'insufficient_data').length > 0 && (
             <TouchableOpacity
               style={styles.showAllButton}
               onPress={() => setShowAllDisorders(true)}
             >
               <Text style={styles.showAllText}>
-                Show {disorders.filter(d => d.riskLevel === 'low').length} Low Risk Conditions
+                Show {disorders.filter(d => d.band === 'below-threshold' || d.band === 'insufficient_data').length} below-threshold patterns
               </Text>
               <ChevronDown color={Colors.primary} size={18} />
             </TouchableOpacity>
@@ -628,7 +494,7 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
         <View style={styles.disclaimer}>
           <Text style={styles.disclaimerText}>
             These insights are for educational purposes only and do not constitute medical advice. 
-            Risk percentages are based on symptom frequency and severity. Always consult with a 
+            {SCREENING_DISCLAIMER} Scores reflect symptom frequency and severity only. Always consult with a 
             qualified healthcare practitioner before making health decisions or ordering lab tests.
           </Text>
         </View>
@@ -674,9 +540,9 @@ You are a functional medicine health assistant. Provide helpful, personalized ad
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={styles.chatSuggestion}
-                      onPress={() => sendMessage("Can you explain my risk areas?")}
+                      onPress={() => sendMessage("Can you explain my screening results?")}
                     >
-                      <Text style={styles.chatSuggestionText}>Explain my risk areas</Text>
+                      <Text style={styles.chatSuggestionText}>Explain my screening results</Text>
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={styles.chatSuggestion}
@@ -997,6 +863,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
     lineHeight: 17,
+  },
+  labReviewNote: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 6,
+    fontStyle: 'italic' as const,
   },
   orderButton: {
     flexDirection: 'row',
