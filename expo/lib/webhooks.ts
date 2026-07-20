@@ -71,11 +71,41 @@ export interface AssessmentScore {
   adrenalRisk: number;
 }
 
+export interface AssessmentCategoryScoreV2 {
+  categoryId: string;
+  /** Symptom-pattern screening score (0-100 of ANSWERED max), null when insufficient data. */
+  score: number | null;
+  band: 'insufficient_data' | 'below-threshold' | 'moderate' | 'elevated';
+  completeness: number;
+}
+
+/**
+ * assessment_complete payload v2 — the corrected contract. Elevated CATEGORY
+ * ids and recommended LAB ids are separate, correctly-named fields (v1 sent
+ * category ids under `recommendedLabs`); questionnaire/scoring/rule versions
+ * and the review state travel with every event. `legacyV1` carries the exact
+ * old shape for existing consumers during migration.
+ */
 export interface AssessmentCompletePayload {
   userId: string;
   email: string;
-  assessmentScore: AssessmentScore;
-  recommendedLabs: string[];
+  payloadVersion: 2;
+  questionnaireVersion: string;
+  scoringVersion: string;
+  ruleVersion: string;
+  registryVersion: string;
+  contentHash: string;
+  categoryScores: AssessmentCategoryScoreV2[];
+  elevatedCategoryIds: string[];
+  moderateOrHigherCategoryIds: string[];
+  /** Registry LAB ids (e.g. lab_dutch_complete) — never category ids. */
+  recommendedLabIds: string[];
+  reviewState: 'pending_practitioner_review';
+  legacyV1: {
+    assessmentScore: AssessmentScore;
+    /** v1 bug preserved verbatim for old consumers: these are CATEGORY ids. */
+    recommendedLabs: string[];
+  };
 }
 
 export function sendAssessmentComplete(data: AssessmentCompletePayload): void {
@@ -83,8 +113,20 @@ export function sendAssessmentComplete(data: AssessmentCompletePayload): void {
     eventType: 'assessment_complete',
     userId: data.userId,
     email: data.email,
-    assessmentScore: data.assessmentScore,
-    recommendedLabs: data.recommendedLabs,
+    payloadVersion: data.payloadVersion,
+    questionnaireVersion: data.questionnaireVersion,
+    scoringVersion: data.scoringVersion,
+    ruleVersion: data.ruleVersion,
+    registryVersion: data.registryVersion,
+    contentHash: data.contentHash,
+    categoryScores: data.categoryScores,
+    elevatedCategoryIds: data.elevatedCategoryIds,
+    moderateOrHigherCategoryIds: data.moderateOrHigherCategoryIds,
+    recommendedLabIds: data.recommendedLabIds,
+    reviewState: data.reviewState,
+    // Legacy v1 fields, verbatim, for consumers not yet on payloadVersion 2.
+    assessmentScore: data.legacyV1.assessmentScore,
+    recommendedLabs: data.legacyV1.recommendedLabs,
     timestamp: new Date().toISOString(),
   }).catch(() => {});
 }

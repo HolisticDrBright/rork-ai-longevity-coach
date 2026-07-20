@@ -12,14 +12,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronRight, User, Target, Heart } from 'lucide-react-native';
+import { ChevronRight, ClipboardList, User, Target, Heart } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { healthGoals } from '@/mocks/questionnaire';
 
 export default function OnboardingProfileScreen() {
-  const { userProfile, updateUserProfile } = useUser();
+  const { userProfile, updateUserProfile, questionnaireResponses } = useUser();
   const [firstName, setFirstName] = useState(userProfile.firstName);
   const [lastName, setLastName] = useState(userProfile.lastName);
   const [email, setEmail] = useState(userProfile.email);
@@ -224,6 +224,23 @@ export default function OnboardingProfileScreen() {
       </KeyboardAvoidingView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
+        {questionnaireResponses.length > 0 && (
+          <TouchableOpacity
+            style={styles.resumeBanner}
+            onPress={() => router.push('/onboarding/questionnaire')}
+            testID="resume-questionnaire"
+          >
+            <ClipboardList color={Colors.primary} size={20} />
+            <View style={styles.resumeTextWrap}>
+              <Text style={styles.resumeTitle}>Resume your health screening</Text>
+              <Text style={styles.resumeSubtitle}>
+                {questionnaireResponses.length} answers saved — pick up where you stopped
+              </Text>
+            </View>
+            <ChevronRight color={Colors.primary} size={20} />
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={[styles.continueButton, !isValid && styles.continueButtonDisabled]}
           onPress={handleContinue}
@@ -414,5 +431,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600' as const,
     color: Colors.textInverse,
+  },
+  resumeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+  },
+  resumeTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  resumeTitle: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  resumeSubtitle: {
+    fontSize: 12,
+    color: Colors.textTertiary,
   },
 });

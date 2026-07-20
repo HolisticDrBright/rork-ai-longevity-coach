@@ -6,6 +6,13 @@ import { secureGetJSON, secureSetJSON, secureMultiRemove } from '@/lib/secureSto
 import { writeAuditLog } from '@/lib/auditLog';
 import { recordAccessPattern } from '@/lib/breachDetection';
 import { sendAssessmentComplete, AssessmentScore } from '@/lib/webhooks';
+import {
+  legacyScoreV1,
+  recommendLabs,
+  REGISTRY_CONTENT_SHA256,
+  scoreSubmission,
+} from '@/registry';
+import { toSubmittedAnswers } from '@/lib/screening';
 import { profileService, lifestyleService, contraindicationService } from '@/lib/supabaseService';
 import { supabase } from '@/lib/supabase';
 
@@ -451,35 +458,52 @@ export const [UserProvider, useUser] = createContextHook(() => {
     const updated = { ...userProfile, onboardingCompleted: true, id: userId };
     saveUserMutation.mutate(updated);
 
-    const scores = questionnaireCategories.map(category => {
-      const categoryResponses = questionnaireResponses.filter(r => r.categoryId === category.id);
-      const totalScore = categoryResponses.reduce((sum, r) => sum + r.severity, 0);
-      const maxScore = category.questions.length * 4;
-      return { id: category.id, percentage: maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0 };
-    });
+    // Registry scoring (scoring.v2): symptom-pattern screening scores over
+    // the ANSWERED maximum — unanswered and special answers never count as zero.
+    const answers = toSubmittedAnswers(questionnaireResponses);
+    const screening = scoreSubmission(answers);
+    const labs = recommendLabs(screening);
 
-    const findScore = (id: string) => scores.find(s => s.id === id)?.percentage ?? 0;
-
+    // Legacy v1 fields, byte-compatible with the old event (old formula, old
+    // key names, category ids under recommendedLabs) so existing downstream
+    // automations keep working while consumers migrate to payloadVersion 2.
+    const legacy = legacyScoreV1(answers);
+    const legacyScore = (id: string) => legacy.find((s) => s.categoryId === id)?.percentage ?? 0;
     const assessmentScore: AssessmentScore = {
-      moldRisk: findScore('mold'),
-      heavyMetalsRisk: findScore('heavy_metals'),
-      parasitesRisk: findScore('parasites'),
-      lymeRisk: findScore('lyme'),
-      ebvRisk: findScore('viral'),
-      gutIssuesRisk: Math.max(findScore('gut_digestive'), findScore('leaky_gut')),
-      thyroidRisk: findScore('thyroid'),
-      hormoneRisk: findScore('hormones'),
-      adrenalRisk: findScore('adrenal'),
+      moldRisk: legacyScore('mold'),
+      heavyMetalsRisk: legacyScore('heavy_metals'),
+      parasitesRisk: legacyScore('parasites'),
+      lymeRisk: legacyScore('lyme'),
+      ebvRisk: legacyScore('viral'),
+      gutIssuesRisk: Math.max(legacyScore('gut_digestive'), legacyScore('leaky_gut')),
+      thyroidRisk: legacyScore('thyroid'),
+      hormoneRisk: legacyScore('hormones'),
+      adrenalRisk: legacyScore('adrenal'),
     };
-
-    const highRiskCategories = scores.filter(s => s.percentage >= 25).map(s => s.id);
-    const recommendedLabs = highRiskCategories;
 
     sendAssessmentComplete({
       userId,
       email: userProfile.email,
-      assessmentScore,
-      recommendedLabs,
+      payloadVersion: 2,
+      questionnaireVersion: screening.questionnaireVersion,
+      scoringVersion: screening.scoringVersion,
+      ruleVersion: labs.ruleVersion,
+      registryVersion: screening.registryVersion,
+      contentHash: REGISTRY_CONTENT_SHA256,
+      categoryScores: screening.categories.map((c) => ({
+        categoryId: c.categoryId,
+        score: c.rounded,
+        band: c.band,
+        completeness: c.completeness,
+      })),
+      elevatedCategoryIds: screening.elevatedCategoryIds,
+      moderateOrHigherCategoryIds: screening.moderateOrHigherCategoryIds,
+      recommendedLabIds: labs.recommendations.map((r) => r.labId),
+      reviewState: 'pending_practitioner_review',
+      legacyV1: {
+        assessmentScore,
+        recommendedLabs: screening.moderateOrHigherCategoryIds,
+      },
     });
   }, [userProfile, questionnaireResponses, saveUserMutation]);
 
@@ -503,7 +527,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
   const categoryScores = useMemo((): CategoryScore[] => {
     return questionnaireCategories.map(category => {
       const categoryResponses = questionnaireResponses.filter(
-        r => r.categoryId === category.id
+        r => r.categoryId === category.id && !r.special
       );
       const totalScore = categoryResponses.reduce((sum, r) => sum + r.severity, 0);
       const maxScore = category.questions.length * 4;

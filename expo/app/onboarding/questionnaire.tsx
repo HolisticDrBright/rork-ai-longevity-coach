@@ -7,7 +7,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   ChevronRight,
@@ -32,7 +32,7 @@ import {
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
 import { questionnaireCategories } from '@/mocks/questionnaire';
-
+import type { QuestionnaireResponse } from '@/types';
 
 const iconMap: Record<string, any> = {
   Thermometer,
@@ -53,9 +53,27 @@ const iconMap: Record<string, any> = {
 
 const severityLabels = ['None', 'Mild', 'Moderate', 'Significant', 'Severe'];
 
+type SpecialAnswer = NonNullable<QuestionnaireResponse['special']>;
+
+/**
+ * Special answers are first-class: they are excluded from both the numerator
+ * and denominator of the screening score (scoring.v2) — choosing one of these
+ * is never scored as zero.
+ */
+const SPECIAL_OPTIONS: { key: SpecialAnswer; label: string }[] = [
+  { key: 'not_applicable', label: 'Not applicable' },
+  { key: 'unsure', label: 'Unsure' },
+  { key: 'prefer_not_to_answer', label: 'Prefer not to answer' },
+];
+
 export default function OnboardingQuestionnaireScreen() {
-  const { saveQuestionnaireResponse, questionnaireResponses, completeOnboarding } = useUser();
-  const [currentCategoryIndex, setCurrentCategoryIndex] = useState(0);
+  const { saveQuestionnaireResponse, questionnaireResponses } = useUser();
+  const params = useLocalSearchParams<{ category?: string }>();
+  const initialCategoryIndex = Math.max(
+    0,
+    questionnaireCategories.findIndex((c) => c.id === params.category),
+  );
+  const [currentCategoryIndex, setCurrentCategoryIndex] = useState(initialCategoryIndex);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
   const currentCategory = questionnaireCategories[currentCategoryIndex];
@@ -71,6 +89,8 @@ export default function OnboardingQuestionnaireScreen() {
     0
   );
 
+  const answeredCount = questionnaireResponses.length;
+
   const currentQuestionNumber = useMemo(() => {
     let count = 0;
     for (let i = 0; i < currentCategoryIndex; i++) {
@@ -79,33 +99,40 @@ export default function OnboardingQuestionnaireScreen() {
     return count + currentQuestionIndex + 1;
   }, [currentCategoryIndex, currentQuestionIndex]);
 
-  const progress = totalQuestions > 0 ? (currentQuestionNumber / totalQuestions) * 100 : 0;
+  const progress = totalQuestions > 0 ? (answeredCount / totalQuestions) * 100 : 0;
+
+  const advance = () => {
+    const isLastQuestionInCategory = currentQuestionIndex >= currentCategory.questions.length - 1;
+    const isLastCategory = currentCategoryIndex >= questionnaireCategories.length - 1;
+    if (!isLastQuestionInCategory) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+    } else if (!isLastCategory) {
+      setCurrentCategoryIndex(currentCategoryIndex + 1);
+      setCurrentQuestionIndex(0);
+    }
+  };
 
   const handleSeveritySelect = (severity: number) => {
     if (!currentQuestion || !currentCategory) return;
-
-    console.log(`Answering question ${currentQuestionIndex + 1}/${currentCategory.questions.length} in category ${currentCategoryIndex + 1}/${questionnaireCategories.length}`);
-
     saveQuestionnaireResponse({
       questionId: currentQuestion.id,
       categoryId: currentCategory.id,
       severity,
       timestamp: new Date().toISOString(),
     });
+    advance();
+  };
 
-    const isLastQuestionInCategory = currentQuestionIndex >= currentCategory.questions.length - 1;
-    const isLastCategory = currentCategoryIndex >= questionnaireCategories.length - 1;
-
-    if (!isLastQuestionInCategory) {
-      console.log('Moving to next question in category');
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
-    } else if (!isLastCategory) {
-      console.log(`Moving to next category: ${questionnaireCategories[currentCategoryIndex + 1]?.name}`);
-      setCurrentCategoryIndex(currentCategoryIndex + 1);
-      setCurrentQuestionIndex(0);
-    } else {
-      console.log('Reached last question of questionnaire');
-    }
+  const handleSpecialSelect = (special: SpecialAnswer) => {
+    if (!currentQuestion || !currentCategory) return;
+    saveQuestionnaireResponse({
+      questionId: currentQuestion.id,
+      categoryId: currentCategory.id,
+      severity: 0,
+      special,
+      timestamp: new Date().toISOString(),
+    });
+    advance();
   };
 
   const handlePrevious = () => {
@@ -118,9 +145,9 @@ export default function OnboardingQuestionnaireScreen() {
     }
   };
 
-  const handleComplete = () => {
-    completeOnboarding();
-    router.replace('/(tabs)/insights');
+  const handleSaveAndExit = () => {
+    // Every answer is already persisted on tap; exiting loses nothing.
+    router.replace('/onboarding');
   };
 
   const isLastQuestion =
@@ -139,19 +166,28 @@ export default function OnboardingQuestionnaireScreen() {
       >
         <SafeAreaView edges={['top']}>
           <View style={styles.header}>
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <ChevronLeft color={Colors.textInverse} size={24} />
-            </TouchableOpacity>
+            <View style={styles.headerRow}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => router.back()}
+              >
+                <ChevronLeft color={Colors.textInverse} size={24} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveExitButton}
+                onPress={handleSaveAndExit}
+                testID="save-and-exit"
+              >
+                <Text style={styles.saveExitText}>Save & exit</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={styles.progressContainer}>
               <View style={styles.progressBar}>
                 <View style={[styles.progressFill, { width: `${progress}%` }]} />
               </View>
               <Text style={styles.progressText}>
-                {currentQuestionNumber} / {totalQuestions} questions
+                {answeredCount} of {totalQuestions} answered · question {currentQuestionNumber}
               </Text>
             </View>
           </View>
@@ -169,14 +205,19 @@ export default function OnboardingQuestionnaireScreen() {
         </View>
 
         <Text style={styles.questionNumber}>
-          Question {currentQuestionIndex + 1} of {currentCategory?.questions.length}
+          Section {currentCategoryIndex + 1} of {questionnaireCategories.length} · question{' '}
+          {currentQuestionIndex + 1} of {currentCategory?.questions.length}
         </Text>
+
+        {currentQuestionIndex === 0 && !!currentCategory?.description && (
+          <Text style={styles.categoryDescription}>{currentCategory.description}</Text>
+        )}
 
         <Text style={styles.questionText}>{currentQuestion?.text}</Text>
 
         <View style={styles.severityContainer}>
           {severityLabels.map((label, index) => {
-            const isSelected = currentResponse?.severity === index;
+            const isSelected = !currentResponse?.special && currentResponse?.severity === index;
             const colorIntensity = index / 4;
 
             return (
@@ -232,8 +273,32 @@ export default function OnboardingQuestionnaireScreen() {
           })}
         </View>
 
+        <View style={styles.specialRow}>
+          {SPECIAL_OPTIONS.map(({ key, label }) => {
+            const isSelected = currentResponse?.special === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[styles.specialChip, isSelected && styles.specialChipSelected]}
+                onPress={() => handleSpecialSelect(key)}
+                testID={`special-${key}`}
+              >
+                <Text
+                  style={[styles.specialChipText, isSelected && styles.specialChipTextSelected]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.specialHint}>
+          These options never count against your score — the screen is based only on questions
+          you actually rate.
+        </Text>
+
         <View style={styles.categoryProgress}>
-          <Text style={styles.categoryProgressTitle}>Categories</Text>
+          <Text style={styles.categoryProgressTitle}>Sections</Text>
           <View style={styles.categoryDots}>
             {questionnaireCategories.map((cat, index) => {
               const catResponses = questionnaireResponses.filter(
@@ -269,16 +334,17 @@ export default function OnboardingQuestionnaireScreen() {
           {isLastQuestion && currentResponse && (
             <TouchableOpacity
               style={styles.completeButton}
-              onPress={handleComplete}
+              onPress={() => router.push('/onboarding/review')}
+              testID="review-answers"
             >
-              <Text style={styles.completeText}>Complete</Text>
+              <Text style={styles.completeText}>Review answers</Text>
               <ChevronRight color={Colors.textInverse} size={20} />
             </TouchableOpacity>
           )}
         </View>
 
         <Text style={styles.skipHint}>
-          Select a severity level to continue
+          Answers save automatically — you can leave and pick up where you stopped.
         </Text>
       </SafeAreaView>
     </View>
@@ -297,6 +363,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 16,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   backButton: {
     width: 40,
     height: 40,
@@ -304,7 +376,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+  },
+  saveExitButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  saveExitText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.textInverse,
   },
   progressContainer: {
     gap: 8,
@@ -352,6 +434,12 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     marginBottom: 8,
   },
+  categoryDescription: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
   questionText: {
     fontSize: 22,
     fontWeight: '600' as const,
@@ -397,6 +485,38 @@ const styles = StyleSheet.create({
   },
   severityScoreSelected: {
     color: 'rgba(255,255,255,0.8)',
+  },
+  specialRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 20,
+  },
+  specialChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  specialChipSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  specialChipText: {
+    fontSize: 13,
+    fontWeight: '500' as const,
+    color: Colors.textSecondary,
+  },
+  specialChipTextSelected: {
+    color: Colors.textInverse,
+  },
+  specialHint: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    lineHeight: 17,
+    marginTop: 10,
   },
   categoryProgress: {
     marginTop: 32,
