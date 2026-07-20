@@ -45,6 +45,8 @@ import { router } from 'expo-router';
 
 import Colors from '@/constants/colors';
 import { useUser } from '@/providers/UserProvider';
+import { toSubmittedAnswers } from '@/lib/screening';
+import type { QuestionnaireResponse } from '@/types';
 import { useLabs } from '@/providers/LabsProvider';
 import { useProtocol } from '@/providers/ProtocolProvider';
 import { useRorkAgent } from '@rork-ai/toolkit-sdk';
@@ -131,10 +133,10 @@ export interface ScreeningPattern {
  * Everything shown here is a screening draft for practitioner review.
  */
 const getScreeningPatterns = (
-  responses: { questionId: string; severity: number }[],
+  responses: QuestionnaireResponse[],
 ): ScreeningPattern[] => {
   const screening = scoreSubmission(
-    responses.map(r => ({ questionId: r.questionId, value: r.severity as 0 | 1 | 2 | 3 | 4 })),
+    toSubmittedAnswers(responses),
   );
   const labs = recommendLabs(screening);
   const labsByCategory = new Map<string, RegistryLabRecommendation[]>();

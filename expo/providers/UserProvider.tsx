@@ -12,6 +12,7 @@ import {
   REGISTRY_CONTENT_SHA256,
   scoreSubmission,
 } from '@/registry';
+import { toSubmittedAnswers } from '@/lib/screening';
 import { profileService, lifestyleService, contraindicationService } from '@/lib/supabaseService';
 import { supabase } from '@/lib/supabase';
 
@@ -458,11 +459,8 @@ export const [UserProvider, useUser] = createContextHook(() => {
     saveUserMutation.mutate(updated);
 
     // Registry scoring (scoring.v2): symptom-pattern screening scores over
-    // the ANSWERED maximum — unanswered questions never count as zero.
-    const answers = questionnaireResponses.map((r) => ({
-      questionId: r.questionId,
-      value: r.severity as 0 | 1 | 2 | 3 | 4,
-    }));
+    // the ANSWERED maximum — unanswered and special answers never count as zero.
+    const answers = toSubmittedAnswers(questionnaireResponses);
     const screening = scoreSubmission(answers);
     const labs = recommendLabs(screening);
 
@@ -529,7 +527,7 @@ export const [UserProvider, useUser] = createContextHook(() => {
   const categoryScores = useMemo((): CategoryScore[] => {
     return questionnaireCategories.map(category => {
       const categoryResponses = questionnaireResponses.filter(
-        r => r.categoryId === category.id
+        r => r.categoryId === category.id && !r.special
       );
       const totalScore = categoryResponses.reduce((sum, r) => sum + r.severity, 0);
       const maxScore = category.questions.length * 4;

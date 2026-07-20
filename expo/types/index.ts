@@ -51,7 +51,14 @@ export interface QuestionnaireQuestion {
 export interface QuestionnaireResponse {
   questionId: string;
   categoryId: string;
+  /** 0-4 severity. Ignored when `special` is set. */
   severity: number;
+  /**
+   * Non-severity answers. These are excluded from BOTH the numerator and the
+   * denominator of screening scores — a question answered this way (or not
+   * at all) is never scored as zero.
+   */
+  special?: 'not_applicable' | 'unsure' | 'prefer_not_to_answer';
   timestamp: string;
 }
 
