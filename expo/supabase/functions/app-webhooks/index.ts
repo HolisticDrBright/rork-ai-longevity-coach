@@ -16,19 +16,6 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const WEBHOOK_SECRET = Deno.env.get('APP_WEBHOOK_SECRET') ?? '';
 
-// Constant-time string comparison. Returns false on length mismatch without
-// short-circuiting on content, so comparison time does not depend on how many
-// leading characters match.
-function timingSafeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  const ba = enc.encode(a);
-  const bb = enc.encode(b);
-  if (ba.length !== bb.length) return false;
-  let diff = 0;
-  for (let i = 0; i < ba.length; i++) diff |= ba[i] ^ bb[i];
-  return diff === 0;
-}
-
 Deno.serve(async (req) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
@@ -46,10 +33,9 @@ Deno.serve(async (req) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  // Verify webhook secret with a constant-time comparison (avoids leaking the
-  // secret through timing side-channels). Length mismatch is rejected up front.
+  // Verify webhook secret
   const secret = req.headers.get('x-webhook-secret') ?? '';
-  if (WEBHOOK_SECRET && !timingSafeEqual(secret, WEBHOOK_SECRET)) {
+  if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
     return new Response('Unauthorized', { status: 401 });
   }
 

@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter } from "../../create-context";
-import {
-  authenticatedProcedure,
-  assertPatientAccess,
-} from "../../authorization";
+import { protectedProcedure, createTRPCRouter } from "../../create-context";
 import { createServerSupabaseClient } from "../../../supabase-server";
 import type {
   Patient,
@@ -31,7 +27,7 @@ const allergySchema = z.object({
 });
 
 export const patientsRouter = createTRPCRouter({
-  list: authenticatedProcedure
+  list: protectedProcedure
     .input(
       z.object({
         page: z.number().min(1).default(1),
@@ -47,12 +43,7 @@ export const patientsRouter = createTRPCRouter({
       console.log('[Patients] Listing patients, page:', input.page);
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      // Scope the list to the calling clinician's own patients (defense in
-      // depth alongside RLS). Previously this relied on RLS alone.
-      let query = sb
-        .from('clinic_patients')
-        .select('*', { count: 'exact' })
-        .eq('clinician_id', ctx.user.id);
+      let query = sb.from('clinic_patients').select('*', { count: 'exact' });
 
       if (input.search) {
         query = query.or(
@@ -95,26 +86,23 @@ export const patientsRouter = createTRPCRouter({
       };
     }),
 
-  getById: authenticatedProcedure
+  getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }): Promise<Patient | null> => {
       console.log('[Patients] Getting patient by ID');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      // Ownership is enforced in the query itself: a patient belonging to a
-      // different clinician resolves to null (non-disclosing), not an error.
       const { data, error } = await sb
         .from('clinic_patients')
         .select('*')
         .eq('id', input.id)
-        .eq('clinician_id', ctx.user.id)
         .single();
 
       if (error) return null;
       return mapDbToPatient(data);
     }),
 
-  create: authenticatedProcedure
+  create: protectedProcedure
     .input(
       z.object({
         firstName: z.string().min(1),
@@ -181,7 +169,7 @@ export const patientsRouter = createTRPCRouter({
       return patient;
     }),
 
-  update: authenticatedProcedure
+  update: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -208,7 +196,6 @@ export const patientsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }): Promise<Patient> => {
       console.log('[Patients] Updating patient');
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      await assertPatientAccess(sb, input.id, ctx.user.id);
 
       const { id, ...rest } = input;
       const updateData: Record<string, unknown> = {};
@@ -246,18 +233,16 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToPatient(data);
     }),
 
-  delete: authenticatedProcedure
+  delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }): Promise<{ success: boolean }> => {
       console.log('[Patients] Archiving patient');
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      await assertPatientAccess(sb, input.id, ctx.user.id);
 
       const { error } = await sb
         .from('clinic_patients')
         .update({ status: 'archived' })
-        .eq('id', input.id)
-        .eq('clinician_id', ctx.user.id);
+        .eq('id', input.id);
 
       if (error) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Patient not found' });
@@ -267,26 +252,23 @@ export const patientsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  getHealthHistory: authenticatedProcedure
+  getHealthHistory: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }): Promise<PatientHealthHistory | null> => {
       console.log('[Patients] Getting health history');
       const sb = createServerSupabaseClient(ctx.sessionToken);
 
-      // Scoped to the calling clinician; another clinician's record resolves
-      // to null rather than disclosing its existence.
       const { data, error } = await sb
         .from('clinic_health_histories')
         .select('*')
         .eq('patient_id', input.patientId)
-        .eq('clinician_id', ctx.user.id)
         .single();
 
       if (error) return null;
       return mapDbToHealthHistory(data);
     }),
 
-  updateHealthHistory: authenticatedProcedure
+  updateHealthHistory: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -310,7 +292,6 @@ export const patientsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }): Promise<PatientHealthHistory> => {
       console.log('[Patients] Updating health history');
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      await assertPatientAccess(sb, input.patientId, ctx.user.id);
 
       const { patientId, ...updates } = input;
       const updateData: Record<string, unknown> = {};
@@ -349,7 +330,7 @@ export const patientsRouter = createTRPCRouter({
       return mapDbToHealthHistory(data);
     }),
 
-  getTimeline: authenticatedProcedure
+  getTimeline: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -371,7 +352,6 @@ export const patientsRouter = createTRPCRouter({
     .query(async ({ ctx, input }): Promise<PatientTimeline> => {
       console.log('[Patients] Getting timeline');
       const sb = createServerSupabaseClient(ctx.sessionToken);
-      await assertPatientAccess(sb, input.patientId, ctx.user.id);
 
       const events: TimelineEvent[] = [];
 
@@ -430,7 +410,7 @@ export const patientsRouter = createTRPCRouter({
       };
     }),
 
-  exportRecord: authenticatedProcedure
+  exportRecord: protectedProcedure
     .input(
       z.object({
         patientId: z.string(),
@@ -452,7 +432,15 @@ export const patientsRouter = createTRPCRouter({
     .mutation(
       async ({ ctx, input }): Promise<{ downloadUrl: string; expiresAt: string }> => {
         const sb = createServerSupabaseClient(ctx.sessionToken);
-        await assertPatientAccess(sb, input.patientId, ctx.user.id);
+        const { data: patient } = await sb
+          .from('clinic_patients')
+          .select('id')
+          .eq('id', input.patientId)
+          .eq('clinician_id', ctx.user.id)
+          .maybeSingle();
+        if (!patient) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Patient not found or access denied' });
+        }
         console.log('[Patients] Exporting patient record');
         return {
           downloadUrl: `https://example.com/exports/pending`,
@@ -461,7 +449,7 @@ export const patientsRouter = createTRPCRouter({
       }
     ),
 
-  getTags: authenticatedProcedure.query(async ({ ctx }): Promise<string[]> => {
+  getTags: protectedProcedure.query(async ({ ctx }): Promise<string[]> => {
     console.log('[Patients] Getting all patient tags');
     const sb = createServerSupabaseClient(ctx.sessionToken);
 

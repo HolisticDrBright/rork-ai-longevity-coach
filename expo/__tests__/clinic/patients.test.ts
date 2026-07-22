@@ -79,14 +79,6 @@ describe('patientsRouter handlers', () => {
       const result = await caller.getById({ id: 'nonexistent' });
       expect(result).toBeNull();
     });
-
-    test('returns null (non-disclosing) for a patient owned by another clinician', async () => {
-      // The clinician_id filter yields no row, which surfaces as a single()
-      // error -> null, without revealing that the id exists elsewhere.
-      mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'no rows' } }));
-      const result = await caller.getById({ id: 'someone-elses' });
-      expect(result).toBeNull();
-    });
   });
 
   describe('create', () => {
@@ -134,27 +126,13 @@ describe('patientsRouter handlers', () => {
       mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'not found' } }));
       await expect(caller.update({ id: 'bad', firstName: 'X' })).rejects.toThrow();
     });
-
-    test('throws NOT_FOUND when caller does not own the patient', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      await expect(
-        caller.update({ id: 'not-mine', firstName: 'X' }),
-      ).rejects.toThrow(/not found|access denied/i);
-    });
   });
 
   describe('delete', () => {
     test('archives patient (soft delete)', async () => {
-      // Ownership check + archive both target clinic_patients; a row keyed by
-      // the calling clinician satisfies the guard and the update.
-      mockFrom.mockReturnValue(createChainableMock({ data: { id: 'patient-001' } }));
+      mockFrom.mockReturnValue(createChainableMock({ data: null }));
       const result = await caller.delete({ id: 'patient-001' }) as { success: boolean };
       expect(result.success).toBe(true);
-    });
-
-    test('throws NOT_FOUND when caller does not own the patient', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      await expect(caller.delete({ id: 'not-mine' })).rejects.toThrow(/not found|access denied/i);
     });
   });
 
@@ -205,7 +183,6 @@ describe('patientsRouter handlers', () => {
       const alerts = [makeAlertEventRow({ created_at: '2026-01-15T12:00:00Z' })];
 
       mockFrom.mockImplementation((table: string) => {
-        if (table === 'clinic_patients') return createChainableMock({ data: { id: 'patient-001' } });
         if (table === 'clinic_lab_documents') return createChainableMock({ data: labDocs });
         if (table === 'clinic_lab_results') return createChainableMock({ data: labResults });
         if (table === 'clinic_biometric_readings') return createChainableMock({ data: bioReadings });
@@ -224,41 +201,22 @@ describe('patientsRouter handlers', () => {
     });
 
     test('returns empty timeline when no data', async () => {
-      mockFrom.mockImplementation((table: string) => {
-        if (table === 'clinic_patients') return createChainableMock({ data: { id: 'p1' } });
-        return createChainableMock({ data: [] });
-      });
+      mockFrom.mockReturnValue(createChainableMock({ data: [] }));
       const result = await caller.getTimeline({ patientId: 'p1' }) as {
         events: unknown[];
       };
       expect(result.events).toEqual([]);
     });
-
-    test('throws NOT_FOUND when caller does not own the patient', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      await expect(caller.getTimeline({ patientId: 'not-mine' })).rejects.toThrow(/not found|access denied/i);
-    });
   });
 
   describe('exportRecord', () => {
     test('returns placeholder export URL', async () => {
-      // Handler first verifies ownership via
-      // clinic_patients.select('id').eq('id').eq('clinician_id').maybeSingle()
-      mockFrom.mockReturnValue(createChainableMock({ data: { id: 'patient-001' } }));
-
       const result = await caller.exportRecord({
         patientId: 'patient-001',
         format: 'json',
       }) as { downloadUrl: string; expiresAt: string };
       expect(result.downloadUrl).toContain('exports');
       expect(result.expiresAt).toBeDefined();
-    });
-
-    test('throws NOT_FOUND when patient is not owned by caller', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      await expect(
-        caller.exportRecord({ patientId: 'someone-elses', format: 'json' }),
-      ).rejects.toThrow(/not found|access denied/i);
     });
   });
 

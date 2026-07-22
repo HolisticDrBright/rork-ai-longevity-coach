@@ -1,7 +1,52 @@
 // import * as Sentry from '@sentry/react-native';
 import * as Sentry from "@sentry/node";
 import type { Context, Next } from 'hono';
-import { scrubObject } from './log-scrub';
+
+const PHI_KEYS = new Set([
+  'firstName', 'first_name', 'lastName', 'last_name', 'fullName', 'full_name',
+  'name', 'patientName', 'patient_name', 'emergencyContactName', 'emergency_contact_name',
+  'email', 'phone', 'dateOfBirth', 'date_of_birth', 'birth_date',
+  'addressLine1', 'address_line1', 'addressLine2', 'address_line2',
+  'city', 'state', 'zipCode', 'zip_code',
+  'emergencyContactPhone', 'emergency_contact_phone',
+  'emergencyContactRelationship', 'emergency_contact_relationship',
+  'authorization', 'Authorization', 'sessionToken', 'session_token',
+  'access_token', 'accessToken', 'refresh_token', 'refreshToken',
+  'access_token_encrypted', 'refresh_token_encrypted',
+  'password', 'secret', 'token', 'bearer',
+]);
+
+const PHI_VALUE_KEYS = new Set([
+  'value', 'marker_value', 'markerValue',
+  'glucose_avg', 'systolic_bp', 'diastolic_bp',
+  'weight', 'weight_kg', 'body_fat_percent', 'height',
+  'hrv', 'resting_hr', 'avg_hr', 'respiratory_rate', 'spo2',
+  'dose', 'allergen', 'reaction', 'chief_complaint_json',
+  'conditions', 'past_conditions', 'current_medications', 'allergies',
+  'symptoms_json', 'biomarkers_json', 'supplement_name',
+]);
+
+function isPHIKey(key: string): boolean {
+  return PHI_KEYS.has(key) || PHI_VALUE_KEYS.has(key);
+}
+
+function scrubObject(obj: Record<string, unknown>): Record<string, unknown> {
+  const scrubbed: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (isPHIKey(key)) {
+      scrubbed[key] = '[REDACTED]';
+    } else if (val && typeof val === 'object' && !Array.isArray(val)) {
+      scrubbed[key] = scrubObject(val as Record<string, unknown>);
+    } else if (Array.isArray(val)) {
+      scrubbed[key] = val.map((item) =>
+        item && typeof item === 'object' ? scrubObject(item as Record<string, unknown>) : item
+      );
+    } else {
+      scrubbed[key] = val;
+    }
+  }
+  return scrubbed;
+}
 
 export function sentryMiddleware() {
   return async (c: Context, next: Next) => {

@@ -164,38 +164,14 @@ describe('biometricsRouter handlers', () => {
 
   describe('deleteReading', () => {
     test('returns success', async () => {
-      // Handler checks clinic_patients ownership, then deletes from
-      // clinic_biometric_readings — mock both tables.
-      mockFrom.mockImplementation((table: string) => {
-        if (table === 'clinic_patients') {
-          return createChainableMock({ data: { id: 'patient-001' } });
-        }
-        return createChainableMock({ data: null });
-      });
-      const result = await caller.deleteReading({
-        id: 'reading-001',
-        patientId: 'patient-001',
-      }) as { success: boolean };
+      mockFrom.mockReturnValue(createChainableMock({ data: null }));
+      const result = await caller.deleteReading({ id: 'reading-001' }) as { success: boolean };
       expect(result.success).toBe(true);
     });
 
-    test('throws FORBIDDEN when caller does not own the patient', async () => {
-      mockFrom.mockReturnValue(createChainableMock({ data: null }));
-      await expect(
-        caller.deleteReading({ id: 'reading-001', patientId: 'not-mine' }),
-      ).rejects.toThrow(/not authorized/i);
-    });
-
-    test('throws on delete error', async () => {
-      mockFrom.mockImplementation((table: string) => {
-        if (table === 'clinic_patients') {
-          return createChainableMock({ data: { id: 'patient-001' } });
-        }
-        return createChainableMock({ data: null, error: { message: 'fail' } });
-      });
-      await expect(
-        caller.deleteReading({ id: 'bad', patientId: 'patient-001' }),
-      ).rejects.toThrow();
+    test('throws on error', async () => {
+      mockFrom.mockReturnValue(createChainableMock({ data: null, error: { message: 'fail' } }));
+      await expect(caller.deleteReading({ id: 'bad' })).rejects.toThrow();
     });
   });
 

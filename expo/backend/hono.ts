@@ -6,52 +6,12 @@ import { secureHeaders } from "hono/secure-headers";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { sentryMiddleware } from "./sentry-middleware";
-import { labsUploadApp } from "./labs/upload-route";
-import { scribeApp } from "./scribe/routes";
-import { requestGuards } from "./request-guards";
 
 const app = new Hono();
 
-// Environment-driven CORS allowlist (security finding #5: wildcard CORS).
-// Native mobile requests send no Origin header and are unaffected. Browser
-// origins must be listed in CORS_ALLOWED_ORIGINS (comma-separated). When the
-// variable is unset, only localhost dev origins are allowed — never "*".
-const isProd = (process.env.NODE_ENV ?? "production") === "production";
-const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const devOrigins = [
-  "http://localhost:3000",
-  "http://localhost:8081",
-  "http://localhost:19006",
-];
-
-app.use(
-  "*",
-  cors({
-    origin: (origin) => {
-      // No Origin header (native mobile, server-to-server) → allow.
-      if (!origin) return origin;
-      if (allowedOrigins.includes(origin)) return origin;
-      if (!isProd && devOrigins.includes(origin)) return origin;
-      // Not allowlisted → deny (never reflect an arbitrary origin, never "*").
-      return null;
-    },
-    credentials: true,
-  }),
-);
+app.use("*", cors());
 app.use("*", secureHeaders());
 app.use("*", sentryMiddleware());
-
-app.use("*", async (c, next) => {
-  // Path + status only — query strings can carry tRPC GET inputs; tokens/PHI
-  // never log. Registered BEFORE the terminating handlers (tRPC, uploads) so
-  // every request is visible in deploy logs; the previous placement after
-  // those mounts meant tRPC traffic was never logged at all.
-  await next();
-  console.log(`[REQ] ${c.req.method} ${new URL(c.req.url).pathname} -> ${c.res.status}`);
-});
 
 app.use("*", async (c, next) => {
   await next();
@@ -73,10 +33,6 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
-// Sensitive-surface hygiene: origin validation, body caps, per-IP rate limits.
-app.use("/api/trpc/*", requestGuards({ maxBodyBytes: 1024 * 1024, ratePerMinute: 240 }));
-app.use("/api/clinical/*", requestGuards({ maxBodyBytes: 16 * 1024 * 1024, ratePerMinute: 60 }));
-
 app.use(
   // "/trpc/*",
   "/api/trpc/*",
@@ -84,28 +40,13 @@ app.use(
     endpoint: "/api/trpc",
     router: appRouter,
     createContext,
-    onError({ error, path, type }) {
-      // Procedure path, tRPC code, and the CAUSE CLASS + schema-level message
-      // only (PostgREST/fetch failures carry no payloads). Inputs, tokens and
-      // PHI never log. Without this hook every procedure failure was invisible
-      // in deploy logs — the exact blind spot that stalled the staging gate.
-      const cause =
-        error.cause instanceof Error
-          ? `${error.cause.name}: ${error.cause.message.slice(0, 160)}`
-          : "none";
-      console.error(`[trpc] ${type} ${path ?? "?"} -> ${error.code} cause=${cause}`);
-    },
   }),
 );
 
-// Multipart lab-PDF ingestion (can't ride the superjson tRPC link).
-app.route("/api/clinical/labs", labsUploadApp);
-
-// Scribe binary chunks, upload completion, and SIGNED provider callbacks.
-// The callback endpoint authenticates cryptographically (HMAC), not by
-// bearer token — requestGuards still applies body caps + rate limits via
-// the /api/clinical/* rule above.
-app.route("/api/clinical/scribe", scribeApp);
+app.use("*", async (c, next) => {
+  console.log(`[REQ] ${c.req.method} ${c.req.url}`);
+  await next();
+});
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });

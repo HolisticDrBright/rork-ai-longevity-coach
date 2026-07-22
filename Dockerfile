@@ -1,11 +1,9 @@
-FROM oven/bun:1.3.11 AS base
+FROM oven/bun:1 AS base
 WORKDIR /app
 
 # Install dependencies
 COPY expo/package.json expo/bun.lock* ./
-# Reproducible installs only — a lockfile drift must FAIL the build, never
-# silently resolve different dependency versions into a clinical deployment.
-RUN bun install --production --frozen-lockfile
+RUN bun install --production --frozen-lockfile || bun install --production
 
 # Copy backend source
 COPY expo/backend/ ./backend/

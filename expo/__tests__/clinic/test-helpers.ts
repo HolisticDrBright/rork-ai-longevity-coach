@@ -24,16 +24,6 @@ export function createMockQueryBuilder(resolvedData: {
       count: resolvedData.count ?? null,
     });
 
-  // `.maybeSingle()` — like `.single()` but resolves `null` (no error) when
-  // there is no matching row. Mirrors the supabase-js surface used by the
-  // clinic routers (exportRecord, biometric type/threshold lookups).
-  builder.maybeSingle = () =>
-    Promise.resolve({
-      data: resolvedData.data ?? null,
-      error: resolvedData.error ?? null,
-      count: resolvedData.count ?? null,
-    });
-
   builder.then = (resolve: (val: unknown) => void) =>
     resolve({
       data: Array.isArray(resolvedData.data) ? resolvedData.data : resolvedData.data ? [resolvedData.data] : [],
