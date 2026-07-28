@@ -56,6 +56,8 @@ const PATIENT_ID = '10000000-0000-4000-8000-0000000000e1';
 const PATHWAY_ID = '10000000-0000-4000-8000-0000000000f1';
 const VERSION_ID = '10000000-0000-4000-8000-0000000000f2';
 const RUN_ID = '10000000-0000-4000-8000-0000000000f3';
+const BATCH_ID = '10000000-0000-4000-8000-0000000000f4';
+const ITEM_ID = '10000000-0000-4000-8000-0000000000f5';
 
 function caller(token: string | null) {
   return clinicalRouter.createCaller({
@@ -79,6 +81,8 @@ describe('clinical.knowledge', () => {
     await expect(caller(null).knowledge.pathways({ organizationId: ORG_ID }))
       .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(caller(null).knowledge.patientRuns({ patientId: PATIENT_ID }))
+      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller(null).knowledge.imports({ organizationId: ORG_ID }))
       .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
@@ -115,6 +119,7 @@ describe('clinical.knowledge', () => {
 
   test('creates drafts and approvals through exact RPC contracts', async () => {
     state.rpc.create_clinical_pathway_draft = { data: { versionId: VERSION_ID, version: 2 } };
+    state.rpc.update_clinical_pathway_draft = { data: null };
     state.rpc.approve_clinical_pathway_version = { data: null };
     const c = caller(state.validToken);
 
@@ -124,6 +129,13 @@ describe('clinical.knowledge', () => {
       content: { differentiatingQuestions: ['Question?'] },
       sourceRefs: [{ code: 'source-v1' }],
       changeSummary: 'Add question',
+    });
+    await c.knowledge.updateDraft({
+      organizationId: ORG_ID,
+      versionId: VERSION_ID,
+      content: { differentiatingQuestions: ['Updated question?'] },
+      sourceRefs: [{ code: 'source-v2' }],
+      changeSummary: 'Updated review',
     });
     await c.knowledge.approve({ organizationId: ORG_ID, versionId: VERSION_ID });
 
@@ -137,9 +149,129 @@ describe('clinical.knowledge', () => {
       },
     });
     expect(state.rpcCalls[1]).toEqual({
+      name: 'update_clinical_pathway_draft',
+      args: {
+        _version_id: VERSION_ID,
+        _content: { differentiatingQuestions: ['Updated question?'] },
+        _source_refs: [{ code: 'source-v2' }],
+        _change_summary: 'Updated review',
+      },
+    });
+    expect(state.rpcCalls[2]).toEqual({
       name: 'approve_clinical_pathway_version',
       args: { _version_id: VERSION_ID },
     });
+  });
+
+  test('stages and reviews imports through exact governed RPC contracts', async () => {
+    state.rpc.stage_clinical_knowledge_import = { data: { batchId: BATCH_ID, itemCount: 1 } };
+    state.rpc.review_clinical_knowledge_import_item = {
+      data: {
+        status: 'applied',
+        appliedRefType: 'clinical_pathway_version',
+        appliedRefId: VERSION_ID,
+      },
+    };
+    const c = caller(state.validToken);
+    const sourceItem = {
+      entityType: 'pathway' as const,
+      externalKey: 'thyroid',
+      displayName: 'Thyroid classification',
+      sourceSheet: 'Conditions',
+      payload: {
+        code: 'thyroid',
+        name: 'Thyroid classification',
+        domainCode: 'endocrine',
+        content: {
+          differentiatingQuestions: [],
+          labStrategy: [],
+          productCandidates: [],
+          safetyStops: [],
+        },
+      },
+      warnings: ['Practitioner review required'],
+    };
+
+    await c.knowledge.stageImport({
+      organizationId: ORG_ID,
+      sourceName: 'Clinical authoring pack',
+      sourceRevision: 'v1',
+      schemaVersion: 'clinical-knowledge-import-v1',
+      items: [sourceItem],
+      attestsNoPhi: true,
+    });
+    await c.knowledge.reviewImportItem({
+      organizationId: ORG_ID,
+      itemId: ITEM_ID,
+      decision: 'accept',
+      reviewNote: 'Reviewed',
+    });
+
+    expect(state.rpcCalls[0]).toEqual({
+      name: 'stage_clinical_knowledge_import',
+      args: {
+        _organization_id: ORG_ID,
+        _source_name: 'Clinical authoring pack',
+        _source_revision: 'v1',
+        _schema_version: 'clinical-knowledge-import-v1',
+        _items: [sourceItem],
+        _attests_no_phi: true,
+      },
+    });
+    expect(state.rpcCalls[1]).toEqual({
+      name: 'review_clinical_knowledge_import_item',
+      args: {
+        _item_id: ITEM_ID,
+        _decision: 'accept',
+        _review_note: 'Reviewed',
+      },
+    });
+  });
+
+  test('maps immutable import metadata without returning source payloads', async () => {
+    state.tables.clinical_knowledge_import_batches = [{
+      id: BATCH_ID,
+      source_name: 'Clinical authoring pack',
+      source_revision: 'v1',
+      schema_version: 'clinical-knowledge-import-v1',
+      source_sha256: 'b'.repeat(64),
+      status: 'in_review',
+      item_count: 1,
+      no_phi_attested_at: '2026-07-28T00:00:00Z',
+      created_at: '2026-07-28T00:00:00Z',
+      completed_at: null,
+    }];
+    state.tables.clinical_knowledge_import_items = [{
+      id: ITEM_ID,
+      batch_id: BATCH_ID,
+      entity_type: 'product_label',
+      external_key: 'nordic-pro-omega',
+      display_name: 'ProOmega 2000',
+      source_sheet: 'Product Formulary',
+      payload_sha256: 'c'.repeat(64),
+      warnings: ['Affiliate link is not clinical eligibility'],
+      validation_errors: ['Ingredient amounts and units are required'],
+      status: 'needs_review',
+      review_note: null,
+      reviewed_at: null,
+      applied_ref_type: null,
+      applied_ref_id: null,
+      created_at: '2026-07-28T00:00:00Z',
+      payload: { should_not_leave_database: true },
+    }];
+
+    const result = await caller(state.validToken).knowledge.imports({ organizationId: ORG_ID });
+    expect(result[0]).toMatchObject({
+      id: BATCH_ID,
+      itemCount: 1,
+      items: [{
+        id: ITEM_ID,
+        entityType: 'product_label',
+        status: 'needs_review',
+        validationErrors: ['Ingredient amounts and units are required'],
+      }],
+    });
+    expect(result[0]?.items[0]).not.toHaveProperty('payload');
   });
 
   test('records patient output against an approved pathway version through the patient gate', async () => {

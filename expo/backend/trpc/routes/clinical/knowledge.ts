@@ -12,6 +12,14 @@ import { throwFromRpcError } from './rpc-errors';
 const uuid = z.string().uuid();
 const jsonObject = z.record(z.string(), z.unknown());
 const sourceRefs = z.array(jsonObject).max(100);
+const importItem = z.object({
+  entityType: z.enum(['pathway', 'product_label']),
+  externalKey: z.string().trim().min(1).max(200),
+  displayName: z.string().trim().min(1).max(300),
+  sourceSheet: z.string().trim().max(200).optional(),
+  payload: jsonObject,
+  warnings: z.array(z.string().max(500)).max(50).default([]),
+});
 
 function pathwayDto(row: Record<string, unknown>) {
   const versions = Array.isArray(row.clinical_pathway_versions)
@@ -101,6 +109,24 @@ export const clinicalKnowledgeRouter = createTRPCRouter({
       return data as { versionId: string; version: number };
     }),
 
+  updateDraft: practitionerProcedure
+    .input(z.object({
+      versionId: uuid,
+      content: jsonObject,
+      sourceRefs: sourceRefs.default([]),
+      changeSummary: z.string().max(500).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { error } = await ctx.clinicalDb.rpc('update_clinical_pathway_draft', {
+        _version_id: input.versionId,
+        _content: input.content,
+        _source_refs: input.sourceRefs,
+        _change_summary: input.changeSummary ?? null,
+      });
+      if (error) throwFromRpcError(error, 'update clinical pathway draft');
+      return { ok: true as const };
+    }),
+
   approve: adminProcedure
     .input(z.object({ versionId: uuid }))
     .mutation(async ({ ctx, input }) => {
@@ -175,6 +201,108 @@ export const clinicalKnowledgeRouter = createTRPCRouter({
       });
       if (error) throwFromRpcError(error, 'verify product label');
       return { ok: true as const };
+    }),
+
+  imports: organizationProcedure.query(async ({ ctx, input }) => {
+    const organizationId = (input as { organizationId: string }).organizationId;
+    const { data: batches, error: batchError } = await ctx.clinicalDb
+      .from('clinical_knowledge_import_batches')
+      .select(
+        'id, source_name, source_revision, schema_version, source_sha256, status, item_count, no_phi_attested_at, created_at, completed_at',
+      )
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (batchError) {
+      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to load knowledge imports' });
+    }
+
+    const batchRows = (batches ?? []) as Record<string, unknown>[];
+    if (batchRows.length === 0) return [];
+
+    const { data: items, error: itemError } = await ctx.clinicalDb
+      .from('clinical_knowledge_import_items')
+      .select(
+        'id, batch_id, entity_type, external_key, display_name, source_sheet, payload_sha256, warnings, validation_errors, status, review_note, reviewed_at, applied_ref_type, applied_ref_id, created_at',
+      )
+      .in('batch_id', batchRows.map((batch) => batch.id as string))
+      .order('created_at', { ascending: true });
+    if (itemError) {
+      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to load knowledge imports' });
+    }
+
+    const itemRows = (items ?? []) as Record<string, unknown>[];
+    return batchRows.map((batch) => ({
+      id: batch.id as string,
+      sourceName: batch.source_name as string,
+      sourceRevision: (batch.source_revision as string | null) ?? null,
+      schemaVersion: batch.schema_version as string,
+      sourceSha256: batch.source_sha256 as string,
+      status: batch.status as 'staged' | 'in_review' | 'completed' | 'cancelled',
+      itemCount: batch.item_count as number,
+      noPhiAttestedAt: batch.no_phi_attested_at as string,
+      createdAt: batch.created_at as string,
+      completedAt: (batch.completed_at as string | null) ?? null,
+      items: itemRows
+        .filter((item) => item.batch_id === batch.id)
+        .map((item) => ({
+          id: item.id as string,
+          entityType: item.entity_type as 'pathway' | 'product_label',
+          externalKey: item.external_key as string,
+          displayName: item.display_name as string,
+          sourceSheet: (item.source_sheet as string | null) ?? null,
+          payloadSha256: item.payload_sha256 as string,
+          warnings: (item.warnings as string[]) ?? [],
+          validationErrors: (item.validation_errors as string[]) ?? [],
+          status: item.status as 'needs_review' | 'applied' | 'rejected',
+          reviewNote: (item.review_note as string | null) ?? null,
+          reviewedAt: (item.reviewed_at as string | null) ?? null,
+          appliedRefType: (item.applied_ref_type as string | null) ?? null,
+          appliedRefId: (item.applied_ref_id as string | null) ?? null,
+          createdAt: item.created_at as string,
+        })),
+    }));
+  }),
+
+  stageImport: practitionerProcedure
+    .input(z.object({
+      sourceName: z.string().trim().min(1).max(240),
+      sourceRevision: z.string().trim().max(240).optional(),
+      schemaVersion: z.string().trim().min(1).max(120),
+      items: z.array(importItem).min(1).max(250),
+      attestsNoPhi: z.literal(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { data, error } = await ctx.clinicalDb.rpc('stage_clinical_knowledge_import', {
+        _organization_id: input.organizationId,
+        _source_name: input.sourceName,
+        _source_revision: input.sourceRevision ?? null,
+        _schema_version: input.schemaVersion,
+        _items: input.items,
+        _attests_no_phi: input.attestsNoPhi,
+      });
+      if (error) throwFromRpcError(error, 'stage clinical knowledge import');
+      return data as { batchId: string; itemCount: number };
+    }),
+
+  reviewImportItem: practitionerProcedure
+    .input(z.object({
+      itemId: uuid,
+      decision: z.enum(['accept', 'reject']),
+      reviewNote: z.string().max(500).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { data, error } = await ctx.clinicalDb.rpc('review_clinical_knowledge_import_item', {
+        _item_id: input.itemId,
+        _decision: input.decision,
+        _review_note: input.reviewNote ?? null,
+      });
+      if (error) throwFromRpcError(error, 'review clinical knowledge import item');
+      return data as {
+        status: 'applied' | 'rejected';
+        appliedRefType: string | null;
+        appliedRefId: string | null;
+      };
     }),
 
   patientRuns: patientAccessProcedure.query(async ({ ctx }) => {
