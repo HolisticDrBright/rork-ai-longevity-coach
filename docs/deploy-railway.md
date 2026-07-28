@@ -57,6 +57,20 @@ E2E_LIVE=1 TRPC_BASE_URL=https://<railway-domain>/api/trpc \
 (Seeding the org/practitioner/patient/labs data first:
 `AI_DESKTOP_PRO/docs/live-auth-and-seeding.md`.)
 
+## Clinical knowledge registry
+
+The `clinical.knowledge.*` procedures require these migrations from the
+`AI_DESKTOP_PRO` repository, applied in order:
+
+1. `20260728030307_clinical_knowledge_registry.sql`
+2. `20260728165840_clinical_knowledge_import_review.sql`
+3. `20260728194003_clinical_knowledge_index_hardening.sql`
+
+Deploy the backend revision before enabling the desktop's live registry
+routes. These procedures use only the caller's RLS-scoped Supabase client; the
+service-role key is not used for registry reads, drafting, import review,
+approval, or product-label verification.
+
 ## Security posture (unchanged by deployment)
 
 - Browser → desktop server → this backend → clinical Supabase; the browser
