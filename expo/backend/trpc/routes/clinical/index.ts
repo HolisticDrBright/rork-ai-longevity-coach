@@ -8,6 +8,7 @@ import { clinicalActionsRouter } from './actions';
 import { clinicalEncountersRouter, clinicalNotesRouter } from './emr';
 import { clinicalOrganizationsRouter } from './organizations';
 import { clinicalLabsRouter } from './labs';
+import { clinicalKnowledgeRouter } from './knowledge';
 import { clinicalLensRouter } from './lens';
 import { clinicalScheduleRouter } from './schedule';
 import { clinicalScribeRouter } from './scribe';
@@ -55,6 +56,9 @@ export const clinicalRouter = createTRPCRouter({
 
   /** Differential questions + lens engine (RPCs 0024). Question-focused only. */
   lens: clinicalLensRouter,
+
+  /** Versioned practice pathways, exact product labels, and copilot snapshots. */
+  knowledge: clinicalKnowledgeRouter,
 
   patients: createTRPCRouter({
     /**
