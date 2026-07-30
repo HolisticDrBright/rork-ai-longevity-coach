@@ -45,7 +45,16 @@ async function main() {
     log: (event) => console.log(`[sync-dev] ${event}`),
   }));
 
-  // Introspection for the round-trip test (dev server only, never deployed).
+  // Introspection + drivers for the round-trip test (dev server only,
+  // never deployed). These exercise the REAL outbound module against the
+  // desktop's real callback boundary.
+  const outboundConfig = {
+    url: (process.env.PATIENT_SYNC_OUTBOUND_URL ?? "").replace(/\/$/, ""),
+    secret: process.env.PATIENT_SYNC_OUTBOUND_SECRET ?? "",
+    keyId: process.env.PATIENT_SYNC_OUTBOUND_KEY_ID ?? "alp-key-1",
+  };
+  const { queueAckEvidence, queueInboundEvent, dispatchOutboxOnce } = await import("./outbound");
+
   app.get("/__dev/resources", async (c) =>
     c.json({ resources: await storage.listResources(connection.id) }));
   app.get("/__dev/history", async (c) =>
@@ -53,6 +62,35 @@ async function main() {
   app.post("/__dev/revoke", async (c) => {
     await storage.revokeConnection(connection.id, "revoked by round-trip test");
     return c.json({ ok: true });
+  });
+  app.post("/__dev/queue-ack", async (c) => {
+    const body = await c.req.json();
+    const row = await queueAckEvidence({
+      storage, connectionId: connection.id, eventUid: String(body.eventUid ?? ""),
+    });
+    return c.json({ ok: true, providerEventId: row.providerEventId });
+  });
+  app.post("/__dev/queue-event", async (c) => {
+    const body = await c.req.json();
+    const row = await queueInboundEvent({
+      storage,
+      connectionId: connection.id,
+      desktopConnectionId: connection.desktopConnectionId,
+      resourceType: String(body.resourceType ?? "supplement_adherence"),
+      payload: (body.payload ?? {}) as Record<string, unknown>,
+      externalResourceId: body.externalResourceId ? String(body.externalResourceId) : null,
+      resourceVersion: body.resourceVersion ? String(body.resourceVersion) : null,
+    });
+    return c.json({ ok: true, providerEventId: row.providerEventId });
+  });
+  app.post("/__dev/dispatch", async (c) => {
+    const result = await dispatchOutboxOnce({
+      storage,
+      config: outboundConfig,
+      desktopConnectionIdFor: async (id) =>
+        id === connection.id ? connection.desktopConnectionId : null,
+    });
+    return c.json({ ok: true, ...result });
   });
 
   // Bun's global isn't in the Expo tsconfig; this entry runs under bun only.
