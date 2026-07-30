@@ -30,6 +30,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   Activity,
+  Link2,
 } from 'lucide-react-native';
 
 import Colors from '@/constants/colors';
@@ -278,6 +279,18 @@ export default function ProfileScreen() {
                 <BarChart3 color={Colors.success} size={18} />
               </View>
               <Text style={styles.menuText}>Progress Reports</Text>
+              <ChevronRight color={Colors.textTertiary} size={20} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => router.push('/desktop-sync')}
+              testID="profile-desktop-sync"
+            >
+              <View style={[styles.menuIcon, { backgroundColor: `${Colors.primary}15` }]}>
+                <Link2 color={Colors.primary} size={18} />
+              </View>
+              <Text style={styles.menuText}>Practitioner Desktop Sync</Text>
               <ChevronRight color={Colors.textTertiary} size={20} />
             </TouchableOpacity>
 
