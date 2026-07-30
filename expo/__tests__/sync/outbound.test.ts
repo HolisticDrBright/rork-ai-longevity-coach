@@ -124,6 +124,40 @@ describe("outbox dispatch", () => {
     expect(await storage.listQueuedOutbox(10)).toHaveLength(1);
   });
 
+  it("a dispatch pass NEVER touches another connection's queued work", async () => {
+    const { storage, connection } = await connected();
+    const other = await storage.insertConnection({
+      desktopConnectionId: "desktop-conn-2",
+      desktopOrganizationId: "org-2",
+      userId: "user-2",
+      status: "active",
+      verifiedAt: new Date().toISOString(),
+      revokedAt: null,
+      revokeReason: null,
+    });
+    await queueAckEvidence({ storage, connectionId: connection.id, eventUid: "uid-mine" });
+    await queueAckEvidence({ storage, connectionId: other.id, eventUid: "uid-theirs" });
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch;
+
+    // A pass scoped to connection A resolves ONLY connection A.
+    const result = await dispatchOutboxOnce({
+      storage, config: CONFIG,
+      desktopConnectionIdFor: async (id) =>
+        id === connection.id ? connection.desktopConnectionId : null,
+      fetchImpl,
+    });
+    expect(result.delivered).toBe(1);
+    expect(result.failed).toBe(0);
+    // The other connection's row is untouched: still queued, zero attempts,
+    // no error — never failed by someone else's dispatch.
+    const remaining = await storage.listQueuedOutbox(10);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].connectionId).toBe(other.id);
+    expect(remaining[0].attempts).toBe(0);
+    expect(remaining[0].lastErrorSafe).toBeNull();
+  });
+
   it("marks a desktop refusal failed with a SAFE error string only", async () => {
     const { storage, connection } = await connected();
     await queueAckEvidence({ storage, connectionId: connection.id, eventUid: "uid-3" });

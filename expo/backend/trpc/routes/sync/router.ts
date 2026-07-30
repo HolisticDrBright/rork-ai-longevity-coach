@@ -180,15 +180,11 @@ export const syncRouter = createTRPCRouter({
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No active desktop connection." });
       }
       await storage.revokeConnection(connection.id, input.reason);
-      // Tell the desktop: consent_change events per revoked direction are
-      // queued durably; future desktop deliveries are refused 403 regardless.
-      await queueInboundEvent({
-        storage,
-        connectionId: connection.id,
-        desktopConnectionId: connection.desktopConnectionId,
-        resourceType: "consent_change",
-        payload: { action: "revoke_connection", reason: input.reason },
-      });
+      // Enforcement is structural, not notification-based: every future
+      // desktop delivery is refused 403 connection_revoked, which the
+      // desktop worker classifies as consent and cancels durably. A
+      // connection-level consent_change is NOT in the patient-sync/1
+      // contract (consent_change requires a scope), so nothing is queued.
       await storage.appendHistory(connection.id, "connection_revoked_by_patient");
       return { ok: true };
     }),

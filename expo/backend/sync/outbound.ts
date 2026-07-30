@@ -128,8 +128,9 @@ export async function dispatchOutboxOnce(opts: {
   for (const row of rows) {
     const desktopConnectionId = await opts.desktopConnectionIdFor(row.connectionId);
     if (!desktopConnectionId) {
-      await opts.storage.markOutbox(row.id, "failed", "connection_missing");
-      failed += 1;
+      // Outside this dispatch context (e.g. a patient-triggered pass sees
+      // another connection's row): SKIP it, untouched. One caller's pass
+      // must never fail another connection's queued work.
       continue;
     }
     const body: Record<string, unknown> =
