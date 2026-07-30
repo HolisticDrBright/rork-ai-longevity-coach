@@ -6,6 +6,9 @@ import { secureHeaders } from "hono/secure-headers";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { sentryMiddleware } from "./sentry-middleware";
+import { readSyncBridgeConfig } from "./sync/config";
+import { createSyncReceiver } from "./sync/receiver";
+import { getSyncStorage } from "./sync/service";
 
 const app = new Hono();
 
@@ -47,6 +50,28 @@ app.use("*", async (c, next) => {
   console.log(`[REQ] ${c.req.method} ${c.req.url}`);
   await next();
 });
+
+// patient-sync/1 receiver — mounted ONLY when the bridge is fully
+// configured (PATIENT_SYNC_ENABLED plus the complete secret set). While
+// disabled the paths simply do not exist, and nothing about the bridge
+// leaks through responses or logs.
+{
+  const syncConfig = readSyncBridgeConfig();
+  if (syncConfig.enabled) {
+    app.route(
+      "/patient-sync",
+      createSyncReceiver({
+        storage: getSyncStorage(),
+        resolveSecret: (keyId: string) =>
+          keyId === syncConfig.inboundKeyId ? syncConfig.inboundSecret : null,
+        log: (event: string) => console.log(`[sync] ${event}`),
+      }),
+    );
+    console.log("[sync] patient-sync/1 receiver mounted");
+  } else {
+    console.log(`[sync] receiver disabled: ${syncConfig.disabledReason}`);
+  }
+}
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });
