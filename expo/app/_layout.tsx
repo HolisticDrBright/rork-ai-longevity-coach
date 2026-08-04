@@ -2,10 +2,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { initSentry, Sentry } from '@/lib/sentry';
 
+import AnimatedSplashScreen from '@/components/AnimatedSplashScreen';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { HIPAAProvider, useHIPAA } from '@/providers/HIPAAProvider';
 import { SupabaseAuthProvider, useSupabaseAuth } from '@/providers/SupabaseAuthProvider';
@@ -94,6 +95,8 @@ function ConsentGate({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayoutInner() {
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState<boolean>(true);
+
   useEffect(() => {
     void SplashScreen.hideAsync();
   }, []);
@@ -128,6 +131,9 @@ function RootLayoutInner() {
               </AuthGate>
             </AuthProvider>
           </SupabaseAuthProvider>
+          {showAnimatedSplash && (
+            <AnimatedSplashScreen onAnimationFinish={() => setShowAnimatedSplash(false)} />
+          )}
         </GestureHandlerRootView>
       </QueryClientProvider>
     </trpc.Provider>
